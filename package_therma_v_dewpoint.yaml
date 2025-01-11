@@ -1,0 +1,71 @@
+template:
+  - trigger: # Dewpoint from Shelly Plus HT T1
+      - trigger: state
+        entity_id:
+          - sensor.shelly_plus_ht1_temperature
+    sensor:
+      - name: "Shelly plus HT1 dewpoint"
+        state_class: measurement
+        device_class: temperature
+        unit_of_measurement: '°C'
+        state: >
+          {% set t1_temp = states('sensor.shelly_plus_ht1_temperature') | float(0) %}
+          {% set t1_rh   = states('sensor.shelly_plus_ht1_humidity') | float(0) %}   
+          
+          {{ ( t1_temp - ((100.0-t1_rh)/5.0) ) | round(0) }}
+
+  - trigger: # Dewpoint from Open Weather
+      - trigger: state
+        entity_id:
+          - sensor.openweathermap_temperature
+    sensor:
+      - name: "Openweathermap dewpoint"
+        state_class: measurement
+        device_class: temperature
+        unit_of_measurement: '°C'
+        state: >
+          {% set ow_temp = states('sensor.openweathermap_temperature') | float(0) %}
+          {% set ow_rh   = states('sensor.openweathermap_humidity') | float(0) %}   
+
+          {{ ( ow_temp - ((100.0-ow_rh)/5.0) ) | round(0) }}
+  
+  - trigger: # Dewpoint from eWeLink Bathroom
+      - trigger: state
+        entity_id:
+          - sensor.ewelink_snzb_02p_temperature
+    sensor:
+      - name: "eWeLink SNZB-02P dewpoint"
+        state_class: measurement
+        device_class: temperature
+        unit_of_measurement: '°C'
+        state: >
+          {% set t2_temp = states('sensor.ewelink_snzb_02p_temperature') | float(0) %}
+          {% set t2_rh   = states('sensor.ewelink_snzb_02p_humidity') | float(0) %}   
+          
+          {{ ( t2_temp - ((100.0-t2_rh)/5.0) ) | round(0) }}
+
+automation:
+  - id: cooling_off_based_on_dewpoint_auto
+    alias: cooling_off_based_on_dewpoint_auto
+    description: Switch off cooling if dewpoint is above 16C
+    mode: restart
+    triggers:
+      - trigger: state
+        entity_id:
+          - sensor.shelly_plus_ht1_dewpoint
+      - trigger: state
+        entity_id:
+          - sensor.openweathermap_dewpoint
+    conditions:
+      - condition: state
+        entity_id: climate.therma_v_heating_cooling
+        state: 'cool'
+      - condition: template
+        value_template: "{{ ( states('sensor.shelly_plus_ht1_dewpoint') | float(0) ) > (states('sensor.therma_v_buffer_temperatures_return_from_heating_t3') | float(0) ) }}"
+      - condition: template
+        value_template: "{{ ( states('sensor.shelly_plus_ht1_dewpoint') | float(0) ) > (states('sensor.therma_v_buffer_temperatures_return_to_heatpump_t4') | float(0) ) }}"
+    actions:
+      - action: switch.turn_off
+        entity_id: switch.therma_v_silent_mode
+      - action: switch.turn_off
+        entity_id: switch.therma_v_heating_cooling_on_off

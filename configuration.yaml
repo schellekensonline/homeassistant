@@ -1,0 +1,77 @@
+
+# Loads default set of integrations. Do not remove.
+default_config:
+
+# Load frontend themes from the themes folder
+frontend:
+  themes: !include_dir_merge_named themes
+
+# Text to speech
+tts:
+  - platform: google_translate
+
+automation: !include automations.yaml
+script:     !include scripts.yaml
+scene:      !include scenes.yaml
+modbus:     !include modbus.yaml
+sensor:     !include sensors.yaml
+template:   !include templates.yaml
+#input_select: !include input_selects.yaml
+#switch: !include switches.yaml
+#input_number: !include input_numbers.yaml
+
+
+homeassistant:
+# Ensures slider switches instead of 2 button swiches
+  customize_domain:
+    switch:
+      assumed_state: false
+
+# Packages with bundles for sertain functions
+  packages:
+    dhw_circulation_pack:       !include package_dhw_circulation.yaml
+    dhw_booster_pack:           !include package_dhw_booster.yaml
+    therma_v_dewpoint_pack:     !include package_therma_v_dewpoint.yaml
+    therma_v_ufh_pack:          !include package_therma_v_ufh.yaml
+    therma_v_power_pack:        !include package_therma_v_power.yaml
+    therma_v_power_silent:      !include package_therma_v_silent.yaml
+    therma_v_ess_pack:          !include package_therma_v_ess.yaml
+    goodwe_pack:                !include package_goodwe.yaml
+    unavailable_entities_pack:  !include package_unavailable_entities.yaml
+
+afvalbeheer:
+      wastecollector: MijnAfvalwijzer
+      resources:
+        - restafval
+        - gft
+        - papier
+      postcode: !secret postcode_home
+      streetnumber: !secret streetnumber_home
+      dateformat: '%d-%m-%Y'           # (optional)
+      builtinicons: 0                  # (optional)
+      dutch: 0                         # (optional)
+
+# Added by JSch
+# Switch to mysql
+recorder:
+  db_url: !secret database_url
+  auto_purge: true
+  purge_keep_days: 100
+  commit_interval: 30
+
+# Added by JSch
+# Allow traefik etc.
+http:
+  use_x_forwarded_for: true
+  trusted_proxies:
+    - 192.168.1.0/24  # local IP adresses
+    - 192.168.2.0/24  # docker proxy-net
+    - 192.168.3.0/24  # docker internal-net
+    - 192.168.4.0/24  # docker tools-net
+    - 192.168.5.0/24  # docker cloud-net
+    - 192.168.6.0/24  # docker torrent-net
+    - 192.168.7.0/24  # docker on media-net
+    - 192.168.8.0/24  # docker on nvr-net
+    - 172.17.0.0/16   # docker default networks
+  ip_ban_enabled: true
+  login_attempts_threshold: 5

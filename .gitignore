@@ -1,0 +1,23 @@
+## IGNORE
+# Subdirectories
+*/
+# Symbolic links
+
+# Secrets and Password files 
+/*.env
+/*.gen
+*secrets*.*
+# Hidden files
+/.*
+
+# Files
+/*.log*
+/*.db*
+/*.conf*
+/go2rtc*
+/*.conf
+/*.txt
+
+## INCLUDE
+# Gitignore file
+!/.gitignore

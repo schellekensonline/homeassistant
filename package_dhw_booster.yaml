@@ -1,0 +1,50 @@
+switch:
+  - platform: template
+    switches:
+      dhw_booster_2_switch:
+        friendly_name: "DHW booster 2 switch (S1)" 
+        turn_on:
+          action: switch.turn_on
+          target:
+            entity_id: switch.shelly_plug_s1
+        turn_off:
+          action: switch.turn_off
+          target:
+            entity_id: switch.shelly_plug_s1
+
+template:
+  - binary_sensor: # State of shelly switche S1 for Therma V DHW heater 2
+      - name: "Therma V DHW booster 2 state (S1)"
+        state: >
+          {{ is_state('switch.shelly_plug_s1', 'on') }}
+
+automation:
+  - id: e_price_negative_dhw_auto
+    alias: e_price_negative_dhw_auto
+    description: Set DHW booster on when E-price is negative 
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: sensor.entsoe_apex_in_current_electricity_market_price
+    conditions:
+      - condition: template
+        value_template: "{{ (states('sensor.entsoe_apex_in_current_electricity_market_price') | float(0) ) < 0 }}"
+    actions:
+      - action: switch.turn_on
+        entity_id: switch.dhw_booster_2_switch
+
+  - id: e_price_positive_dhw_auto
+    alias: e_price_negative_dhw_auto
+    description: Set DHW booster on when E-price is negative 
+    mode: single
+    triggers:
+      - trigger: time_pattern
+        minutes: "/5"
+      - trigger: state
+        entity_id: sensor.entsoe_apex_in_current_electricity_market_price
+    conditions:
+      - condition: template
+        value_template: "{{ (states('sensor.entsoe_apex_in_current_electricity_market_price') | float(0) ) >= 0 }}"
+    actions:
+      - action: switch.turn_off
+        entity_id: switch.dhw_booster_2_switch

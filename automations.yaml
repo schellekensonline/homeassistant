@@ -1,0 +1,57 @@
+- id: '1690223671897'
+  alias: person front door notification
+  description: Send a notification when frigate detects someone near the front door
+  use_blueprint:
+    path: SgtBatten/Stable.yaml
+    input:
+      camera: camera.front
+      notify_device: 284c6d83502161ac82eb9f8be04cf2ce
+      base_url: !secret hass_base_url
+      title: 'Person at front door '
+      message: 'Default:  A person was detected near the front door'
+      alert_once: true
+      update_thumbnail: true
+      zones:
+      - front_door_zone
+      presence_filter: device_tracker.jans_iphone
+      zone_filter: true
+      silence_timer: 5
+      critical: '{{''false'' if now().hour in [8,9,10,11,12,13,14,15,16,17,18] else
+        ''true''}}'
+      ios_live_view: true
+      attachment: snapshot
+      cooldown: 150
+      tap_action: /lovelace
+      state_filter: true
+      state_entity: binary_sensor.nobody_home
+      state_filter_states:
+      - 'on'
+- id: '1690535089841'
+  alias: person back door notification
+  description: A person is detected at the back door
+  use_blueprint:
+    path: SgtBatten/Stable.yaml
+    input:
+      camera: camera.back
+      notify_device: 284c6d83502161ac82eb9f8be04cf2ce
+      base_url: !secret hass_base_url
+      title: Person at back door
+      message: 'Default:   A Person was detected near the back door'
+      alert_once: true
+      update_thumbnail: true
+      ios_live_view: true
+      zone_filter: true
+      zones:
+      - back_door_zone
+      presence_filter: device_tracker.jans_iphone
+      silence_timer: 5
+      critical: '{{''false'' if now().hour in [8,9,10,11,12,13,14,15,16,17,18] else
+        ''true''}}'
+      attachment: snapshot
+      cooldown: 150
+      tap_action: /lovelace
+      state_filter: true
+      state_entity: binary_sensor.nobody_home
+      state_filter_states:
+      - 'on'
+      

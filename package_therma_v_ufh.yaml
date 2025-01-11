@@ -1,0 +1,31 @@
+template:
+  - binary_sensor: # State of shelly switche S2 for Therma V UFH 
+    - name: "Therma V UFH pump state (S2)"
+      state: >
+        {{ is_state('switch.shelly_plug_s2', 'on') }}
+
+automation:
+  - id: switch_on_ufh_pump_auto
+    alias: switch_on_ufh_pump_auto
+    description: Switch on underfloof heating pump when therma V external pump is active
+    mode: single
+    triggers:
+      - trigger: time_pattern
+        seconds: /10
+    conditions: []
+    actions:
+      - choose:
+          - conditions:
+              - condition: state
+                entity_id: binary_sensor.therma_v_external_water_pump_state
+                state: 'on'
+            sequence:
+              - action: switch.turn_on
+                entity_id: switch.shelly_plug_s2
+          - conditions:
+              - condition: state
+                entity_id: binary_sensor.therma_v_external_water_pump_state
+                state: 'off'
+            sequence:
+              - action: switch.turn_off
+                entity_id: switch.shelly_plug_s2

@@ -1,0 +1,6 @@
+- binary_sensor:
+  - name: "Nobody Home"
+    state: >-
+      {{ not is_state('device_tracker.jans_iphone', 'home') }}
+
+#      {{ (not is_state('device_tracker.iphone_van_kim', 'home')) and (not is_state('device_tracker.jans_iphone', 'home')) }}

@@ -1,0 +1,108 @@
+input_datetime:
+  silent_start_time: # start time of silent mode add to UI
+    name: Silent mode start time
+    has_date: false
+    has_time: true
+  silent_stop_time: # stop time of silent mode add to UI
+    name: Silent mode stop time
+    has_date: false
+    has_time: true
+
+input_boolean:
+  silent_mode_state: # helper to remember state is more robust
+    name: Silent Mode State for automation
+
+automation:
+  - id: silent_on_based_on_temp_time_auto
+    alias: Therma V Silent ON based on temperature and time
+    description: Turns on silent mode at set time and when the temperature is high enough
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: time
+        at: input_datetime.silent_start_time
+      - trigger: state
+        entity_id: "sensor.therma_v_outside_temperature"
+    conditions:
+      - and:
+        - condition: state
+          entity_id: switch.therma_v_heating_cooling_on_off
+          state: 'on' # allow only when heating is on! otherwise RMC may crash
+        - or:
+          - condition: time 
+            after: input_datetime.silent_start_time
+            before: input_datetime.silent_stop_time
+          - condition: numeric_state
+            entity_id: "sensor.therma_v_outside_temperature"
+            above: 8 # silent mode of below 6 degrees for better defrosts
+    actions:
+      - action: switch.turn_on
+        entity_id: switch.therma_v_silent_mode
+      - action: input_boolean.turn_on
+        entity_id: input_boolean.silent_mode_state
+
+  - id: silent_off_based_on_temp_time_auto
+    alias: Therma V Silent OFF based on temperature respecting time set
+    description: Turns off silent mode when outside temp is too low respecting silent time window
+    mode: single
+    max_exceeded: silent
+    triggers: # time trigger to ensure that silent mode recovers to a safe state
+      - trigger: time
+        at: input_datetime.silent_stop_time
+      - trigger: state
+        entity_id: "sensor.therma_v_outside_temperature"
+    conditions:
+      - and:
+        - condition: numeric_state # allow only when startup_auto not active
+          entity_id: "automation.therma_v_silent_on_at_startup"  
+          attribute: current  # attribute is number of active instances of automation                  
+          below: 1            # below 1 means n active startup_auto instances
+        - condition: numeric_state
+          entity_id: "sensor.therma_v_outside_temperature"
+          below: 6 # silent mode of below 6 degrees for better defrosts
+        - condition: time 
+          after: input_datetime.silent_stop_time
+          before: input_datetime.silent_start_time
+    actions:
+      - action: switch.turn_off
+        entity_id: switch.therma_v_silent_mode
+      - action: input_boolean.turn_off
+        entity_id: input_boolean.silent_mode_state
+
+  - id: silent_on_at_startup_auto
+    alias: Therma V Silent ON at startup
+    description: Turns on silent mode for some minutes after start-up
+    mode: restart
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id: "binary_sensor.therma_v_compressor_state"
+        from: "off"
+        to: "on" # when compressor starts
+      - trigger: state
+        entity_id: "binary_sensor.therma_v_defrost_state"
+        from: "on"
+        to: "off" # catch missed compressor restart  
+    conditions:
+      - condition: state 
+        entity_id: switch.therma_v_heating_cooling_on_off
+        state: "on" # and heating_cooling is on! otherwise RMC may crash
+      - condition: state 
+        entity_id: binary_sensor.therma_v_defrost_state
+        state: "off" # and no defrost is active
+    actions:
+      - action: switch.turn_on # turn on silent mode
+        entity_id: switch.therma_v_silent_mode
+      - delay:
+          minutes: 15 # wait for startup to finish
+      - choose: # restore previous state of silent mode
+          - conditions:
+              - condition: state
+                entity_id: input_boolean.silent_mode_state
+                state: "on"
+            sequence:
+              - action: switch.turn_on
+                entity_id: switch.therma_v_silent_mode
+        default:
+          - action: switch.turn_off
+            entity_id: switch.therma_v_silent_mode
