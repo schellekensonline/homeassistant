@@ -343,11 +343,11 @@
       scan_interval: 14
       input_type: discrete_input
 
-  #  - name: "Therma V silent mode state" # 0 OFF, 1 ON
-  #    slave: 1
-  #    address: 7
-  #    scan_interval: 14
-  #    input_type: discrete_input
+    - name: "Therma V silent mode state" # 0 OFF, 1 ON
+      slave: 1
+      address: 7
+      scan_interval: 14
+      input_type: discrete_input
 
   #  - name: "Therma V cooling state" # 0 OFF, 1 ON
   #    slave: 1
