@@ -8,9 +8,20 @@ input_datetime:
     has_date: false
     has_time: true
 
-input_boolean:
-  silent_mode_state: # helper to remember state is more robust
-    name: Silent Mode State for automation
+switch:
+  - platform: template
+    switches:
+      silent_mode_state:
+        friendly_name: "Silent Mode State for automations" 
+        turn_on:
+          action: switch.turn_on
+          target:
+            entity_id: switch.therma_v_silent_mode
+        turn_off:
+          action: switch.turn_off
+          target:
+            entity_id: switch.therma_v_silent_mode
+
 
 automation:
   - id: silent_on_based_on_temp_time_auto
@@ -37,9 +48,7 @@ automation:
             above: 8 # silent mode of below 6 degrees for better defrosts
     actions:
       - action: switch.turn_on
-        entity_id: switch.therma_v_silent_mode
-      - action: input_boolean.turn_on
-        entity_id: input_boolean.silent_mode_state
+        entity_id: switch.silent_mode_state
 
   - id: silent_off_based_on_temp_time_auto
     alias: Therma V Silent OFF based on temperature respecting time set
@@ -64,10 +73,8 @@ automation:
           after: input_datetime.silent_stop_time
           before: input_datetime.silent_start_time
     actions:
-      - action: switch.turn_off
-        entity_id: switch.therma_v_silent_mode
       - action: input_boolean.turn_off
-        entity_id: input_boolean.silent_mode_state
+        entity_id: switch.silent_mode_state
 
   - id: silent_on_at_startup_auto
     alias: Therma V Silent ON at startup
@@ -98,7 +105,7 @@ automation:
       - choose: # restore previous state of silent mode
           - conditions:
               - condition: state
-                entity_id: input_boolean.silent_mode_state
+                entity_id: switch.silent_mode_state
                 state: "on"
             sequence:
               - action: switch.turn_on
