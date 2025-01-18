@@ -22,6 +22,9 @@ switch:
           target:
             entity_id: switch.therma_v_silent_mode
 
+input_boolean:
+  silent_mode_startup:
+    name: "Silent Mode at Startup" 
 
 automation:
   - id: silent_on_based_on_temp_time_auto
@@ -97,6 +100,9 @@ automation:
       - condition: state 
         entity_id: binary_sensor.therma_v_defrost_state
         state: "off" # and no defrost is active
+      - condition: state 
+        entity_id: input_boolean.silent_mode_startup
+        state: "on" # and silent mode startup is ON
     actions:
       - action: switch.turn_on # turn on silent mode
         entity_id: switch.therma_v_silent_mode
