@@ -54,7 +54,7 @@ automation:
         entity_id: switch.silent_mode_state
 
   - id: silent_off_based_on_temp_time_auto
-    alias: Therma V Silent OFF based on temperature respecting time set
+    alias: Therma V Silent OFF based on temperature and time
     description: Turns off silent mode when outside temp is too low respecting silent time window
     mode: single
     max_exceeded: silent
