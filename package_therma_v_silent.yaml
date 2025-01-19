@@ -76,7 +76,7 @@ automation:
           after: input_datetime.silent_stop_time
           before: input_datetime.silent_start_time
     actions:
-      - action: input_boolean.turn_off
+      - action: switch.turn_off
         entity_id: switch.silent_mode_state
 
   - id: silent_on_at_startup_auto
