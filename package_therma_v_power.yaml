@@ -31,9 +31,9 @@ template:
         {% endif %}  
 
         {% if ( cooling_p or heating_p ) and (flow_lg > 8) %}
-          {{ min( (((rho_water*flow_lg/60*c_water*(Tout_lg-Tin_lg)) | abs ) + p_boost) , 15000) | round(0) }}
+          {{ min( (((rho_water*flow_lg/60*c_water*(Tout_lg-Tin_lg)) | abs ) + p_boost) , 15000) | round(0,default="unknown") }}
         {% else %}
-          {{ ( (Tout_lg-Tin_lg) + p_boost ) | round(0) }}
+          {{ ( (Tout_lg-Tin_lg) + p_boost ) | round(0,default="unknown") }}
         {% endif %}
       # Added some noise with deltT on the booster only path 
 
@@ -47,7 +47,7 @@ template:
         {% set p_dhw_cir = states('sensor.shelly_plug_s3_power') | float(0) %}
         {% set p_hp      = states('sensor.kwh_meter_3_phase_3c39e72df94a_active_power') | float(0) %}
 
-        {{ (p_hp+p_ufh+p_dhw_cir) | round(0) }}
+        {{ (p_hp+p_ufh+p_dhw_cir) | round(0,default="unknown") }}
 
     - name: "Price of heat incl tax"
       state_class: measurement
@@ -71,17 +71,17 @@ template:
         {% set on_cop  = is_state('binary_sensor.therma_v_compressor_state','on') %}
 
         {% if (pe_cop > 500.0) and (pt_cop > 500.0) and on_cop %}
-          {{ min( (pt_cop / pe_cop) , 10.0) | round(2) }}
+          {{ min( (pt_cop / pe_cop) , 10.0) | round(2,default="unknown") }}
         {% else %}
-          {{ 0.00 | round(2) }}
+          {{ 0.00 | round(2,default="unknown") }}
         {% endif %}
 
       # SCoP purely on energies 
     - name: "Therma V Heatpump SCoP"
       state_class: measurement
       state: >
-        {% set et_scop     = states('sensor.therma_v_scop_thermal_energy') | float(0) %}
-        {% set ee_scop     = states('sensor.therma_v_scop_electric_energy') | float(0) %}
+        {% set et_scop     = states('sensor.therma_v_scop_thermal_energy') | float("unknown") %}
+        {% set ee_scop     = states('sensor.therma_v_scop_electric_energy') | float("unknown") %}
 
         {{ min( max(et_scop,1.0)/max(ee_scop,1.0) , 10.0) | round(2) }}
 
