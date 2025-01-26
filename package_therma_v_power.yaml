@@ -5,6 +5,10 @@ template:
       state_class: measurement
       device_class: power
       unit_of_measurement: "W"
+      availability: >
+        {% set Tout_lg   = states('sensor.therma_v_buffer_temperatures_in_from_heatpump_t1') | float("unknown") %}
+        {% set Tin_lg    = states('sensor.therma_v_buffer_temperatures_return_to_heatpump_t4') | float("unknown") %}
+        {{ Tout_lg|is_number and Tin_lg|is_number}}
       state: >
         {% set cool_p  = is_state('climate.therma_v_heating_cooling','cool') %}
         {% set heat_p  = is_state('climate.therma_v_heating_cooling','heat') %}
@@ -16,10 +20,10 @@ template:
         {% set boost2_p   = is_state('binary_sensor.therma_v_dhw_booster_2_state_s1','on') %}
 
         {% set flow_lg   = states('sensor.therma_v_water_flow_rate') | float(0) %}
-        {% set Tout_lg   = states('sensor.therma_v_buffer_temperatures_in_from_heatpump_t1') | float("unknown") %}
-        {% set Tin_lg    = states('sensor.therma_v_buffer_temperatures_return_to_heatpump_t4') | float("unknown") %}
-        {% set rho_water = 1.0 | float %}
-        {% set c_water   = 4184.0 | float %}
+        {% set Tout_lg   = states('sensor.therma_v_buffer_temperatures_in_from_heatpump_t1') | float(0) %}
+        {% set Tin_lg    = states('sensor.therma_v_buffer_temperatures_return_to_heatpump_t4') | float(0) %}
+        {% set rho_water = 1.0 | float(0) %}
+        {% set c_water   = 4184.0 | float(0) %}
 
         {% set heating_p   = (heat_p or dhw_p) and (Tout_lg>Tin_lg) %}
         {% set cooling_p   = (cool_p and not dhw_p) and (Tout_lg<Tin_lg) %}
@@ -65,6 +69,10 @@ template:
       # CoP only active when E and T powers >500W
     - name: "Therma V Heatpump CoP"
       state_class: measurement
+      availability: >
+        {% set pt_cop = states('sensor.therma_v_thermal_power') | float("unknown") %}
+        {% set pe_cop = states('sensor.therma_v_electric_power') | float("unknown") %}
+        {{ pt_cop|is_number and pe_cop|is_number}}
       state: >
         {% set pt_cop = states('sensor.therma_v_thermal_power') | float(0) %}
         {% set pe_cop = states('sensor.therma_v_electric_power') | float(0) %}
@@ -79,9 +87,13 @@ template:
       # SCoP purely on energies 
     - name: "Therma V Heatpump SCoP"
       state_class: measurement
-      state: >
+      availability: >
         {% set et_scop     = states('sensor.therma_v_scop_thermal_energy') | float("unknown") %}
         {% set ee_scop     = states('sensor.therma_v_scop_electric_energy') | float("unknown") %}
+        {{ et_scop|is_number and ee_scop|is_number}}
+      state: >
+        {% set et_scop     = states('sensor.therma_v_scop_thermal_energy') | float(0) %}
+        {% set ee_scop     = states('sensor.therma_v_scop_electric_energy') | float(0) %}
 
         {{ min( max(et_scop,1.0)/max(ee_scop,1.0) , 10.0) | round(2) }}
 
@@ -89,9 +101,13 @@ template:
       state_class: measurement
       device_class: temperature
       unit_of_measurement: "°C"
-      state: >
+      availability: >
         {% set Tout_lg   = states('sensor.therma_v_buffer_temperatures_in_from_heatpump_t1') | float("unknown") %}
         {% set Tin_lg    = states('sensor.therma_v_buffer_temperatures_return_to_heatpump_t4') | float("unknown") %}
+        {{ Tout_lg|is_number and Tin_lg|is_number}}
+      state: >
+        {% set Tout_lg   = states('sensor.therma_v_buffer_temperatures_in_from_heatpump_t1') | float(0) %}
+        {% set Tin_lg    = states('sensor.therma_v_buffer_temperatures_return_to_heatpump_t4') | float(0) %}
 
         {{ (Tout_lg-Tin_lg) | round(2) }}
 
@@ -99,9 +115,13 @@ template:
       state_class: measurement
       device_class: temperature
       unit_of_measurement: "°C"
-      state: >
+      availability: >
         {% set Tout_buf   = states('sensor.therma_v_buffer_temperatures_out_to_heating_t2') | float("unknown") %}
         {% set Tin_buf    = states('sensor.therma_v_buffer_temperatures_return_from_heating_t3') | float("unknown") %}
+        {{ Tout_buf|is_number and Tout_buf|is_number}}
+      state: >
+        {% set Tout_buf   = states('sensor.therma_v_buffer_temperatures_out_to_heating_t2') | float(0) %}
+        {% set Tin_buf    = states('sensor.therma_v_buffer_temperatures_return_from_heating_t3') | float(0) %}
 
         {{ (Tout_buf-Tin_buf) | round(2) }}
 
