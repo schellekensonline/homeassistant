@@ -79,9 +79,9 @@ template:
         {% set on_cop  = is_state('binary_sensor.therma_v_compressor_state','on') %}
 
         {% if (pe_cop > 500.0) and (pt_cop > 500.0) and on_cop %}
-          {{ min( (pt_cop / pe_cop) , 10.0) | round(2,default="unknown") }}
+          {{ min( (pt_cop / pe_cop) , 10.0) | round(2) }}
         {% else %}
-          {{ 0.00 | round(2,default="unknown") }}
+          {{ 0.00 | round(2) }}
         {% endif %}
 
       # SCoP purely on energies 
