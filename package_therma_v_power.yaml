@@ -118,7 +118,7 @@ template:
       availability: >
         {% set Tout_buf   = states('sensor.therma_v_buffer_temperatures_out_to_heating_t2') | float("unknown") %}
         {% set Tin_buf    = states('sensor.therma_v_buffer_temperatures_return_from_heating_t3') | float("unknown") %}
-        {{ Tout_buf|is_number and Tout_buf|is_number}}
+        {{ Tout_buf|is_number and Tin_buf|is_number}}
       state: >
         {% set Tout_buf   = states('sensor.therma_v_buffer_temperatures_out_to_heating_t2') | float(0) %}
         {% set Tin_buf    = states('sensor.therma_v_buffer_temperatures_return_from_heating_t3') | float(0) %}
