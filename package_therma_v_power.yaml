@@ -35,9 +35,9 @@ template:
         {% endif %}  
 
         {% if ( cooling_p or heating_p ) and (flow_lg > 8) %}
-          {{ min( (((rho_water*flow_lg/60*c_water*(Tout_lg-Tin_lg)) | abs ) + p_boost) , 15000) | round(0,default="unknown") }}
+          {{ min( (((rho_water*flow_lg/60*c_water*(Tout_lg-Tin_lg)) | abs ) + p_boost) , 15000) | round(0) }}
         {% else %}
-          {{ ( (Tout_lg-Tin_lg) + p_boost ) | round(0,default="unknown") }}
+          {{ ( (Tout_lg-Tin_lg) + p_boost ) | round(0) }}
         {% endif %}
       # Added some noise with deltT on the booster only path 
 
@@ -51,7 +51,7 @@ template:
         {% set p_dhw_cir = states('sensor.shelly_plug_s3_power') | float(0) %}
         {% set p_hp      = states('sensor.kwh_meter_3_phase_3c39e72df94a_active_power') | float(0) %}
 
-        {{ (p_hp+p_ufh+p_dhw_cir) | round(0,default="unknown") }}
+        {{ (p_hp+p_ufh+p_dhw_cir) | round(0) }}
 
     - name: "Price of heat incl tax"
       state_class: measurement
