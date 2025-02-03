@@ -13,7 +13,7 @@ input_select:
 automation:
   - id: update_goodwe_auto # Manual pollig at lower frequency, more reliable. 
     alias: "Goodwe data polling"
-    mode: restart
+    mode: single
     max_exceeded: silent
     triggers:
       - trigger: time_pattern
@@ -28,7 +28,8 @@ automation:
   - id: e_price_negative_goodwe_auto # Adjust grid export limit to 0 when prices are negative
     alias: e_price_negative_goodwe_auto
     description: Set inverter grid_limit to 0% when E-price is negative, E-price from ENTSO-e corrected to incl tax
-    mode: restart
+    mode: single
+    max_exceeded: silent 
     triggers:
       # - trigger: state
       #   entity_id: sensor.inverter_temperature
