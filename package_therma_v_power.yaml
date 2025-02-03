@@ -10,12 +10,8 @@ template:
         {% set Tin_lg    = states('sensor.therma_v_buffer_temperatures_return_to_heatpump_t4') | float("unknown") %}
         {{ Tout_lg|is_number and Tin_lg|is_number}}
       state: >
-        {% set cool_p  = is_state('climate.therma_v_heating_cooling','cool') %}
-        {% set heat_p  = is_state('climate.therma_v_heating_cooling','heat') %}
-        {% set auto_p  = is_state('climate.therma_v_heating_cooling','auto') %}
-        {% set dhw_p   = is_state('binary_sensor.therma_v_dhw_heating_state','on') %}
-        {% set dhw_p   = is_state('binary_sensor.therma_v_dhw_heating_state','on') %}
-        
+        {% set active_p   = is_state('binary_sensor.therma_v_defrost_state','off') %}
+
         {% set boost1_p   = is_state('binary_sensor.therma_v_dhw_booster_state','on') %}
         {% set boost2_p   = is_state('binary_sensor.therma_v_dhw_booster_2_state_s1','on') %}
 
@@ -25,16 +21,13 @@ template:
         {% set rho_water = 1.0 | float(0) %}
         {% set c_water   = 4184.0 | float(0) %}
 
-        {% set heating_p   = (heat_p or dhw_p) and (Tout_lg>Tin_lg) %}
-        {% set cooling_p   = (cool_p and not dhw_p) and (Tout_lg<Tin_lg) %}
-
         {% if ( boost1_p or boost2_p ) %}
           {% set p_boost = 1500.0 | float(0) %}
         {% else %}  
           {% set p_boost = 0.0 | float(0) %}
         {% endif %}  
 
-        {% if ( cooling_p or heating_p ) and (flow_lg > 8) %}
+        {% if active_p and (flow_lg > 8) %}
           {{ min( (((rho_water*flow_lg/60*c_water*(Tout_lg-Tin_lg)) | abs ) + p_boost) , 15000) | round(0) }}
         {% else %}
           {{ ( (Tout_lg-Tin_lg) + p_boost ) | round(0) }}
