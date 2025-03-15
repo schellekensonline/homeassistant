@@ -1,6 +1,15 @@
 - binary_sensor:
   - name: "Nobody Home"
     state: >-
-      {{ not is_state('device_tracker.jans_iphone', 'home') }}
+      {{ (not is_state('device_tracker.iphone_jan', 'home')) and (not is_state('device_tracker.iphone_van_kim', 'home'))}}
+#      {{ (not is_state('device_tracker.iphone_van_kim', 'home')) and (not is_state('device_tracker.iphone_jan', 'home')) }}
 
-#      {{ (not is_state('device_tracker.iphone_van_kim', 'home')) and (not is_state('device_tracker.jans_iphone', 'home')) }}
+  # - binary_sensor:
+  #     - unique_id: smartphone_kim_wifi_home_connected
+  #       state: "{{ is_state('sensor.YOUR_PHONE_NAME_wifi_connection', 'YOUR_HOME_SSID') or is_state('sensor.YOUR_PHONE_NAME_wifi_connection', 'YOUR_HOME_SSID_5G') }}"
+  #       delay_off:
+  #         seconds: 10
+  #       attributes:
+  #         friendly_name: "smartphone_name_wifi_home_connected"
+
+
