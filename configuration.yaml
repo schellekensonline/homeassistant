@@ -34,9 +34,10 @@ homeassistant:
     therma_v_dewpoint_pack:     !include package_therma_v_dewpoint.yaml
     therma_v_ufh_pack:          !include package_therma_v_ufh.yaml
     therma_v_power_pack:        !include package_therma_v_power.yaml
-    therma_v_power_silent:      !include package_therma_v_silent.yaml
+    therma_v_silent_pack:       !include package_therma_v_silent.yaml
     therma_v_ess_pack:          !include package_therma_v_ess.yaml
     goodwe_pack:                !include package_goodwe.yaml
+    energy_cost_pack:           !include package_energy_cost.yaml
     unavailable_entities_pack:  !include package_unavailable_entities.yaml
 
 afvalbeheer:

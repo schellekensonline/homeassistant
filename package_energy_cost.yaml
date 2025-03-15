@@ -1,0 +1,50 @@
+template:
+  - sensor:
+    - name: "Power cost including tax"
+      state_class: measurement
+      unit_of_measurement: "€/h"
+      availability: >
+        {% set power   = states('sensor.p1_meter_3c39e72e6af0_active_power') | float("unknown") %}
+        {% set cost    = states('sensor.entsoe_apex_in_current_electricity_market_price') | float("unknown") %}
+        {{ Power|is_number and Cost|is_number}}
+      state: >
+          {% set power   = states('sensor.p1_meter_3c39e72e6af0_active_power') | float(0) %}
+          {% set cost    = states('sensor.entsoe_apex_in_current_electricity_market_price') | float(0) %}
+          {{ power/1000*cost }}
+
+    - name: "Power cost excluding tax"
+      state_class: measurement
+      unit_of_measurement: "€/h"
+      availability: >
+        {% set power   = states('sensor.p1_meter_3c39e72e6af0_active_power') | float("unknown") %}
+        {% set cost    = states('sensor.entsoe_apex_ex_current_electricity_market_price') | float("unknown") %}
+        {{ Power|is_number and Cost|is_number}}
+      state: >
+          {% set power   = states('sensor.p1_meter_3c39e72e6af0_active_power') | float(0) %}
+          {% set cost    = states('sensor.entsoe_apex_ex_current_electricity_market_price') | float(0) %}
+          {{ power/1000*cost }}
+
+sensor:
+  - platform: integration
+    source: sensor.power_cost_including_tax
+    name: "Energy cost including tax"
+    method: left
+    unit_time: h
+    round: 2
+
+  - platform: integration
+    source: sensor.power_cost_excluding_tax
+    name: "Energy cost excluding tax"
+    method: left
+    unit_time: h
+    round: 2
+
+utility_meter:
+  daily_energy_cost_including_tax:
+    source: sensor.energy_cost_including_tax
+    name: "Daily energy cost including tax"
+    cycle: daily
+  daily_energy_cost_excluding_tax:
+    source: sensor.energy_cost_excluding_tax
+    name: "Daily energy cost excluding tax"
+    cycle: daily
