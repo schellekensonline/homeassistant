@@ -44,7 +44,11 @@ utility_meter:
     source: sensor.energy_cost_including_tax
     name: "Daily energy cost including tax"
     cycle: daily
+#    delta_values: true #input is delta energy
+    net_consumption: true #allows negative power
   daily_energy_cost_excluding_tax:
     source: sensor.energy_cost_excluding_tax
     name: "Daily energy cost excluding tax"
     cycle: daily
+#    delta_values: true # input is delta energy
+    net_consumption: true #allows negative power
