@@ -1,5 +1,6 @@
 template:
   - sensor:
+# template sensors to determine the electricity cost per hour EURO/hr
     - name: "Power cost including tax"
       state_class: measurement
       unit_of_measurement: "€/h"
@@ -23,6 +24,7 @@ template:
           {% set power   = states('sensor.p1_meter_3c39e72e6af0_active_power') | float(0) %}
           {% set cost    = states('sensor.entsoe_apex_ex_current_electricity_market_price') | float(0) %}
           {{ power/1000*cost }}
+# triggered sensors for the total energy cost per day based on the statistics sensors
   - trigger:
     - platform: time_pattern
       hours: 0
@@ -38,21 +40,23 @@ template:
     - name: "Energy cost per day excluding tax"
       state: "{{ states('energy_cost_over_one_day_excluding_tax')|float(2) }}"
 
+
 sensor:
+# integration of Euro/hr result is Euros
   - platform: integration
     source: sensor.power_cost_including_tax
     name: "Energy cost including tax"
     method: left
     unit_time: h
     round: 2
-
   - platform: integration
     source: sensor.power_cost_excluding_tax
     name: "Energy cost excluding tax"
     method: left
     unit_time: h
     round: 2
-
+# moving difference over 24hrs used for template sensors that trigger at 0:00
+# utility meters cycle and cannot be used reliably with the triggers in the template sensors
   - platform: statistics
     name: Energy cost over one day including tax
     entity_id: sensor.energy_cost_including_tax
@@ -70,8 +74,7 @@ sensor:
       hours: 24
     precision: 2
     unique_id: energy_cost_over_one_day_excluding_tax
-
-
+# The utility meters cycle daily automatically 
 utility_meter:
   daily_energy_cost_including_tax:
     source: sensor.energy_cost_including_tax
