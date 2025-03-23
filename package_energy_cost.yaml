@@ -74,6 +74,7 @@ sensor:
       hours: 24
     precision: 2
     unique_id: energy_cost_over_one_day_excluding_tax
+
 # The utility meters cycle daily automatically 
 utility_meter:
   daily_energy_cost_including_tax:
