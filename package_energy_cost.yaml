@@ -33,7 +33,7 @@ template:
       - name: "Energy cost per day including tax"
         state_class: measurement
         unit_of_measurement: "€"
-        state: "{{ states('energy_cost_over_one_day_including_tax')|float(2) }}"
+        state: "{{ states('sensor.energy_cost_over_one_day_including_tax')|float(0) }}"
   - trigger:
     - platform: time_pattern
       hours: 0
@@ -42,7 +42,7 @@ template:
       - name: "Energy cost per day excluding tax"
         state_class: measurement
         unit_of_measurement: "€"
-        state: "{{ states('energy_cost_over_one_day_excluding_tax')|float(2) }}"
+        state: "{{ states('sensor.energy_cost_over_one_day_excluding_tax')|float(0) }}"
 
 
 sensor:
