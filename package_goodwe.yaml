@@ -7,7 +7,7 @@ input_select:
       - "2 - Balanced (ratiomatic export with gross negative prices)"
       - "3 - Minimum (zero om meter with gross negative prices)"
       - "4 - No (zero on meter)"
-    initial: "2 - Balanced (ratiomatic export with gross negative prices)"
+    initial: "3 - Minimum (zero om meter with gross negative prices)"
     icon: mdi:sun-compass
 
 automation:
