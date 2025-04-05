@@ -33,10 +33,10 @@ automation:
     mode: restart
     triggers:
       - trigger: state
-        entity_id: sensor.entsoe_apex_in_current_electricity_market_price
+        entity_id: sensor.nord_pool_nl_current_prices_including_tax
     conditions:
       - condition: template
-        value_template: "{{ (states('sensor.entsoe_apex_in_current_electricity_market_price') | float(0) ) <= 0 }}"       
+        value_template: "{{ (states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) ) <= 0 }}"       
     actions:
       - delay:
           hours: 0
@@ -51,10 +51,10 @@ automation:
       - choose:
         - conditions:
             - condition: numeric_state
-              entity_id: sensor.entsoe_apex_ex_current_percentage_in_electricity_price_range
+              entity_id: sensor.current_percentage_of_energy_price
               below: 10
             - condition: numeric_state
-              entity_id: sensor.entsoe_apex_in_current_electricity_market_price
+              entity_id: sensor.nord_pool_nl_current_prices_including_tax
               below: -0.05
           sequence:
             - action: input_select.select_option
@@ -76,12 +76,12 @@ automation:
     mode: restart
     triggers:
       - trigger: state
-        entity_id: sensor.entsoe_apex_in_current_electricity_market_price
+        entity_id: sensor.nord_pool_nl_current_prices_including_tax
       - trigger: state
         entity_id: binary_sensor.therma_v_dhw_heating_state
     conditions:
       - condition: template
-        value_template: "{{ (states('sensor.entsoe_apex_in_current_electricity_market_price') | float(0) ) > 0 }}"
+        value_template: "{{ (states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) ) > 0 }}"
       - condition: template
         value_template: "{{ (states('sensor.entsoe_apex_difference_in_electricity_price_today') | float(0) ) < 0.10 }}" # USED FOR NOMAL AND HIGH
     actions:
@@ -93,7 +93,7 @@ automation:
           - conditions:
               - or:
                   - condition: numeric_state
-                    entity_id: sensor.entsoe_apex_ex_current_percentage_in_electricity_price_range
+                    entity_id: sensor.current_percentage_of_energy_price
                     below: 50
                   - condition: state
                     entity_id: binary_sensor.therma_v_dhw_heating_state
@@ -118,12 +118,12 @@ automation:
     mode: restart
     triggers:
       - trigger: state
-        entity_id: sensor.entsoe_apex_in_current_electricity_market_price
+        entity_id: sensor.nord_pool_nl_current_prices_including_tax
       - trigger: state
         entity_id: binary_sensor.therma_v_dhw_heating_state
     conditions:
       - condition: template
-        value_template: "{{ (states('sensor.entsoe_apex_in_current_electricity_market_price') | float(0) ) > 0 }}"
+        value_template: "{{ (states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) ) > 0 }}"
       - condition: template
         value_template: "{{ (states('sensor.entsoe_apex_difference_in_electricity_price_today') | float(0) ) >= 0.10 }}" # USED FOR NOMAL AND HIGH
     actions:
@@ -134,10 +134,10 @@ automation:
       - choose:
         - conditions:
             - condition: numeric_state
-              entity_id: sensor.entsoe_apex_ex_current_percentage_in_electricity_price_range
+              entity_id: sensor.current_percentage_of_energy_price
               below: 5
             - condition: template
-              value_template: "{{ (states('sensor.entsoe_apex_ex_next_hour_electricity_market_price') | float(0) ) >= (states('sensor.entsoe_apex_ex_current_electricity_market_price') | float(0) ) }}"    
+              value_template: "{{ (states('sensor.entsoe_apex_ex_next_hour_electricity_market_price') | float(0) ) >= (states('sensor.nord_pool_nl_current_price') | float(0) ) }}"    
           sequence:
             - action: input_select.select_option
               target:
@@ -156,7 +156,7 @@ automation:
                 option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 2 ] }}' # At least Normal ESS during DHW run
         - conditions:
             - condition: numeric_state
-              entity_id: sensor.entsoe_apex_ex_current_percentage_in_electricity_price_range
+              entity_id: sensor.current_percentage_of_energy_price
               above: 75
           sequence:
             - action: input_select.select_option

@@ -1,16 +1,49 @@
 template:
   - sensor:
+# template sensor for prices including tax  
+    - name: "Nord pool NL current prices Including Tax"
+      unique_id: nord_pool_nl_current_prices_including_tax
+      unit_of_measurement: "€/kWh"
+      state_class: measurement
+      state: >
+        {% set cost = states('sensor.nord_pool_nl_current_price') | float(0) %}
+        {% set next_energy = 0.022 | float(0) %}
+        {% set energy_tax  = 0.1088 | float(0) %}
+        {% set VAT         = 0.21 | float(0) %}
+        {{ ( (cost + next_energy + energy_tax) * (1+VAT) ) | round(2, default=0) }}
+      attributes:
+        prices: >
+          {% set next_energy = 0.022 | float(0) %}
+          {% set energy_tax  = 0.1088 | float(0) %}
+          {% set VAT         = 0.21 | float(0) %}
+          {% set energy_prices = state_attr('sensor.nord_pool_nl_current_prices_excluding_tax','prices') %}
+          {% set ns = namespace(list=[]) %}
+          {% for i in range(energy_prices|length) %}
+          {%   set ns.list = ns.list+[{'time': energy_prices[i]['time'], 'price':( (energy_prices[i]['price']|float) + next_energy + energy_tax)*(1+VAT)}] %}  
+          {% endfor %}
+          {{ ns.list }}
+
+# template sensors for current percentage of energy price
+    - name: "Current percentage of energy price"
+      unit_of_measurement: "%"
+      state_class: measurement
+      state: >
+        {% set current = states('sensor.nord_pool_nl_current_price') | float(0) %}
+        {% set high    = states('sensor.nord_pool_nl_highest_price') | float(0) %}
+        {% set low     = states('sensor.nord_pool_nl_lowest_price') | float(0) %}
+        {{ ( (current-low)/(high-low) * 100 ) | round(2, default=0) }}
+
 # template sensors to determine the electricity cost per hour EURO/hr
     - name: "Power cost including tax"
       state_class: measurement
       unit_of_measurement: "€/h"
       availability: >
         {% set power   = states('sensor.p1_meter_3c39e72e6af0_active_power') | float("unknown") %}
-        {% set cost    = states('sensor.entsoe_apex_in_current_electricity_market_price') | float("unknown") %}
+        {% set cost    = states('sensor.nord_pool_nl_current_prices_including_tax') | float("unknown") %}
         {{ Power|is_number and Cost|is_number}}
       state: >
           {% set power   = states('sensor.p1_meter_3c39e72e6af0_active_power') | float(0) %}
-          {% set cost    = states('sensor.entsoe_apex_in_current_electricity_market_price') | float(0) %}
+          {% set cost    = states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) %}
           {{ power/1000*cost }}
 
     - name: "Power cost excluding tax"
@@ -18,15 +51,16 @@ template:
       unit_of_measurement: "€/h"
       availability: >
         {% set power   = states('sensor.p1_meter_3c39e72e6af0_active_power') | float("unknown") %}
-        {% set cost    = states('sensor.entsoe_apex_ex_current_electricity_market_price') | float("unknown") %}
+        {% set cost    = states('sensor.nord_pool_nl_current_price') | float("unknown") %}
         {{ Power|is_number and Cost|is_number}}
       state: >
           {% set power   = states('sensor.p1_meter_3c39e72e6af0_active_power') | float(0) %}
-          {% set cost    = states('sensor.entsoe_apex_ex_current_electricity_market_price') | float(0) %}
+          {% set cost    = states('sensor.nord_pool_nl_current_price') | float(0) %}
           {{ power/1000*cost }}
+
 # triggered sensors for the total energy cost per day based on the statistics sensors
   - trigger:
-    - platform: time_pattern
+    - trigger: time_pattern
       hours: 0
       minutes: 0
     sensor:
@@ -35,7 +69,7 @@ template:
         unit_of_measurement: "€"
         state: "{{ states('sensor.energy_cost_over_one_day_including_tax')|float(0) }}"
   - trigger:
-    - platform: time_pattern
+    - trigger: time_pattern
       hours: 0
       minutes: 0
     sensor:
@@ -44,6 +78,33 @@ template:
         unit_of_measurement: "€"
         state: "{{ states('sensor.energy_cost_over_one_day_excluding_tax')|float(0) }}"
 
+# Nord Pool price gathering in attributes excluding tax
+  - trigger:
+    - trigger: time_pattern
+      hours: /1
+    action:
+      - action: nordpool.get_prices_for_date
+        response_variable: energyprices
+        data:
+          config_entry: !secret nord_pole_config_entry
+          date: "{{ now().date() + timedelta(days=0) }}"
+          areas: NL
+          currency: EUR
+    sensor:
+      name: Nord pool NL current prices Excluding Tax
+      unique_id: nord_pool_nl_current_prices_excluding_tax
+      unit_of_measurement: "€/kWh"
+      state: >
+        {% set energy_prices = energyprices['NL'] %}
+        {{ (energy_prices[now().hour]['price'] | float(0)) / 1000 }}
+      attributes:
+        prices: >
+          {% set energy_prices = energyprices['NL'] %}
+          {% set ns = namespace(list=[]) %}
+          {% for i in range(energy_prices|length) %}
+          {%   set ns.list = ns.list+[{'time': energy_prices[i]['start'], 'price':((energy_prices[i]['price']|float)/1000)}] %}  
+          {% endfor %}
+          {{ ns.list }}
 
 sensor:
 # integration of Euro/hr result is Euros

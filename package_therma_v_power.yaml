@@ -51,7 +51,7 @@ template:
       unit_of_measurement: "€/kWh"
       state: >
         {% set CoP      = states('sensor.therma_v_heatpump_cop') | float(0) %}
-        {% set E_price  = states('sensor.entsoe_apex_in_current_electricity_market_price') | float(0) %}
+        {% set E_price  = states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) %}
 
         {% if (CoP > 1) %}
           {{ ( E_price/CoP ) | round(2)}}

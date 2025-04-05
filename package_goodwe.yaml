@@ -50,11 +50,11 @@ automation:
     actions:
       - variables:
           zero_on_meter: "{{ max(min( (states('number.goodwe_grid_export_limit') | float(0)) + 0.8*100/8000*(states('sensor.p1_meter_active_power_filtered') | float(0)) ,100),0) }}"
-          balanced_max:  "{{ max(min( 100.0 - 100.0*(states('sensor.entsoe_apex_ex_current_electricity_market_price') | float(0) | abs) / ((states('sensor.entsoe_apex_in_current_electricity_market_price') | float(0) | abs) + (states('sensor.entsoe_apex_ex_current_electricity_market_price') | float(0) | abs)) ,100),2)  }}" 
+          balanced_max:  "{{ max(min( 100.0 - 100.0*(states('sensor.nord_pool_nl_current_price') | float(0) | abs) / ((states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) | abs) + (states('sensor.nord_pool_nl_current_price') | float(0) | abs)) ,100),2)  }}" 
       - choose:
           - conditions: # ZERO ON INC NEGATIVE
               - condition: numeric_state
-                entity_id: sensor.entsoe_apex_in_current_electricity_market_price
+                entity_id: sensor.nord_pool_nl_current_prices_including_tax
                 below: 0
             sequence:
               - action: number.set_value
@@ -66,7 +66,7 @@ automation:
               - condition: template
                 value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 1 ] ) }}"
               - condition: numeric_state
-                entity_id: sensor.entsoe_apex_ex_current_electricity_market_price
+                entity_id: sensor.nord_pool_nl_current_price
                 below: 0.0
             sequence:
               - action: number.set_value
@@ -78,7 +78,7 @@ automation:
               - condition: template
                 value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 2 ] ) }}"
               - condition: numeric_state
-                entity_id: sensor.entsoe_apex_ex_current_electricity_market_price
+                entity_id: sensor.nord_pool_nl_current_price
                 below: 0.0
             sequence:
               - action: number.set_value
@@ -94,7 +94,7 @@ automation:
                       - condition: template
                         value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 3 ] ) }}"
                       - condition: numeric_state
-                        entity_id: sensor.entsoe_apex_ex_current_electricity_market_price
+                        entity_id: sensor.nord_pool_nl_current_price
                         below: 0.0
                   - condition: template # NO EXPORT
                     value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 4 ] ) }}"

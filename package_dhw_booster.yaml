@@ -25,10 +25,10 @@ automation:
     mode: single
     triggers:
       - trigger: state
-        entity_id: sensor.entsoe_apex_in_current_electricity_market_price
+        entity_id: sensor.nord_pool_nl_current_prices_including_tax
     conditions:
       - condition: template
-        value_template: "{{ (states('sensor.entsoe_apex_in_current_electricity_market_price') | float(0) ) < 0 }}"
+        value_template: "{{ (states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) ) < 0 }}"
     actions:
       - action: switch.turn_on
         entity_id: switch.dhw_booster_2_switch
@@ -41,10 +41,10 @@ automation:
       - trigger: time_pattern
         minutes: "/5"
       - trigger: state
-        entity_id: sensor.entsoe_apex_in_current_electricity_market_price
+        entity_id: sensor.nord_pool_nl_current_prices_including_tax
     conditions:
       - condition: template
-        value_template: "{{ (states('sensor.entsoe_apex_in_current_electricity_market_price') | float(0) ) >= 0 }}"
+        value_template: "{{ (states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) ) >= 0 }}"
     actions:
       - action: switch.turn_off
         entity_id: switch.dhw_booster_2_switch
