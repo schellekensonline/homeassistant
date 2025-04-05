@@ -64,18 +64,19 @@ template:
         state_class: measurement
         unit_of_measurement: "€"
         state: "{{ states('sensor.energy_cost_over_one_day_excluding_tax')|float(0) }}"
-# First try to gather data from nord pool
+
+# First try to gather a whole day of data from nord pool
   - trigger:
     - trigger: time_pattern
       hours: /1
     action:
       - action: nordpool.get_prices_for_date
+        response_variable: energyprices
         data:
           config_entry: 01JR3PMS2SAVAF09BTTA6GCTR3
           date: "{{ now().date() + timedelta(days=0) }}"
           areas: NL
           currency: EUR
-        response_variable: energyprices
     sensor:
       name:
       unique_id: Nord pool NL current price Excluding Tax
