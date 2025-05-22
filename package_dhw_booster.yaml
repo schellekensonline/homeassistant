@@ -1,4 +1,6 @@
 switch:
+  # Template switch to used by the automationsas state memory
+  # seperately from the real state of the relay which can be switched manually too
   - platform: template
     switches:
       dhw_booster_2_switch:
@@ -13,12 +15,16 @@ switch:
             entity_id: switch.shelly_plug_s1
 
 template:
-  - binary_sensor: # State of shelly switche S1 for Therma V DHW heater 2
+  # State of shelly switche S1 for Therma V DHW heater 2
+  # which switches the DHW heater separately from the heatpump
+  - binary_sensor: 
       - name: "Therma V DHW booster 2 state (S1)"
         state: >
           {{ is_state('switch.shelly_plug_s1', 'on') }}
 
 automation:
+  # switch on DHW heater when e-price incl. tax is negative
+  # the DHW heater is switched with a separate parallel relay
   - id: e_price_negative_dhw_auto
     alias: e_price_negative_dhw_auto
     description: Set DHW booster on when E-price is negative 
@@ -32,7 +38,9 @@ automation:
     actions:
       - action: switch.turn_on
         entity_id: switch.dhw_booster_2_switch
-
+  # switch off DHW heater when e-price incl. tax is positive
+  # Done every X minutes to make it robust for HA restarts
+  # the DHW heater is switched with a separate parallel relay
   - id: e_price_positive_dhw_auto
     alias: e_price_negative_dhw_auto
     description: Set DHW booster on when E-price is negative 

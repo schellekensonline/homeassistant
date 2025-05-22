@@ -1,6 +1,6 @@
 template:
   - sensor:
-# template sensor for prices including tax  
+    # Template sensor for prices including tax  
     - name: "Nord pool NL current prices Including Tax"
       unique_id: nord_pool_nl_current_prices_including_tax
       unit_of_measurement: "€/kWh"
@@ -23,7 +23,7 @@ template:
           {% endfor %}
           {{ ns.list }}
 
-# template sensors for current percentage of energy price
+    # Template sensors for current percentage of energy price
     - name: "Current percentage of energy price"
       unit_of_measurement: "%"
       state_class: measurement
@@ -33,7 +33,7 @@ template:
         {% set low     = states('sensor.nord_pool_nl_lowest_price') | float(0) %}
         {{ ( (current-low)/(high-low) * 100 ) | round(2, default=0) }}
 
-# template sensors to determine the electricity cost per hour EURO/hr
+    # Template sensors to determine the electricity cost per hour EURO/hr excl. tax
     - name: "Power cost including tax"
       state_class: measurement
       unit_of_measurement: "€/h"
@@ -45,7 +45,7 @@ template:
           {% set power   = states('sensor.p1_meter_3c39e72e6af0_active_power') | float(0) %}
           {% set cost    = states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) %}
           {{ power/1000*cost }}
-
+    # Template sensors to determine the electricity cost per hour EURO/hr incl. tax
     - name: "Power cost excluding tax"
       state_class: measurement
       unit_of_measurement: "€/h"
@@ -58,7 +58,7 @@ template:
           {% set cost    = states('sensor.nord_pool_nl_current_price') | float(0) %}
           {{ power/1000*cost }}
 
-# triggered sensors for the total energy cost per day based on the statistics sensors
+  # triggered sensors for the total energy cost per day based on the statistics sensors
   - trigger:
     - trigger: time_pattern
       hours: 0
@@ -78,7 +78,7 @@ template:
         unit_of_measurement: "€"
         state: "{{ states('sensor.energy_cost_over_one_day_excluding_tax')|float(0) }}"
 
-# Nord Pool price gathering in attributes excluding tax
+  # Nord Pool price gathering in attributes excluding tax
   - trigger:
     - trigger: time_pattern
       hours: /1
@@ -107,7 +107,7 @@ template:
           {{ ns.list }}
 
 sensor:
-# integration of Euro/hr result is Euros
+  # integration of Euro/hr result is Euros
   - platform: integration
     source: sensor.power_cost_including_tax
     name: "Energy cost including tax"
@@ -120,8 +120,8 @@ sensor:
     method: left
     unit_time: h
     round: 2
-# moving difference over 24hrs used for template sensors that trigger at 0:00
-# utility meters cycle and cannot be used reliably with the triggers in the template sensors
+  # moving difference over 24hrs used for template sensors that trigger at 0:00
+  # utility meters cycle and cannot be used reliably with the triggers in the template sensors
   - platform: statistics
     name: Energy cost over one day including tax
     entity_id: sensor.energy_cost_including_tax

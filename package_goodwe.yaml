@@ -1,4 +1,13 @@
+
 input_select:
+  # Input select to switch between export regimes
+  # 0 - Manual control of grid export limit
+  # 1 - No export with net nagative prices
+  # 2 - No export with net nagative prices
+  #     With gross negative prices the export limiter is scaled down linearly
+  #     But if power usage is higher zero on meter wins
+  # 3 - Net metering when gross prices become negative
+  # 4 - No export only zero on meter  
   goodwe_export_strategy_select:
     name: "Goodwe grid export strategy"
     options:
@@ -11,7 +20,9 @@ input_select:
     icon: mdi:sun-compass
 
 automation:
-  - id: update_goodwe_auto # Manual pollig at lower frequency, more reliable. 
+  # Manual pollig at lower frequency, more reliable than automatic
+  # Switch updating off in HA UI 
+  - id: update_goodwe_auto 
     alias: "Goodwe data polling"
     mode: single
     max_exceeded: silent
@@ -25,16 +36,14 @@ automation:
         target:
           entity_id: sensor.pv_power
 
-  - id: e_price_negative_goodwe_auto # Adjust grid export limit to 0 when prices are negative
+  # Adjust grid export limit to 0 when e-price incl tax is negative
+  - id: e_price_negative_goodwe_auto 
     alias: e_price_negative_goodwe_auto
     description: Set inverter grid_limit to 0% when E-price is negative, E-price from ENTSO-e corrected to incl tax
     mode: single
     max_exceeded: silent 
     triggers:
-      # - trigger: state
-      #   entity_id: sensor.inverter_temperature
       - trigger: time_pattern
-        # minutes: "/3"
         seconds: "/42"
     conditions: 
       - condition: template
@@ -48,14 +57,14 @@ automation:
       - condition: template
         value_template: "{{ not is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 0 ] ) }}"
     actions:
-      - variables:
+      - variables: # Calulate grid export limit for zero-on-meter and balances method
           zero_on_meter: "{{ max(min( (states('number.goodwe_grid_export_limit') | float(0)) + 0.8*100/8000*(states('sensor.p1_meter_active_power_filtered') | float(0)) ,100),0) }}"
           balanced_max:  "{{ max(min( 100.0 - 100.0*(states('sensor.nord_pool_nl_current_price') | float(0) | abs) / ((states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) | abs) + (states('sensor.nord_pool_nl_current_price') | float(0) | abs)) ,100),2)  }}" 
       - choose:
           - conditions: # ZERO ON INC NEGATIVE
               - condition: numeric_state
                 entity_id: sensor.nord_pool_nl_current_prices_including_tax
-                below: 0
+                below: -0.001
             sequence:
               - action: number.set_value
                 target:
@@ -95,7 +104,7 @@ automation:
                         value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 3 ] ) }}"
                       - condition: numeric_state
                         entity_id: sensor.nord_pool_nl_current_price
-                        below: 0.0
+                        below: -0.005
                   - condition: template # NO EXPORT
                     value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 4 ] ) }}"
             sequence:
@@ -111,7 +120,8 @@ automation:
             data:
               value: 100
 
-  - id: goodwe_grid_export_limit_check_auto # Restart integration when grid export limit becomes unavailable
+  # Restart integration when grid export limit becomes unavailable
+  - id: goodwe_grid_export_limit_check_auto 
     alias: "Goodwe grid export limit check"
     description: Restart Goodwe integration when grid export limit is unavailable
     mode: single
@@ -134,14 +144,9 @@ automation:
         target:
           entity_id: number.goodwe_grid_export_limit
 
-      # - condition: not
-      #   conditions:
-          # - condition: state
-          #   entity_id: input_select.goodwe_export_strategy_select
-          #   state: "0 - Manual" # NOT MANUAL
-
-
 sensor:
+  # Filtered power sensor, this filter acts as anti-aliasing filter for the 
+  # zero on meter algorithm
   - platform: filter
     name: "P1 meter active power filtered"
     entity_id: sensor.p1_meter_3c39e72e6af0_active_power

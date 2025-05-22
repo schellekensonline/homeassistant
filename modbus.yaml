@@ -8,7 +8,7 @@
 #    stopbits: 1
 #
 #    slave: 1 
-#    address: manual-1!
+#    address: Therma V manual-1!
 - name: modbus_tcp2rs485_gateway
   type: tcp
   host: 192.168.1.20

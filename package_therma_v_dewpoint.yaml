@@ -1,5 +1,6 @@
 template:
-  - trigger: # Dewpoint from Shelly Plus HT T1
+  # Dewpoint from Shelly Plus HT T1
+  - trigger: 
       - trigger: state
         entity_id:
           - sensor.shelly_plus_ht1_temperature
@@ -14,7 +15,8 @@ template:
           
           {{ ( t1_temp - ((100.0-t1_rh)/5.0) ) | round(0) }}
 
-  - trigger: # Dewpoint from Open Weather
+  # Dewpoint from Open Weather
+  - trigger: 
       - trigger: state
         entity_id:
           - sensor.openweathermap_temperature
@@ -29,7 +31,8 @@ template:
 
           {{ ( ow_temp - ((100.0-ow_rh)/5.0) ) | round(0) }}
   
-  - trigger: # Dewpoint from eWeLink Bathroom
+  # Dewpoint from eWeLink Bathroom
+  - trigger: 
       - trigger: state
         entity_id:
           - sensor.ewelink_snzb_02p_temperature
@@ -45,6 +48,7 @@ template:
           {{ ( t2_temp - ((100.0-t2_rh)/5.0) ) | round(0) }}
 
 automation:
+  # Switch off cooling when dewpoint becomes to high, to prevent condensation when cooling
   - id: cooling_off_based_on_dewpoint_auto
     alias: cooling_off_based_on_dewpoint_auto
     description: Switch off cooling if dewpoint is above 16C

@@ -1,10 +1,12 @@
 template:
-  - binary_sensor: # State of shelly switche S2 for Therma V UFH 
+  # State of shelly switche S2 for Therma V UFH 
+  - binary_sensor: 
     - name: "Therma V UFH pump state (S2)"
       state: >
         {{ is_state('switch.shelly_plug_s2', 'on') }}
 
 automation:
+  # Automation to switch on the UFH circulation pump when nesusary
   - id: switch_on_ufh_pump_auto
     alias: switch_on_ufh_pump_auto
     description: Switch on underfloof heating pump when therma V external pump is active

@@ -1,6 +1,6 @@
 template:
   - sensor:
-      # Thermal power always positive and only non-zero when sign of detaT is corrent
+      # Thermal power, always a positive value and only non-zero when sign of detaT is corrent
     - name: "Therma V thermal power"
       state_class: measurement
       device_class: power
@@ -34,7 +34,7 @@ template:
         {% endif %}
       # Added some noise with deltT on the booster only path 
 
-    # Electric
+    # Electric power of heatpump, total of heatpump circulation pumps and DHW heater
     - name: "Therma V electric power"
       state_class: measurement
       device_class: power
@@ -46,6 +46,7 @@ template:
 
         {{ (p_hp+p_ufh+p_dhw_cir) | round(0) }}
 
+    # Calculates the cost of heat as EURO/kWhr
     - name: "Price of heat incl tax"
       state_class: measurement
       unit_of_measurement: "€/kWh"
@@ -77,7 +78,7 @@ template:
           {{ 0.00 | round(2) }}
         {% endif %}
 
-      # SCoP purely on energies 
+      # SCoP based on thermal and electic energies 
     - name: "Therma V Heatpump SCoP"
       state_class: measurement
       availability: >
@@ -90,6 +91,7 @@ template:
 
         {{ min( max(et_scop,1.0)/max(ee_scop,1.0) , 10.0) | round(2) }}
 
+    # Delta T of heatpump output
     - name: "Therma V delta T"
       state_class: measurement
       device_class: temperature
@@ -104,6 +106,7 @@ template:
 
         {{ (Tout_lg-Tin_lg) | round(2) }}
 
+    # Delta T of buffer output to central heating
     - name: "Heating delta T"
       state_class: measurement
       device_class: temperature
@@ -143,34 +146,3 @@ sensor:
     unit_prefix: k
     unit_time: h
     round: 1
-
-# Filters
-  # - platform: filter
-  #   name: "Therma V electric power"
-  #   entity_id: sensor.therma_v_electric_power_unfiltered
-  #   filters:
-  #     - filter: lowpass
-  #       time_constant: 10
-
-  # - platform: filter
-  #   name: "Therma V thermal power"
-  #   entity_id: sensor.therma_v_thermal_power_unfiltered
-  #   filters:
-  #     - filter: lowpass
-  #       time_constant: 10
-
-  # - platform: filter
-  #   name: "Therma V delta T"
-  #   entity_id: sensor.therma_v_delta_t_unfiltered
-  #   filters:
-  #     - filter: outlier
-  #       window_size: 4
-  #       radius: 2.0
-
-  # - platform: filter
-  #   name: "Heating delta T"
-  #   entity_id: sensor.heating_delta_t_unfiltered
-  #   filters:
-  #     - filter: outlier
-  #       window_size: 4
-  #       radius: 2.0

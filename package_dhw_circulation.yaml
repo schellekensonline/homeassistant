@@ -1,4 +1,6 @@
 switch:
+  # Template switch to used by the automationsas as state memory
+  # seperately from the real state of the relay which can be switched manually too
   - platform: template
     switches:
       dhw_circulation_switch:
@@ -13,12 +15,17 @@ switch:
             entity_id: switch.shelly_plug_s3
 
 template:
-  - binary_sensor: # State of shelly switche S3 for boiler circulation UFH 
+  # State of shelly switche S3 for DHW circulation pump
+  # The circulation pump is for a vertical water tank to have more
+  # equal heating during disinfection cycles and heating cycles
+  - binary_sensor: 
       - name: "Therma V DHW circulation state (S3)"
         state: >
           {{ is_state('switch.shelly_plug_s3', 'on') }}
 
 automation:
+  # Switch on the circulation pump during long heating cycles and 
+  # when the DHW heater has been turned on for a while
   - id: dhw_circulation_on_auto
     alias: dhw_circulation_on_auto
     description: Set the DHW circulation state to on
@@ -60,6 +67,8 @@ automation:
             entity_id: switch.dhw_circulation_switch
 
   - id: dhw_circulation_off_auto
+    # Switch off the circulation after heating (HP or heater by heatpump or relay)
+    # This is also triggered every X minutes to make it robust for HA reboots
     alias: dhw_circulation_off_auto
     description: Set the DHW circulation state to off
     mode: restart
