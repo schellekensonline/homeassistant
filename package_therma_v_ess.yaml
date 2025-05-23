@@ -16,18 +16,6 @@ input_select:
     icon: mdi:state
 
 
-template:
-  # sensor that determines the e-price difference today
-  - sensor:
-      - name: "Difference in electricity price today"
-        state_class: measurement
-        unit_of_measurement: '%'
-        state: >
-          {% set eprice_low = states('sensor.nord_pool_nl_lowest_price') | float(0) %} 
-          {% set eprice_hig = states('sensor.nord_pool_nl_highest_price') | float(0) %}   
-          
-          {{ ( (eprice_hig-eprice_low) )  | round(2) }} 
-
 automation:
   # Automation that deals with setting ESS for net negative energy prices
   - id: ess_based_on_e_price_negative_auto
@@ -72,10 +60,10 @@ automation:
             data:
               option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 6 ] }}' # High power state
 
-  # Automation that deals with setting ESS for positive energy prices
+  # Automation that deals with setting ESS for positive energy prices low price difference
   - id: ess_based_on_e_price_positive_normal_auto
     alias: ess_based_on_e_price_positive_normal_auto
-    description: Set the ESS state of the Therma V based on positive e-price normal difference
+    description: Set the ESS state of the Therma V based on positive e-price low price difference
     mode: restart
     triggers:
       - trigger: state
@@ -94,18 +82,6 @@ automation:
           seconds: 0
       - choose:
           - conditions:
-              - condition: numeric_state
-                entity_id: sensor.current_percentage_of_energy_price
-                below: 5
-              - condition: template
-                value_template: "{{ (states('sensor.nord_pool_nl_next_price') | float(0) ) >= (states('sensor.nord_pool_nl_current_price') | float(0) ) }}"    
-            sequence:
-              - action: input_select.select_option
-                target:
-                  entity_id: input_select.therma_v_ess_select
-                data:
-                  option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 6 ] }}' # High power state
-          - conditions:
               - or:
                   - condition: numeric_state
                     entity_id: sensor.current_percentage_of_energy_price
@@ -119,26 +95,6 @@ automation:
                   entity_id: input_select.therma_v_ess_select
                 data:
                   option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 2 ] }}' # Normal power state also always during DHW run
-          - conditions:
-              - condition: state
-                entity_id: binary_sensor.therma_v_dhw_heating_state
-                state: "on"
-            sequence:
-              - action: input_select.select_option
-                target:
-                  entity_id: input_select.therma_v_ess_select
-                data:
-                  option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 2 ] }}' # At least Normal ESS during DHW run
-          - conditions:
-              - condition: numeric_state
-                entity_id: sensor.current_percentage_of_energy_price
-                above: 75
-            sequence:
-              - action: input_select.select_option
-                target:
-                  entity_id: input_select.therma_v_ess_select
-                data:
-                  option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 8 ] }}' # Very low power state
         default:
           sequence:
             - action: input_select.select_option
@@ -146,6 +102,67 @@ automation:
                 entity_id: input_select.therma_v_ess_select
               data:
                 option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 7 ] }}' # Low power state
+
+# Automation that deals with setting ESS for positive energy prices high price difference
+  - id: ess_based_on_e_price_positive_high_auto
+    alias: ess_based_on_e_price_positive_high_auto
+    description: Set the ESS state of the Therma V based on positive e-price high price difference
+    mode: restart
+    triggers:
+      - trigger: state
+        entity_id: sensor.nord_pool_nl_current_prices_including_tax
+      - trigger: state
+        entity_id: binary_sensor.therma_v_dhw_heating_state
+    conditions:
+      - condition: template
+        value_template: "{{ (states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) ) > 0 }}"
+      - condition: template
+        value_template: "{{ (states('sensor.difference_in_electricity_price_today') | float(0) ) >= 0.10 }}" # USED FOR NOMAL AND HIGH
+    actions:
+      - delay:
+          hours: 0
+          minutes: 5
+          seconds: 0
+      - choose:
+        - conditions:
+            - condition: numeric_state
+              entity_id: sensor.current_percentage_of_energy_price
+              below: 5
+            - condition: template
+              value_template: "{{ (states('sensor.nord_pool_nl_next_price') | float(0) ) >= (states('sensor.nord_pool_nl_current_price') | float(0) ) }}"    
+          sequence:
+            - action: input_select.select_option
+              target:
+                entity_id: input_select.therma_v_ess_select
+              data:
+                option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 6 ] }}' # High power state
+        - conditions:
+            - condition: state
+              entity_id: binary_sensor.therma_v_dhw_heating_state
+              state: "on"
+          sequence:
+            - action: input_select.select_option
+              target:
+                entity_id: input_select.therma_v_ess_select
+              data:
+                option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 2 ] }}' # At least Normal ESS during DHW run
+        - conditions:
+            - condition: numeric_state
+              entity_id: sensor.current_percentage_of_energy_price
+              above: 75
+          sequence:
+            - action: input_select.select_option
+              target:
+                entity_id: input_select.therma_v_ess_select
+              data:
+                option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 8 ] }}' # Very low power state
+        default:
+          - action: input_select.select_option
+            target:
+              entity_id: input_select.therma_v_ess_select
+            data:
+              option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 7 ] }}' # Low power state
+
 
   # Update function for ESS state. Sets input select based on HP state and vice verse
   - id: therma_v_update_energy_saving_state_auto

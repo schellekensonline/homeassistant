@@ -33,6 +33,16 @@ template:
         {% set low     = states('sensor.nord_pool_nl_lowest_price') | float(0) %}
         {{ ( (current-low)/(high-low) * 100 ) | round(2, default=0) }}
 
+    # sensor that determines the e-price difference today
+    - name: "Difference in electricity price today"
+      state_class: measurement
+      unit_of_measurement: '%'
+      state: >
+        {% set eprice_low = states('sensor.nord_pool_nl_lowest_price') | float(0) %} 
+        {% set eprice_hig = states('sensor.nord_pool_nl_highest_price') | float(0) %}   
+        
+        {{ ( (eprice_hig-eprice_low) )  | round(2) }} 
+
     # Template sensors to determine the electricity cost per hour EURO/hr excl. tax
     - name: "Power cost including tax"
       state_class: measurement
