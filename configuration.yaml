@@ -6,9 +6,9 @@ default_config:
 # Logging settings
 logger:
   default: warning
-  logs:
-    homeassistant.components.modbus: debug
-    pymodbus: debug
+  # logs:
+  #   homeassistant.components.modbus: debug
+  #   pymodbus: debug
 
 
 # Load frontend themes from the themes folder

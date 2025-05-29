@@ -37,7 +37,7 @@ automation:
     max_exceeded: silent 
     triggers:
       - trigger: time_pattern
-        seconds: "/13"
+        seconds: "/21"
     conditions: 
       - condition: template
         value_template: "{{ not is_state('input_number.goodwe_grid_export_limit', 'unavailable') }}"
@@ -51,8 +51,8 @@ automation:
         value_template: "{{ not is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 0 ] ) }}"
     actions:
       - variables: # Calulate grid export limit for zero-on-meter and balances method
-          zero_on_meter: "{{ max(min( (states('sensor.goodwe_export_power_limit') | float(0)) + 0.8*100/8000*(states('sensor.p1_meter_active_power_filtered') | float(0)) ,100),0) }}"
-          balanced_max:  "{{ max(min( 100.0 - 100.0*(states('sensor.nord_pool_nl_current_price') | float(0) | abs) / ((states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) | abs) + (states('sensor.nord_pool_nl_current_price') | float(0) | abs)) ,100),2)  }}" 
+          zero_on_meter: "{{ max(min( (states('input_number.goodwe_grid_export_limit') | float(0)) + 0.8*100/8000*(states('sensor.p1_meter_active_power_filtered') | float(0)) ,100),0) }}"
+          balanced_max:  "{{ max(min( 100.0 - 100.0*(states('sensor.nord_pool_nl_current_price') | float(0) | abs) / ((states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) | abs) + (states('sensor.nord_pool_nl_current_price') | float(0) | abs)) ,100),0)  }}" 
       - choose:
           - conditions: # ZERO ON INC NEGATIVE
               - condition: numeric_state
@@ -139,7 +139,7 @@ automation:
               id: grid_export_limit_modbus_trig
           sequence:
             - variables:
-                modbus_value: '{{ trigger.to_state.state | int(0) }}'
+                modbus_value: '{{ trigger.to_state.state | round(0) }}'
             - action: input_number.set_value
               target:
                 entity_id: input_number.goodwe_grid_export_limit
@@ -157,10 +157,10 @@ automation:
                 # Should be written as [array] mode 0x10 iso (single data) mode 0x06
                 # Even for int16 and uint16, which is in violation with modbus spec
                 # The goodwe modbus manual explains this correctly though    
-                value: '{{ [ (trigger.to_state.state | int(0)) ]   }}'
+                value: '{{ [ (trigger.to_state.state | round(0) | int(0)) ]   }}'
         default:
           - variables:
-              modbus_value: '{{ states("sensor.goodwe_export_power_limit") | int(0) }}'
+              modbus_value: '{{ states("sensor.goodwe_export_power_limit") | round(0) }}'
           - action: input_number.set_value
             target:
               entity_id: input_number.goodwe_grid_export_limit
@@ -216,4 +216,4 @@ sensor:
     entity_id: sensor.p1_meter_3c39e72e6af0_active_power
     filters:
       - filter: lowpass
-        time_constant: 13
+        time_constant: 4

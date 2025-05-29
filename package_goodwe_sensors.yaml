@@ -13,8 +13,7 @@ template:
         {% set Vpv1 = states('sensor.goodwe_pv1_input_voltage') | float(0) %}
         {% set Ipv1 = states('sensor.goodwe_pv1_input_current') | float(0) %}
 
-        {{ Vpv1*Ipv1 | round(0) }}
-
+        {{ (Vpv1*Ipv1) | round(0) }}
     # Compatibility sensor Goodwe integration
     - name: "Goodwe PV2 input power"
       state_class: measurement
@@ -28,8 +27,7 @@ template:
         {% set Vpv2 = states('sensor.goodwe_pv2_input_voltage') | float(0) %}
         {% set Ipv2 = states('sensor.goodwe_pv2_input_current') | float(0) %}
 
-        {{ Vpv2*Ipv2 | round(0) }}
-
+        {{ (Vpv2*Ipv2) | round(0) }}
     - name: "Goodwe total PV input power"
       state_class: measurement
       device_class: power
@@ -45,7 +43,50 @@ template:
         {% set Ipv1 = states('sensor.goodwe_pv1_input_current') | float(0) %}
         {% set Vpv2 = states('sensor.goodwe_pv2_input_voltage') | float(0) %}
         {% set Ipv2 = states('sensor.goodwe_pv2_input_current') | float(0) %}
-        {{ (Vpv1*Ipv1)+(Vpv2*Ipv2) | round(0) }}
+        {{ ((Vpv1*Ipv1)+(Vpv2*Ipv2)) | round(0) }}
+    
+    # Compatibility sensor Goodwe integration
+    - name: "Goodwe L1 phase power"
+      state_class: measurement
+      device_class: power
+      unit_of_measurement: "W" 
+      availability: >
+        {% set VL1 = states('sensor.goodwe_l1_phase_voltage') | float("unknown") %}
+        {% set IL1 = states('sensor.goodwe_l1_phase_current') | float("unknown") %}
+        {{ VL1|is_number and IL1|is_number}}
+      state: >
+        {% set VL1 = states('sensor.goodwe_l1_phase_voltage') | float(0) %}
+        {% set IL1 = states('sensor.goodwe_l1_phase_current') | float(0) %}
+
+        {{ (VL1*IL1) | round(0) }}
+    # Compatibility sensor Goodwe integration
+    - name: "Goodwe L2 phase power"
+      state_class: measurement
+      device_class: power
+      unit_of_measurement: "W"
+      availability: >
+        {% set VL2 = states('sensor.goodwe_l2_phase_voltage') | float("unknown") %}
+        {% set IL2 = states('sensor.goodwe_l2_phase_current') | float("unknown") %}
+        {{ VL2|is_number and IL2|is_number}}
+      state: >
+        {% set VL2 = states('sensor.goodwe_l2_phase_voltage') | float(0) %}
+        {% set IL2 = states('sensor.goodwe_l2_phase_current') | float(0) %}
+
+        {{ (VL2*IL2) | round(0) }}
+    # Compatibility sensor Goodwe integration
+    - name: "Goodwe L3 phase power"
+      state_class: measurement
+      device_class: power
+      unit_of_measurement: "W"
+      availability: >
+        {% set VL3 = states('sensor.goodwe_l3_phase_voltage') | float("unknown") %}
+        {% set IL3 = states('sensor.goodwe_l3_phase_current') | float("unknown") %}
+        {{ VL3|is_number and IL3|is_number}}
+      state: >
+        {% set VL3 = states('sensor.goodwe_l3_phase_voltage') | float(0) %}
+        {% set IL3 = states('sensor.goodwe_l3_phase_current') | float(0) %}
+
+        {{ (VL3*IL3) | round(0) }}
 
 modbus:
   # Custom modbus interface
