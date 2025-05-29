@@ -204,7 +204,7 @@ automation:
               data_template:
                 address: 9
                 slave: 1
-                hub: modbus_tcp2rs485_gateway
+                hub: modbus_gateway_therma_v
                 value: '{{ trigger.to_state.state[0] | int(0)  }}'
         default:
           - variables:

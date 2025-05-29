@@ -1,0 +1,219 @@
+input_select:
+  # Input select to switch between export regimes
+  # 0 - Manual control of grid export limit
+  # 1 - No export with net nagative prices
+  # 2 - No export with net nagative prices
+  #     With gross negative prices the export limiter is scaled down linearly
+  #     But if power usage is higher zero on meter wins
+  # 3 - Net metering when gross prices become negative
+  # 4 - No export only zero on meter  
+  goodwe_export_strategy_select:
+    name: "Goodwe grid export strategy"
+    options:
+      - "0 - Manual"
+      - "1 - Maximum (zero export with net negative prices)"
+      - "2 - Balanced (ratiomatic export with gross negative prices)"
+      - "3 - Minimum (zero om meter with gross negative prices)"
+      - "4 - No (zero on meter)"
+    initial: "3 - Minimum (zero om meter with gross negative prices)"
+    icon: mdi:sun-compass
+
+input_number:
+  goodwe_grid_export_limit:
+    name: "Goodwe grid export limit"
+    initial: 100
+    min: 0
+    max: 100
+    step: 1
+    mode: slider
+    unit_of_measurement: "%"
+
+automation:
+  # Adjust grid export limit to 0 when e-price incl tax is negative
+  - id: e_price_negative_goodwe_auto 
+    alias: e_price_negative_goodwe_auto
+    description: Set inverter grid_limit to 0% when E-price is negative, E-price from ENTSO-e corrected to incl tax
+    mode: single
+    max_exceeded: silent 
+    triggers:
+      - trigger: time_pattern
+        seconds: "/13"
+    conditions: 
+      - condition: template
+        value_template: "{{ not is_state('input_number.goodwe_grid_export_limit', 'unavailable') }}"
+      - condition: template
+        value_template: "{{ not is_state('input_number.goodwe_grid_export_limit', 'unknown') }}"
+      - condition: template
+        value_template: "{{ not is_state('sensor.goodwe_total_pv_power', 'unavailable') }}"
+      - condition: template
+        value_template: "{{ not is_state('sensor.goodwe_total_pv_power', 'unknown') }}"
+      - condition: template
+        value_template: "{{ not is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 0 ] ) }}"
+    actions:
+      - variables: # Calulate grid export limit for zero-on-meter and balances method
+          zero_on_meter: "{{ max(min( (states('sensor.goodwe_export_power_limit') | float(0)) + 0.8*100/8000*(states('sensor.p1_meter_active_power_filtered') | float(0)) ,100),0) }}"
+          balanced_max:  "{{ max(min( 100.0 - 100.0*(states('sensor.nord_pool_nl_current_price') | float(0) | abs) / ((states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) | abs) + (states('sensor.nord_pool_nl_current_price') | float(0) | abs)) ,100),2)  }}" 
+      - choose:
+          - conditions: # ZERO ON INC NEGATIVE
+              - condition: numeric_state
+                entity_id: sensor.nord_pool_nl_current_prices_including_tax
+                below: -0.001
+            sequence:
+              - action: input_number.set_value
+                target:
+                  entity_id: input_number.goodwe_grid_export_limit
+                data:
+                  value: 0.0
+          - conditions: # MAXIMUM EXPORT
+              - condition: template
+                value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 1 ] ) }}"
+              - condition: numeric_state
+                entity_id: sensor.nord_pool_nl_current_price
+                below: 0.0
+            sequence:
+              - action: input_number.set_value
+                target:
+                  entity_id: input_number.goodwe_grid_export_limit
+                data:
+                  value: 100
+          - conditions: # BALANCED EXPORT
+              - condition: template
+                value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 2 ] ) }}"
+              - condition: numeric_state
+                entity_id: sensor.nord_pool_nl_current_price
+                below: 0.0
+            sequence:
+              - action: input_number.set_value
+                target:
+                  entity_id: input_number.goodwe_grid_export_limit
+                data:
+                  value: "{{ max(balanced_max,zero_on_meter) | round(0) }}"
+          - conditions: # MINIMUM EXPORT OR NO EXPORT
+              - condition: or
+                conditions: 
+                  - condition: and
+                    conditions: # MINIMUM EXPORT
+                      - condition: template
+                        value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 3 ] ) }}"
+                      - condition: numeric_state
+                        entity_id: sensor.nord_pool_nl_current_price
+                        below: -0.005
+                  - condition: template # NO EXPORT
+                    value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 4 ] ) }}"
+            sequence:
+              - action: input_number.set_value
+                target:
+                  entity_id: input_number.goodwe_grid_export_limit
+                data:
+                  value: "{{ zero_on_meter | round(0) }}"
+        default:
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.goodwe_grid_export_limit
+            data:
+              value: 100
+
+  # Update function for grid export limit. Sets input number based on Goodwe state and vice verse
+  - id: goodwe_update_grid_export_limit_auto
+    alias: Goodwe update grid export limit
+    description: Synchronizes the Goodwe grid export limit input number and modbus state
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id:
+          - sensor.goodwe_export_power_limit
+        id: grid_export_limit_modbus_trig
+      - trigger: state
+        entity_id:
+          - input_number.goodwe_grid_export_limit
+        id: grid_export_limit_number_trig
+      - trigger: homeassistant
+        event: start
+        id: grid_export_limit_ha_start_trig
+    conditions: []
+    actions:
+      - choose:
+        - conditions:
+            - condition: trigger
+              id: grid_export_limit_modbus_trig
+          sequence:
+            - variables:
+                modbus_value: '{{ trigger.to_state.state | int(0) }}'
+            - action: input_number.set_value
+              target:
+                entity_id: input_number.goodwe_grid_export_limit
+              data:
+                option: '{{ modbus_value }}'
+        - conditions:
+            - condition: trigger
+              id: grid_export_limit_number_trig
+          sequence:
+            - action: modbus.write_register
+              data_template:
+                address: 292
+                slave: 1
+                hub: modbus_gateway_goodwe
+                # Should be written as [array] mode 0x10 iso (single data) mode 0x06
+                # Even for int16 and uint16, which is in violation with modbus spec
+                # The goodwe modbus manual explains this correctly though    
+                value: '{{ [ (trigger.to_state.state | int(0)) ]   }}'
+        default:
+          - variables:
+              modbus_value: '{{ states("sensor.goodwe_export_power_limit") | int(0) }}'
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.goodwe_grid_export_limit
+            data:
+              option: '{{ modbus_value }}'
+
+  # # Restart integration when grid export limit becomes unavailable
+  # - id: goodwe_grid_export_limit_check_auto 
+  #   alias: "Goodwe grid export limit check"
+  #   description: Restart Goodwe integration when grid export limit is unavailable
+  #   mode: single
+  #   triggers:
+  #     - trigger: time_pattern
+  #       hours: "/1"
+  #   conditions:
+  #     - condition: or
+  #       conditions:
+  #         - condition: template
+  #           value_template: "{{ is_state('number.goodwe_grid_export_limit', 'unavailable') }}"        
+  #         - condition: template
+  #           value_template: "{{ is_state('number.goodwe_grid_export_limit', 'unknown') }}"
+  #     - condition: template
+  #       value_template: "{{ not is_state('sensor.pv_power', 'unavailable') }}"
+  #     - condition: template
+  #       value_template: "{{ not is_state('sensor.pv_power', 'unknown') }}"
+  #   actions:
+  #     - action: homeassistant.reload_config_entry
+  #       target:
+  #         entity_id: number.goodwe_grid_export_limit
+
+  # # Manual pollig at lower frequency, more reliable than automatic
+  # # Switch updating off in HA UI 
+  # - id: update_goodwe_auto 
+  #   alias: "Goodwe data polling"
+  #   mode: single
+  #   max_exceeded: silent
+  #   triggers:
+  #     - trigger: time_pattern
+  #       minutes: "/3"
+  #     - trigger: homeassistant
+  #       event: start
+  #   actions:
+  #     - action: homeassistant.update_entity
+  #       target:
+  #         entity_id: sensor.pv_power
+
+
+sensor:
+  # Filtered power sensor, this filter acts as anti-aliasing filter for the 
+  # zero on meter algorithm
+  - platform: filter
+    name: "P1 meter active power filtered"
+    entity_id: sensor.p1_meter_3c39e72e6af0_active_power
+    filters:
+      - filter: lowpass
+        time_constant: 13

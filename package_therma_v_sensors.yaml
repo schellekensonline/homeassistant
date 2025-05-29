@@ -1,0 +1,576 @@
+template:
+  - sensor:
+      # Thermal power, always a positive value and only non-zero when sign of detaT is corrent
+    - name: "Therma V thermal power"
+      state_class: measurement
+      device_class: power
+      unit_of_measurement: "W"
+      availability: >
+        {% set Tout_lg   = states('sensor.therma_v_buffer_temperatures_in_from_heatpump_t1') | float("unknown") %}
+        {% set Tin_lg    = states('sensor.therma_v_buffer_temperatures_return_to_heatpump_t4') | float("unknown") %}
+        {{ Tout_lg|is_number and Tin_lg|is_number}}
+      state: >
+        {% set active_p   = is_state('binary_sensor.therma_v_defrost_state','off') %}
+
+        {% set boost1_p   = is_state('binary_sensor.therma_v_dhw_booster_state','on') %}
+        {% set boost2_p   = is_state('binary_sensor.therma_v_dhw_booster_2_state_s1','on') %}
+
+        {% set flow_lg   = states('sensor.therma_v_water_flow_rate') | float(0) %}
+        {% set Tout_lg   = states('sensor.therma_v_buffer_temperatures_in_from_heatpump_t1') | float(0) %}
+        {% set Tin_lg    = states('sensor.therma_v_buffer_temperatures_return_to_heatpump_t4') | float(0) %}
+        {% set rho_water = 1.0 | float(0) %}
+        {% set c_water   = 4184.0 | float(0) %}
+
+        {% if ( boost1_p or boost2_p ) %}
+          {% set p_boost = 1500.0 | float(0) %}
+        {% else %}  
+          {% set p_boost = 0.0 | float(0) %}
+        {% endif %}  
+
+        {% if active_p and (flow_lg > 8) %}
+          {{ min( (((rho_water*flow_lg/60*c_water*(Tout_lg-Tin_lg)) | abs ) + p_boost) , 15000) | round(0) }}
+        {% else %}
+          {{ ( (Tout_lg-Tin_lg) + p_boost ) | round(0) }}
+        {% endif %}
+      # Added some noise with deltT on the booster only path 
+
+    # Electric power of heatpump, total of heatpump circulation pumps and DHW heater
+    - name: "Therma V electric power"
+      state_class: measurement
+      device_class: power
+      unit_of_measurement: "W"
+      state: >
+        {% set p_ufh     = states('sensor.shelly_plug_s2_power') | float(0) %}
+        {% set p_dhw_cir = states('sensor.shelly_plug_s3_power') | float(0) %}
+        {% set p_hp      = states('sensor.kwh_meter_3_phase_3c39e72df94a_active_power') | float(0) %}
+
+        {{ (p_hp+p_ufh+p_dhw_cir) | round(0) }}
+
+    # Calculates the cost of heat as EURO/kWhr
+    - name: "Price of heat incl tax"
+      state_class: measurement
+      unit_of_measurement: "€/kWh"
+      state: >
+        {% set CoP      = states('sensor.therma_v_heatpump_cop') | float(0) %}
+        {% set E_price  = states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) %}
+
+        {% if (CoP > 1) %}
+          {{ ( E_price/CoP ) | round(2)}}
+        {% else %}  
+          {{ 0.00 | round(2)}}
+        {% endif %}  
+
+      # CoP only active when E and T powers >500W
+    - name: "Therma V Heatpump CoP"
+      state_class: measurement
+      availability: >
+        {% set pt_cop = states('sensor.therma_v_thermal_power') | float("unknown") %}
+        {% set pe_cop = states('sensor.therma_v_electric_power') | float("unknown") %}
+        {{ pt_cop|is_number and pe_cop|is_number}}
+      state: >
+        {% set pt_cop = states('sensor.therma_v_thermal_power') | float(0) %}
+        {% set pe_cop = states('sensor.therma_v_electric_power') | float(0) %}
+        {% set on_cop  = is_state('binary_sensor.therma_v_compressor_state','on') %}
+
+        {% if (pe_cop > 500.0) and (pt_cop > 500.0) and on_cop %}
+          {{ min( (pt_cop / pe_cop) , 10.0) | round(2) }}
+        {% else %}
+          {{ 0.00 | round(2) }}
+        {% endif %}
+
+      # SCoP based on thermal and electic energies 
+    - name: "Therma V Heatpump SCoP"
+      state_class: measurement
+      availability: >
+        {% set et_scop     = states('sensor.therma_v_scop_thermal_energy') | float("unknown") %}
+        {% set ee_scop     = states('sensor.therma_v_scop_electric_energy') | float("unknown") %}
+        {{ et_scop|is_number and ee_scop|is_number}}
+      state: >
+        {% set et_scop     = states('sensor.therma_v_scop_thermal_energy') | float(0) %}
+        {% set ee_scop     = states('sensor.therma_v_scop_electric_energy') | float(0) %}
+
+        {{ min( max(et_scop,1.0)/max(ee_scop,1.0) , 10.0) | round(2) }}
+
+    # Delta T of heatpump output
+    - name: "Therma V delta T"
+      state_class: measurement
+      device_class: temperature
+      unit_of_measurement: "°C"
+      availability: >
+        {% set Tout_lg   = states('sensor.therma_v_buffer_temperatures_in_from_heatpump_t1') | float("unknown") %}
+        {% set Tin_lg    = states('sensor.therma_v_buffer_temperatures_return_to_heatpump_t4') | float("unknown") %}
+        {{ Tout_lg|is_number and Tin_lg|is_number}}
+      state: >
+        {% set Tout_lg   = states('sensor.therma_v_buffer_temperatures_in_from_heatpump_t1') | float(0) %}
+        {% set Tin_lg    = states('sensor.therma_v_buffer_temperatures_return_to_heatpump_t4') | float(0) %}
+
+        {{ (Tout_lg-Tin_lg) | round(2) }}
+
+    # Delta T of buffer output to central heating
+    - name: "Heating delta T"
+      state_class: measurement
+      device_class: temperature
+      unit_of_measurement: "°C"
+      availability: >
+        {% set Tout_buf   = states('sensor.therma_v_buffer_temperatures_out_to_heating_t2') | float("unknown") %}
+        {% set Tin_buf    = states('sensor.therma_v_buffer_temperatures_return_from_heating_t3') | float("unknown") %}
+        {{ Tout_buf|is_number and Tin_buf|is_number}}
+      state: >
+        {% set Tout_buf   = states('sensor.therma_v_buffer_temperatures_out_to_heating_t2') | float(0) %}
+        {% set Tin_buf    = states('sensor.therma_v_buffer_temperatures_return_from_heating_t3') | float(0) %}
+
+        {{ (Tout_buf-Tin_buf) | round(2) }}
+
+sensor:
+# Energy
+  - platform: integration
+    source: sensor.therma_v_electric_power
+    name: "Therma V electric energy"
+    method: left 
+    unit_prefix: k
+    unit_time: h
+    round: 1
+
+  - platform: integration
+    source: sensor.therma_v_electric_power
+    name: "Therma V SCOP electric energy"
+    method: left 
+    unit_prefix: k
+    unit_time: h
+    round: 1
+
+  - platform: integration
+    source: sensor.therma_v_thermal_power
+    name: "Therma V SCOP thermal energy"
+    method: left 
+    unit_prefix: k
+    unit_time: h
+    round: 1
+
+
+modbus:
+  # Custom modbus: interface 
+  #
+  # Therma V
+  #    baudrate: 9600
+  #    bytesize: 8
+  #    method: rtu
+  #    parity: N
+  #    stopbits: 1
+  #
+  #    slave: 1 
+  #    address: Therma V manual-1!
+  - name: "modbus_gateway_therma_v"
+    type: tcp
+    host: 192.168.1.20
+    port: 502
+    delay: 0
+    message_wait_milliseconds: 200
+
+    sensors:
+      # INPUT REGISTRERS
+      - name: "Therma V error code"
+        scan_interval: 14
+        address: 0
+        slave: 1
+        input_type: input
+
+      # - name: "Therma V outdoor unit state" # 0 off, 1 cooling, 2 heating
+      #   scan_interval: 14
+      #   address: 1
+      #   slave: 1
+      #   input_type: input
+
+      - name: "Therma V inlet temperature"
+        scan_interval: 14
+        address: 2
+        slave: 1
+        input_type: input
+        precision: 1
+        scale: 0.1
+        state_class: measurement
+        device_class: temperature
+        unit_of_measurement: "°C"
+
+      - name: "Therma V outlet temperature"
+        scan_interval: 14
+        address: 3
+        slave: 1
+        input_type: input
+        precision: 1
+        scale: 0.1
+        state_class: measurement
+        device_class: temperature
+        unit_of_measurement: "°C"
+
+      # - name: "Therma V DHW temperature"
+      #   scan_interval: 14
+      #   address: 5
+      #   slave: 1
+      #   input_type: input
+      #   precision: 1
+      #   scale: 0.1
+      #   device_class: temperature
+      #   unit_of_measurement: "°C"
+
+      # - name: "Therma V room temperature"
+      #   scan_interval: 14
+      #   address: 7
+      #   slave: 1
+      #   input_type: input
+      #   precision: 1
+      #   scale: 0.1
+      #   device_class: temperature
+      #   unit_of_measurement: "°C"
+
+      - name: "Therma V water flow rate"
+        scan_interval: 14
+        address: 8
+        slave: 1
+        input_type: input
+        precision: 1
+        scale: 0.1
+        state_class: measurement
+        device_class: volume_flow_rate
+        unit_of_measurement: "l/min"
+
+      - name: "Therma V energy state"
+        scan_interval: 14
+        address: 11
+        slave: 1
+        input_type: input
+
+      - name: "Therma V outside temperature"
+        scan_interval: 14
+        address: 12
+        slave: 1
+        input_type: input
+        precision: 1
+        scale: 0.1
+        state_class: measurement
+        device_class: temperature
+        unit_of_measurement: "°C"
+
+      # - name: "Therma V pipe in temperature"
+      #   scan_interval: 14
+      #   address: 16
+      #   slave: 1
+      #   input_type: input
+      #   scale: 0.1
+      #   state_class: measurement
+      #   device_class: temperature
+      #   unit_of_measurement: "°C"
+      
+      # - name: "Therma V pipe out temperature"
+      #   scan_interval: 14
+      #   address: 17
+      #   slave: 1
+      #   input_type: input
+      #   scale: 0.01
+      #   state_class: measurement
+      #   device_class: temperature
+      #   unit_of_measurement: "°C"
+
+      - name: "Therma V fan air input temperature"
+        scan_interval: 14
+        address: 18
+        slave: 1
+        input_type: input
+        precision: 1
+        scale: 0.1
+        state_class: measurement
+        device_class: temperature
+        unit_of_measurement: "°C"
+
+      - name: "Therma V fan RPM"
+        scan_interval: 14
+        address: 19
+        slave: 1
+        input_type: input
+        scale: 1
+        state_class: measurement
+        unit_of_measurement: "RPM"
+
+      - name: "Therma V heat exchanger temperature"
+        scan_interval: 14
+        address: 20
+        slave: 1
+        input_type: input
+        precision: 1
+        scale: 0.1
+        state_class: measurement
+        device_class: temperature
+        unit_of_measurement: "°C"
+
+      # - name: "Therma V compressor pressure high"
+      #   scan_interval: 14
+      #   address: 22
+      #   slave: 1
+      #   input_type: input
+      #   scale: 1
+      #   state_class: measurement
+      #   device_class: pressure
+      #   unit_of_measurement: "mbar"
+
+      # - name: "Therma V compressor pressure low"
+      #   scan_interval: 14
+      #   address: 23
+      #   slave: 1
+      #   input_type: input
+      #   scale: 1
+      #   state_class: measurement
+      #   device_class: pressure
+      #   unit_of_measurement: "mbar"
+
+      - name: "Therma V compressor Hz"
+        scan_interval: 14
+        address: 24
+        slave: 1
+        input_type: input
+        scale: 1 #60 for rpm
+        state_class: measurement
+        device_class: frequency
+        unit_of_measurement: "Hz"
+
+  # HOLDING REGISTRERS
+
+  #    - name: "Therma V operation mode" # 0 cooling 4 heating 3 auto
+  #      scan_interval: 14
+  #      address: 0
+  #      slave: 1
+  #      input_type: holding
+
+  #    - name: "Therma V control mode" # 0 water outlet 4 water inlet 3 room
+  #      scan_interval: 14
+  #      address: 1
+  #      slave: 1
+  #      input_type: holding
+
+  #    - name: "Therma V target temperature circuit 1" # 0.1C
+  #      scan_interval: 14
+  #      address: 2
+  #      slave: 1
+  #      input_type: holding
+  #      scale: 0.1
+  #      state_class: measurement
+  #      device_class: temperature
+  #      unit_of_measurement: "°C"
+
+  #    - name: "Therma V room air temperature circuit 1" # 0.1C
+  #      scan_interval: 14
+  #      address: 3
+  #      slave: 1
+  #      input_type: holding
+  #      scale: 0.1
+  #      state_class: measurement
+  #      device_class: temperature
+  #      unit_of_measurement: "°C"
+
+  #    - name: "Therma V auto mode target temperature delta circuit 1" # 1C
+  #      scan_interval: 14
+  #      address: 4
+  #      slave: 1
+  #      input_type: holding
+  #      scale: 1
+  #      state_class: measurement
+  #      device_class: temperature
+  #      unit_of_measurement: "°C"
+
+  #    - name: "Therma V target temperature circuit 2" # 0.1C
+  #      scan_interval: 14
+  #      address: 5
+  #      slave: 1
+  #      input_type: holding
+  #      scale: 0.1
+  #      state_class: measurement
+  #      device_class: temperature
+  #      unit_of_measurement: "°C"
+
+  #    - name: "Therma V room air temperature circuit 2" # 0.1C
+  #      scan_interval: 14
+  #      address: 6
+  #      slave: 1
+  #      input_type: holding
+  #      scale: 0.1
+  #      state_class: measurement
+  #      device_class: temperature
+  #      unit_of_measurement: "°C"
+
+  #    - name: "Therma V auto mode target temperature delta circuit 2" # 1C
+  #      scan_interval: 14
+  #      address: 7
+  #      slave: 1
+  #      input_type: holding
+  #      scale: 1
+  #      state_class: measurement
+  #      device_class: temperature
+  #      unit_of_measurement: "°C"
+
+  #    - name: "Therma V DHW target temperature" # 0.1C
+  #      scan_interval: 14
+  #      address: 8
+  #      slave: 1
+  #      input_type: holding
+  #      scale: 0.1
+  #      state_class: measurement
+  #      device_class: temperature
+  #      unit_of_measurement: "°C"
+
+  #    - name: "Therma V energy state register"
+  #      scan_interval: 14
+  #      address: 9
+  #      slave: 1
+  #      input_type: holding
+
+  # COIL REGISTERS
+    switches:
+      - name: "Therma V Heating/Cooling on/off"
+        slave: 1
+        address: 0
+        write_type: coil
+        command_on: 1
+        command_off: 0
+        verify:
+            input_type: coil
+            address: 0
+            state_on: 1
+            state_off: 0
+            
+      - name: "Therma V DHW on/off"
+        slave: 1
+        address: 1
+        write_type: coil
+        command_on: 1
+        command_off: 0
+        verify:
+            input_type: coil
+            address: 1
+            state_on: 1
+            state_off: 0
+            
+      - name: "Therma V Silent Mode"
+        slave: 1
+        address: 2
+        write_type: coil
+        command_on: 1
+        command_off: 0
+        verify:
+            input_type: coil
+            address: 2
+            state_on: 1
+            state_off: 0
+
+      - name: "Therma V Trigger DHW disinfection cycle"
+        slave: 1
+        address: 3
+        write_type: coil
+        command_on: 1
+        command_off: 0
+        verify:
+            input_type: coil
+            address: 3
+            state_on: 1
+            state_off: 0
+
+  # DISCRETE REGISTERS
+    binary_sensors:
+      - name: "Therma V Water flow state" # 0 OK, 1 LOW
+        slave: 1
+        address: 0
+        scan_interval: 14
+        input_type: discrete_input
+
+      - name: "Therma V water pump state" # 0 OFF, 1 ON
+        slave: 1
+        address: 1
+        scan_interval: 14
+        input_type: discrete_input
+      
+      - name: "Therma V external water pump state" # 0 OFF, 1 ON
+        slave: 1
+        address: 2
+        scan_interval: 14
+        input_type: discrete_input
+
+      - name: "Therma V compressor state" # 0 OFF, 1 ON
+        slave: 1
+        address: 3
+        scan_interval: 14
+        input_type: discrete_input
+
+      - name: "Therma V defrost state" # 0 OFF, 1 ON
+        slave: 1
+        address: 4
+        scan_interval: 14
+        input_type: discrete_input
+
+      - name: "Therma V DHW heating state" # 0 OFF, 1 ON
+        slave: 1
+        address: 5
+        scan_interval: 14
+        input_type: discrete_input
+
+      - name: "Therma V DHW disinfection cycle state" # 0 OFF, 1 ON
+        slave: 1
+        address: 6
+        scan_interval: 14
+        input_type: discrete_input
+
+      - name: "Therma V silent mode state" # 0 OFF, 1 ON
+        slave: 1
+        address: 7
+        scan_interval: 14
+        input_type: discrete_input
+
+    #  - name: "Therma V cooling state" # 0 OFF, 1 ON
+    #    slave: 1
+    #    address: 8
+    #    scan_interval: 14
+    #    input_type: discrete_input
+
+      - name: "Therma V DHW booster state" # 0 OFF, 1 ON
+        slave: 1
+        address: 12
+        scan_interval: 14
+        input_type: discrete_input
+
+    # - name: "Therma V DHW error state" # 0 OK, 1 ERROR
+    #   slave: 1
+    #   address: 13
+    #   scan_interval: 14
+    #   input_type: discrete_input
+
+
+  # THERMOSTATS
+    climates:
+      - name: "Therma V heating/cooling"
+        address: 7
+        slave: 1
+        input_type: input
+        max_temp: 30
+        min_temp: 16
+        offset: 0
+        precision: 1
+        scale: 0.1
+        target_temp_register: 2
+        temp_step: 1
+        temperature_unit: "°C"
+        hvac_mode_register:
+          address: 0
+          values:
+            state_cool: 0
+            state_heat: 4
+            state_auto: 3
+              
+      - name: "Therma V DHW"
+        address: 5
+        slave: 1
+        input_type: input
+        max_temp: 70
+        min_temp: 40
+        offset: 0
+        precision: 1
+        scale: 0.1
+        target_temp_register: 8
+        temp_step: 1
+        temperature_unit: "°C"

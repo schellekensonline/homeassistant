@@ -1,0 +1,388 @@
+template:
+  - sensor:
+    # Compatibility sensor Goodwe integration
+    - name: "Goodwe PV1 input power"
+      state_class: measurement
+      device_class: power
+      unit_of_measurement: "W"
+      availability: >
+        {% set Vpv1 = states('sensor.goodwe_pv1_input_voltage') | float("unknown") %}
+        {% set Ipv1 = states('sensor.goodwe_pv1_input_current') | float("unknown") %}
+        {{ Vpv1|is_number and Ipv1|is_number}}
+      state: >
+        {% set Vpv1 = states('sensor.goodwe_pv1_input_voltage') | float(0) %}
+        {% set Ipv1 = states('sensor.goodwe_pv1_input_current') | float(0) %}
+
+        {{ Vpv1*Ipv1 | round(0) }}
+
+    # Compatibility sensor Goodwe integration
+    - name: "Goodwe PV2 input power"
+      state_class: measurement
+      device_class: power
+      unit_of_measurement: "W"
+      availability: >
+        {% set Vpv2 = states('sensor.goodwe_pv2_input_voltage') | float("unknown") %}
+        {% set Ipv2 = states('sensor.goodwe_pv2_input_current') | float("unknown") %}
+        {{ Vpv2|is_number and Ipv2|is_number}}
+      state: >
+        {% set Vpv2 = states('sensor.goodwe_pv2_input_voltage') | float(0) %}
+        {% set Ipv2 = states('sensor.goodwe_pv2_input_current') | float(0) %}
+
+        {{ Vpv2*Ipv2 | round(0) }}
+
+    - name: "Goodwe total PV input power"
+      state_class: measurement
+      device_class: power
+      unit_of_measurement: "W"
+      availability: >
+        {% set Vpv1 = states('sensor.goodwe_pv1_input_voltage') | float("unknown") %}
+        {% set Ipv1 = states('sensor.goodwe_pv1_input_current') | float("unknown") %}
+        {% set Vpv2 = states('sensor.goodwe_pv2_input_voltage') | float("unknown") %}
+        {% set Ipv2 = states('sensor.goodwe_pv2_input_current') | float("unknown") %}
+        {{ Vpv1|is_number and Ipv1|is_number and Vpv2|is_number and Ipv2|is_number}}
+      state: >
+        {% set Vpv1 = states('sensor.goodwe_pv1_input_voltage') | float(0) %}
+        {% set Ipv1 = states('sensor.goodwe_pv1_input_current') | float(0) %}
+        {% set Vpv2 = states('sensor.goodwe_pv2_input_voltage') | float(0) %}
+        {% set Ipv2 = states('sensor.goodwe_pv2_input_current') | float(0) %}
+        {{ (Vpv1*Ipv1)+(Vpv2*Ipv2) | round(0) }}
+
+modbus:
+  # Custom modbus interface
+  #
+  # Goodwe
+  #    baudrate: 9600
+  #    bytesize: 8
+  #    method: rtu
+  #    parity: N
+  #    stopbits: 1
+  #
+  #    slave: 1 
+  #    address: from Goodwe manual
+  - name: "modbus_gateway_goodwe"
+    type: tcp
+    host: 192.168.1.21
+    port: 502
+    delay: 0
+    message_wait_milliseconds: 200
+
+    sensors:
+      # HOLDING REGISTRERS
+      - name: "Goodwe active power adjust" # 0 to 100%
+        scan_interval: 10
+        address: 256
+        slave: 1
+        input_type: holding
+        scale: 1 #0..100%
+        state_class: measurement
+        unit_of_measurement: "%"
+        data_type: uint16
+    
+      - name: "Goodwe export power limit" # 0 to 100%
+        scan_interval: 10
+        address: 292
+        slave: 1
+        input_type: holding
+        scale: 1 #0..100%
+        state_class: measurement
+        unit_of_measurement: "%"
+        data_type: uint16
+
+      - name: "Goodwe export power limit switch" #0 or 1 %
+        scan_interval: 10
+        address: 291
+        slave: 1
+        input_type: holding
+        scale: 1 #0 or 1 %
+        data_type: uint16
+
+      - name: "Goodwe shadow scan mode switch" #0 or 1 %
+        scan_interval: 10
+        address: 312
+        slave: 1
+        input_type: holding
+        scale: 1 #0 or 1 %
+        data_type: uint16
+
+      # Error message see table 8-2 modbus manual
+      # Bit31 0x80000000 SPI Fail
+      # Bit30 0x40000000 EEPROM R/W Fail
+      # Bit29 0x20000000 Grid frequency overrun
+      # Bit28 0x10000000 AFCI Fault (PV earth fault)
+      # Bit27 0x08000000 Night SPS Fail?
+      # Bit26 0x04000000 L-PE Short Circuit
+      # Bit25 0x02000000 AC Relay Check Fail
+      # Bit24 0x01000000 N-PE Fail
+      # Bit23 0x00800000 Export Power Limit Fault (Australia only)
+      # Bit22 0x00400000 PV Reverse fault
+      # Bit21 0x00200000 String Over Current 
+      # Bit20 0x00100000 LCD Communication Fail
+      # Bit19 0x00080000 High DC component in AC output
+      # Bit18 0x00040000 Isolation Fail (check PV PE)
+      # Bit17 0x00020000 Vac Fail 
+      # Bit16 0x00010000 External Fan Fail
+      # Bit15 0x00008000 PV Over Voltage
+      # Bit14 0x00004000 Please contact after sales!
+      # Bit13 0x00002000 Over temperature
+      # Bit12 0x00001000  Internal Fan Fail
+      # Bit11 0x00000800 DC Bus High
+      # Bit10 0x00000400 AC Ground I Fail (check N/PE)
+      # Bit9  0x00000200 Utility Loss
+      # Bit8  0x00000100 AC HCT Fail (Hall sensor error)
+      # Bit7  0x00000080 Relay Fail
+      # Bit6  0x00000040 GFCI Fail 
+      # Bit5  0x00000020 Please contact after sales!
+      # Bit4  0x00000010 DC SPD Fail (Suffered lighting strike)
+      # Bit3  0x00000008 DC Switch Fail (switch exceeds service life)
+      # Bit2  0x00000004 Ref 1.5V Fail
+      # Bit1  0x00000002 AC HCT Check Fail (Hall sensor error)
+      # Bit0  0x00000001 GFCI Check Fail
+      - name: "Goodwe error code" 
+        scan_interval: 10
+        address: 544
+        slave: 1
+        input_type: holding
+        scale: 1 
+        data_type: uint32
+
+      - name: "Goodwe PV1 input voltage" # String 1 (west)
+        scan_interval: 10
+        address: 550
+        slave: 1
+        input_type: holding
+        scale: 0.1 
+        precision: 1 
+        state_class: measurement
+        device_class: voltage
+        unit_of_measurement: "V"
+        data_type: uint16
+
+      - name: "Goodwe PV2 input voltage" # String 2 (east)
+        scan_interval: 10
+        address: 551
+        slave: 1
+        input_type: holding
+        scale: 0.1 
+        precision: 1
+        state_class: measurement
+        device_class: voltage
+        unit_of_measurement: "V"
+        data_type: uint16
+
+      - name: "Goodwe PV1 input current" # String 1 (west)
+        scan_interval: 10
+        address: 552
+        slave: 1
+        input_type: holding
+        scale: 0.1 
+        precision: 1
+        state_class: measurement
+        device_class: current
+        unit_of_measurement: "A"
+        data_type: uint16
+
+      - name: "Goodwe PV2 input current" # String 2 (east)
+        scan_interval: 10
+        address: 553
+        slave: 1
+        input_type: holding
+        scale: 0.1 
+        precision: 1
+        state_class: measurement
+        device_class: current
+        unit_of_measurement: "A"
+        data_type: uint16
+
+      - name: "Goodwe L1 phase voltage" # VAC1
+        scan_interval: 10
+        address: 554
+        slave: 1
+        input_type: holding
+        scale: 0.1 
+        precision: 1
+        state_class: measurement
+        device_class: voltage
+        unit_of_measurement: "V"
+        data_type: uint16
+
+      - name: "Goodwe L2 phase voltage" # VAC2
+        scan_interval: 10
+        address: 555
+        slave: 1
+        input_type: holding
+        scale: 0.1 
+        precision: 1
+        state_class: measurement
+        device_class: voltage
+        unit_of_measurement: "V"
+        data_type: uint16
+
+      - name: "Goodwe L3 phase voltage" # VAC3
+        scan_interval: 10
+        address: 556
+        slave: 1
+        input_type: holding
+        scale: 0.1 
+        precision: 1
+        state_class: measurement
+        device_class: voltage
+        unit_of_measurement: "V"
+        data_type: uint16
+
+      - name: "Goodwe L1 phase current" # IAC1
+        scan_interval: 10
+        address: 557
+        slave: 1
+        input_type: holding
+        scale: 0.1 
+        precision: 1
+        state_class: measurement
+        device_class: current
+        unit_of_measurement: "A"
+        data_type: uint16
+
+      - name: "Goodwe L2 phase current" # IAC2
+        scan_interval: 10
+        address: 558
+        slave: 1
+        input_type: holding
+        scale: 0.1 
+        precision: 1
+        state_class: measurement
+        device_class: current
+        unit_of_measurement: "A"
+        data_type: uint16
+
+      - name: "Goodwe L3 phase current" # IAC3
+        scan_interval: 10
+        address: 559
+        slave: 1
+        input_type: holding
+        scale: 0.1 
+        precision: 1
+        state_class: measurement
+        device_class: current
+        unit_of_measurement: "A"
+        data_type: uint16
+
+      - name: "Goodwe L1 phase frequency" # FAC1
+        scan_interval: 10
+        address: 560
+        slave: 1
+        input_type: holding
+        scale: 0.01 
+        precision: 2
+        state_class: measurement
+        device_class: frequency
+        unit_of_measurement: "Hz"
+        data_type: uint16
+
+      - name: "Goodwe L2 phase frequency" # FAC2
+        scan_interval: 10
+        address: 561
+        slave: 1
+        input_type: holding
+        scale: 0.01 
+        precision: 2
+        state_class: measurement
+        device_class: frequency
+        unit_of_measurement: "Hz"
+        data_type: uint16
+
+      - name: "Goodwe L3 phase frequency" # FAC3
+        scan_interval: 10
+        address: 562
+        slave: 1
+        input_type: holding
+        scale: 0.01 
+        precision: 2
+        state_class: measurement
+        device_class: frequency
+        unit_of_measurement: "Hz"
+        data_type: uint16
+
+      - name: "Goodwe internal temperature" # internal air temperature
+        scan_interval: 10
+        address: 565
+        slave: 1
+        input_type: holding
+        scale: 0.1 
+        precision: 1
+        state_class: measurement
+        device_class: temperature
+        unit_of_measurement: "°C"
+        data_type: uint16
+
+      # Name same as original integration to not lose energy data
+      - name: "Today's PV Generation" # daily energy produced
+        scan_interval: 10
+        address: 566
+        slave: 1
+        input_type: holding
+        scale: 0.1 
+        precision: 1
+        state_class: measurement
+        device_class: energy
+        unit_of_measurement: "kWh"
+        data_type: uint16
+
+
+      # - name: "Goodwe total energy generation" # total energy produced
+      # Name same as original integration to not lose energy dashboard data
+      - name: "Total PV Generation" # total energy produced
+        scan_interval: 10
+        address: 786
+        slave: 1
+        input_type: holding
+        scale: 0.1 
+        precision: 1
+        state_class: total_increasing #measurement
+        device_class: energy
+        unit_of_measurement: "kWh"
+        data_type: uint32
+
+      # Work Mode
+      # 0 Wait
+      # 1 Normal
+      # 2 Fault  
+      - name: "Goodwe work mode code" 
+        scan_interval: 10
+        address: 782
+        slave: 1
+        input_type: holding
+        scale: 1
+        data_type: uint16
+
+      # Warning code
+      # ?
+      - name: "Goodwe warning code" 
+        scan_interval: 10
+        address: 791
+        slave: 1
+        input_type: holding
+        scale: 1
+        data_type: uint16
+        
+      - name: "Goodwe DC link voltage" # BUS Voltage
+        scan_interval: 10
+        address: 796
+        slave: 1
+        input_type: holding
+        scale: 0.1 
+        precision: 1
+        state_class: measurement
+        device_class: voltage
+        unit_of_measurement: "V"
+        data_type: uint16
+
+      - name: "Goodwe DC link center tab voltage" # NBUS voltage
+        scan_interval: 10
+        address: 797
+        slave: 1
+        input_type: holding
+        scale: 0.1 
+        precision: 1
+        state_class: measurement
+        device_class: voltage
+        unit_of_measurement: "V"
+        data_type: uint16

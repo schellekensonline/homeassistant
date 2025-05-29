@@ -50,7 +50,7 @@ template:
       availability: >
         {% set power   = states('sensor.p1_meter_3c39e72e6af0_active_power') | float("unknown") %}
         {% set cost    = states('sensor.nord_pool_nl_current_prices_including_tax') | float("unknown") %}
-        {{ Power|is_number and Cost|is_number}}
+        {{ power|is_number and cost|is_number}}
       state: >
           {% set power   = states('sensor.p1_meter_3c39e72e6af0_active_power') | float(0) %}
           {% set cost    = states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) %}
@@ -62,7 +62,7 @@ template:
       availability: >
         {% set power   = states('sensor.p1_meter_3c39e72e6af0_active_power') | float("unknown") %}
         {% set cost    = states('sensor.nord_pool_nl_current_price') | float("unknown") %}
-        {{ Power|is_number and Cost|is_number}}
+        {{ power|is_number and cost|is_number}}
       state: >
           {% set power   = states('sensor.p1_meter_3c39e72e6af0_active_power') | float(0) %}
           {% set cost    = states('sensor.nord_pool_nl_current_price') | float(0) %}
