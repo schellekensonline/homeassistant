@@ -29,6 +29,22 @@ input_number:
     unit_of_measurement: "%"
 
 automation:
+  # # Manual pollig at lower frequency, more reliable than automatic
+  # # Switch updating off in HA UI 
+  # - id: update_goodwe_auto 
+  #   alias: "Goodwe data polling"
+  #   mode: single
+  #   max_exceeded: silent
+  #   triggers:
+  #     - trigger: time_pattern
+  #       minutes: "/3"
+  #     - trigger: homeassistant
+  #       event: start
+  #   actions:
+  #     - action: homeassistant.update_entity
+  #       target:
+  #         entity_id: sensor.pv_power
+
   # Adjust grid export limit to 0 when e-price incl tax is negative
   - id: e_price_negative_goodwe_auto 
     alias: e_price_negative_goodwe_auto
@@ -37,21 +53,19 @@ automation:
     max_exceeded: silent 
     triggers:
       - trigger: time_pattern
-        seconds: "/21"
+        seconds: "/31"
     conditions: 
       - condition: template
-        value_template: "{{ not is_state('input_number.goodwe_grid_export_limit', 'unavailable') }}"
+        value_template: "{{ not is_state('sensor.goodwe_export_power_limit', 'unavailable') }}"
       - condition: template
-        value_template: "{{ not is_state('input_number.goodwe_grid_export_limit', 'unknown') }}"
-      - condition: template
-        value_template: "{{ not is_state('sensor.goodwe_total_pv_power', 'unavailable') }}"
-      - condition: template
-        value_template: "{{ not is_state('sensor.goodwe_total_pv_power', 'unknown') }}"
+        value_template: "{{ not is_state('sensor.goodwe_export_power_limit', 'unknown') }}"
       - condition: template
         value_template: "{{ not is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 0 ] ) }}"
     actions:
       - variables: # Calulate grid export limit for zero-on-meter and balances method
-          zero_on_meter: "{{ max(min( (states('input_number.goodwe_grid_export_limit') | float(0)) + 0.8*100/8000*(states('sensor.p1_meter_active_power_filtered') | float(0)) ,100),0) }}"
+          rated_power: 8000 # rated power of inverter
+          update_ratio: 0.7 # set the speed of the algorithm, should be within (0 < update_ratio < 1) 0.9 is fast 0.1 is slow
+          zero_on_meter: "{{ max(min( (states('input_number.goodwe_grid_export_limit') | float(0)) + update_ratio*100/rated_power*(states('sensor.p1_meter_active_power_filtered') | float(0)) ,100),0) }}"
           balanced_max:  "{{ max(min( 100.0 - 100.0*(states('sensor.nord_pool_nl_current_price') | float(0) | abs) / ((states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) | abs) + (states('sensor.nord_pool_nl_current_price') | float(0) | abs)) ,100),0)  }}" 
       - choose:
           - conditions: # ZERO ON INC NEGATIVE
@@ -131,7 +145,11 @@ automation:
       - trigger: homeassistant
         event: start
         id: grid_export_limit_ha_start_trig
-    conditions: []
+    conditions:
+      - condition: template
+        value_template: "{{ not is_state('sensor.goodwe_export_power_limit', 'unavailable') }}"
+      - condition: template
+        value_template: "{{ not is_state('sensor.goodwe_export_power_limit', 'unknown') }}"
     actions:
       - choose:
         - conditions:
@@ -191,21 +209,7 @@ automation:
   #       target:
   #         entity_id: number.goodwe_grid_export_limit
 
-  # # Manual pollig at lower frequency, more reliable than automatic
-  # # Switch updating off in HA UI 
-  # - id: update_goodwe_auto 
-  #   alias: "Goodwe data polling"
-  #   mode: single
-  #   max_exceeded: silent
-  #   triggers:
-  #     - trigger: time_pattern
-  #       minutes: "/3"
-  #     - trigger: homeassistant
-  #       event: start
-  #   actions:
-  #     - action: homeassistant.update_entity
-  #       target:
-  #         entity_id: sensor.pv_power
+
 
 
 sensor:
@@ -216,4 +220,4 @@ sensor:
     entity_id: sensor.p1_meter_3c39e72e6af0_active_power
     filters:
       - filter: lowpass
-        time_constant: 4
+        time_constant: 6
