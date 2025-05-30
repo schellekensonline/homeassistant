@@ -104,13 +104,13 @@ modbus:
     type: tcp
     host: 192.168.1.21
     port: 502
-    delay: 0
+    delay: 1
     message_wait_milliseconds: 200
 
     sensors:
       # HOLDING REGISTRERS
       - name: "Goodwe active power adjust" # 0 to 100%
-        scan_interval: 10
+        scan_interval: 15
         address: 256
         slave: 1
         input_type: holding
@@ -120,7 +120,7 @@ modbus:
         data_type: uint16
     
       - name: "Goodwe export power limit" # 0 to 100%
-        scan_interval: 10
+        scan_interval: 15
         address: 292
         slave: 1
         input_type: holding
@@ -130,7 +130,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe export power limit switch" #0 or 1 %
-        scan_interval: 10
+        scan_interval: 15
         address: 291
         slave: 1
         input_type: holding
@@ -138,7 +138,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe shadow scan mode switch" #0 or 1 %
-        scan_interval: 10
+        scan_interval: 15
         address: 312
         slave: 1
         input_type: holding
@@ -179,7 +179,7 @@ modbus:
       # Bit1  0x00000002 AC HCT Check Fail (Hall sensor error)
       # Bit0  0x00000001 GFCI Check Fail
       - name: "Goodwe error code" 
-        scan_interval: 10
+        scan_interval: 15
         address: 544
         slave: 1
         input_type: holding
@@ -187,7 +187,7 @@ modbus:
         data_type: uint32
 
       - name: "Goodwe PV1 input voltage" # String 1 (west)
-        scan_interval: 10
+        scan_interval: 15
         address: 550
         slave: 1
         input_type: holding
@@ -199,7 +199,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe PV2 input voltage" # String 2 (east)
-        scan_interval: 10
+        scan_interval: 15
         address: 551
         slave: 1
         input_type: holding
@@ -211,7 +211,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe PV1 input current" # String 1 (west)
-        scan_interval: 10
+        scan_interval: 15
         address: 552
         slave: 1
         input_type: holding
@@ -223,7 +223,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe PV2 input current" # String 2 (east)
-        scan_interval: 10
+        scan_interval: 15
         address: 553
         slave: 1
         input_type: holding
@@ -235,7 +235,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe L1 phase voltage" # VAC1
-        scan_interval: 10
+        scan_interval: 15
         address: 554
         slave: 1
         input_type: holding
@@ -247,7 +247,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe L2 phase voltage" # VAC2
-        scan_interval: 10
+        scan_interval: 15
         address: 555
         slave: 1
         input_type: holding
@@ -259,7 +259,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe L3 phase voltage" # VAC3
-        scan_interval: 10
+        scan_interval: 15
         address: 556
         slave: 1
         input_type: holding
@@ -271,7 +271,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe L1 phase current" # IAC1
-        scan_interval: 10
+        scan_interval: 15
         address: 557
         slave: 1
         input_type: holding
@@ -283,7 +283,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe L2 phase current" # IAC2
-        scan_interval: 10
+        scan_interval: 15
         address: 558
         slave: 1
         input_type: holding
@@ -295,7 +295,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe L3 phase current" # IAC3
-        scan_interval: 10
+        scan_interval: 15
         address: 559
         slave: 1
         input_type: holding
@@ -307,7 +307,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe L1 phase frequency" # FAC1
-        scan_interval: 10
+        scan_interval: 15
         address: 560
         slave: 1
         input_type: holding
@@ -319,7 +319,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe L2 phase frequency" # FAC2
-        scan_interval: 10
+        scan_interval: 15
         address: 561
         slave: 1
         input_type: holding
@@ -331,7 +331,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe L3 phase frequency" # FAC3
-        scan_interval: 10
+        scan_interval: 15
         address: 562
         slave: 1
         input_type: holding
@@ -343,7 +343,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe internal temperature" # internal air temperature
-        scan_interval: 10
+        scan_interval: 15
         address: 565
         slave: 1
         input_type: holding
@@ -356,13 +356,13 @@ modbus:
 
       # Name same as original integration to not lose energy data
       - name: "Today's PV Generation" # daily energy produced
-        scan_interval: 10
+        scan_interval: 15
         address: 566
         slave: 1
         input_type: holding
         scale: 0.1 
         precision: 1
-        state_class: measurement
+        state_class: total
         device_class: energy
         unit_of_measurement: "kWh"
         data_type: uint16
@@ -371,13 +371,13 @@ modbus:
       # - name: "Goodwe total energy generation" # total energy produced
       # Name same as original integration to not lose energy dashboard data
       - name: "Total PV Generation" # total energy produced
-        scan_interval: 10
+        scan_interval: 15
         address: 786
         slave: 1
         input_type: holding
         scale: 0.1 
         precision: 1
-        state_class: total_increasing #measurement
+        state_class: total_increasing
         device_class: energy
         unit_of_measurement: "kWh"
         data_type: uint32
@@ -387,7 +387,7 @@ modbus:
       # 1 Normal
       # 2 Fault  
       - name: "Goodwe work mode code" 
-        scan_interval: 10
+        scan_interval: 15
         address: 782
         slave: 1
         input_type: holding
@@ -397,7 +397,7 @@ modbus:
       # Warning code
       # ?
       - name: "Goodwe warning code" 
-        scan_interval: 10
+        scan_interval: 15
         address: 791
         slave: 1
         input_type: holding
@@ -405,7 +405,7 @@ modbus:
         data_type: uint16
         
       - name: "Goodwe DC link voltage" # BUS Voltage
-        scan_interval: 10
+        scan_interval: 15
         address: 796
         slave: 1
         input_type: holding
@@ -417,7 +417,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe DC link center tab voltage" # NBUS voltage
-        scan_interval: 10
+        scan_interval: 15
         address: 797
         slave: 1
         input_type: holding
