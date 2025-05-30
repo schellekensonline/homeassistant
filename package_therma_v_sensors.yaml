@@ -232,7 +232,7 @@ modbus:
         scale: 0.1
         state_class: measurement
         device_class: volume_flow_rate
-        unit_of_measurement: "l/min"
+        unit_of_measurement: "L/min"
 
       - name: "Therma V energy state"
         scan_interval: 14
