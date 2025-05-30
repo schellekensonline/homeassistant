@@ -88,6 +88,30 @@ template:
 
         {{ (VL3*IL3) | round(0) }}
 
+#automation:
+# # Manual pollig modbus to prevent polling over night
+# # Set scan_interval to 0
+# - id: update_modbus_gateway_goodwe_auto 
+#   alias: "Manual Goodwe modbus data polling"
+#   mode: single
+#   max_exceeded: silent
+#   triggers:
+#     - trigger: time_pattern
+#       seconds: "/15"
+#     - trigger: homeassistant
+#       event: start
+#   conditions:
+#     - condition: sun
+#       after: sunrise
+#       after_offset: '-00:30:00'
+#     - condition: sun
+#       before: sunset
+#       before_offset: '+00:30:00'
+#   actions:
+#     - action: homeassistant.update_entity
+#       target:
+#         entity_id: sensor.goodwe_export_power_limit
+
 modbus:
   # Custom modbus interface
   #

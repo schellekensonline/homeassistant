@@ -29,22 +29,6 @@ input_number:
     unit_of_measurement: "%"
 
 automation:
-  # # Manual pollig at lower frequency, more reliable than automatic
-  # # Switch updating off in HA UI 
-  # - id: update_goodwe_auto 
-  #   alias: "Goodwe data polling"
-  #   mode: single
-  #   max_exceeded: silent
-  #   triggers:
-  #     - trigger: time_pattern
-  #       minutes: "/3"
-  #     - trigger: homeassistant
-  #       event: start
-  #   actions:
-  #     - action: homeassistant.update_entity
-  #       target:
-  #         entity_id: sensor.pv_power
-
   # Adjust grid export limit to 0 when e-price incl tax is negative
   - id: e_price_negative_goodwe_auto 
     alias: e_price_negative_goodwe_auto
