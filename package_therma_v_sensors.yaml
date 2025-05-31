@@ -165,24 +165,24 @@ modbus:
     host: 192.168.1.20
     port: 502
     delay: 0
-    message_wait_milliseconds: 200
+    message_wait_milliseconds: 100 # was 200ms
 
     sensors:
       # INPUT REGISTRERS
       - name: "Therma V error code"
-        scan_interval: 14
+        scan_interval: 15
         address: 0
         slave: 1
         input_type: input
 
       # - name: "Therma V outdoor unit state" # 0 off, 1 cooling, 2 heating
-      #   scan_interval: 14
+      #   scan_interval: 15
       #   address: 1
       #   slave: 1
       #   input_type: input
 
       - name: "Therma V inlet temperature"
-        scan_interval: 14
+        scan_interval: 15
         address: 2
         slave: 1
         input_type: input
@@ -193,7 +193,7 @@ modbus:
         unit_of_measurement: "°C"
 
       - name: "Therma V outlet temperature"
-        scan_interval: 14
+        scan_interval: 15
         address: 3
         slave: 1
         input_type: input
@@ -204,7 +204,7 @@ modbus:
         unit_of_measurement: "°C"
 
       # - name: "Therma V DHW temperature"
-      #   scan_interval: 14
+      #   scan_interval: 15
       #   address: 5
       #   slave: 1
       #   input_type: input
@@ -214,7 +214,7 @@ modbus:
       #   unit_of_measurement: "°C"
 
       # - name: "Therma V room temperature"
-      #   scan_interval: 14
+      #   scan_interval: 15
       #   address: 7
       #   slave: 1
       #   input_type: input
@@ -224,7 +224,7 @@ modbus:
       #   unit_of_measurement: "°C"
 
       - name: "Therma V water flow rate"
-        scan_interval: 14
+        scan_interval: 15
         address: 8
         slave: 1
         input_type: input
@@ -235,13 +235,13 @@ modbus:
         unit_of_measurement: "L/min"
 
       - name: "Therma V energy state"
-        scan_interval: 14
+        scan_interval: 15
         address: 11
         slave: 1
         input_type: input
 
       - name: "Therma V outside temperature"
-        scan_interval: 14
+        scan_interval: 15
         address: 12
         slave: 1
         input_type: input
@@ -252,7 +252,7 @@ modbus:
         unit_of_measurement: "°C"
 
       # - name: "Therma V pipe in temperature"
-      #   scan_interval: 14
+      #   scan_interval: 15
       #   address: 16
       #   slave: 1
       #   input_type: input
@@ -262,7 +262,7 @@ modbus:
       #   unit_of_measurement: "°C"
       
       # - name: "Therma V pipe out temperature"
-      #   scan_interval: 14
+      #   scan_interval: 15
       #   address: 17
       #   slave: 1
       #   input_type: input
@@ -272,7 +272,7 @@ modbus:
       #   unit_of_measurement: "°C"
 
       - name: "Therma V fan air input temperature"
-        scan_interval: 14
+        scan_interval: 15
         address: 18
         slave: 1
         input_type: input
@@ -283,7 +283,7 @@ modbus:
         unit_of_measurement: "°C"
 
       - name: "Therma V fan RPM"
-        scan_interval: 14
+        scan_interval: 15
         address: 19
         slave: 1
         input_type: input
@@ -292,7 +292,7 @@ modbus:
         unit_of_measurement: "RPM"
 
       - name: "Therma V heat exchanger temperature"
-        scan_interval: 14
+        scan_interval: 15
         address: 20
         slave: 1
         input_type: input
@@ -303,7 +303,7 @@ modbus:
         unit_of_measurement: "°C"
 
       # - name: "Therma V compressor pressure high"
-      #   scan_interval: 14
+      #   scan_interval: 15
       #   address: 22
       #   slave: 1
       #   input_type: input
@@ -313,7 +313,7 @@ modbus:
       #   unit_of_measurement: "mbar"
 
       # - name: "Therma V compressor pressure low"
-      #   scan_interval: 14
+      #   scan_interval: 15
       #   address: 23
       #   slave: 1
       #   input_type: input
@@ -323,7 +323,7 @@ modbus:
       #   unit_of_measurement: "mbar"
 
       - name: "Therma V compressor Hz"
-        scan_interval: 14
+        scan_interval: 15
         address: 24
         slave: 1
         input_type: input
@@ -335,19 +335,19 @@ modbus:
   # HOLDING REGISTRERS
 
   #    - name: "Therma V operation mode" # 0 cooling 4 heating 3 auto
-  #      scan_interval: 14
+  #      scan_interval: 15
   #      address: 0
   #      slave: 1
   #      input_type: holding
 
   #    - name: "Therma V control mode" # 0 water outlet 4 water inlet 3 room
-  #      scan_interval: 14
+  #      scan_interval: 15
   #      address: 1
   #      slave: 1
   #      input_type: holding
 
   #    - name: "Therma V target temperature circuit 1" # 0.1C
-  #      scan_interval: 14
+  #      scan_interval: 15
   #      address: 2
   #      slave: 1
   #      input_type: holding
@@ -357,7 +357,7 @@ modbus:
   #      unit_of_measurement: "°C"
 
   #    - name: "Therma V room air temperature circuit 1" # 0.1C
-  #      scan_interval: 14
+  #      scan_interval: 15
   #      address: 3
   #      slave: 1
   #      input_type: holding
@@ -367,7 +367,7 @@ modbus:
   #      unit_of_measurement: "°C"
 
   #    - name: "Therma V auto mode target temperature delta circuit 1" # 1C
-  #      scan_interval: 14
+  #      scan_interval: 15
   #      address: 4
   #      slave: 1
   #      input_type: holding
@@ -377,7 +377,7 @@ modbus:
   #      unit_of_measurement: "°C"
 
   #    - name: "Therma V target temperature circuit 2" # 0.1C
-  #      scan_interval: 14
+  #      scan_interval: 15
   #      address: 5
   #      slave: 1
   #      input_type: holding
@@ -387,7 +387,7 @@ modbus:
   #      unit_of_measurement: "°C"
 
   #    - name: "Therma V room air temperature circuit 2" # 0.1C
-  #      scan_interval: 14
+  #      scan_interval: 15
   #      address: 6
   #      slave: 1
   #      input_type: holding
@@ -397,7 +397,7 @@ modbus:
   #      unit_of_measurement: "°C"
 
   #    - name: "Therma V auto mode target temperature delta circuit 2" # 1C
-  #      scan_interval: 14
+  #      scan_interval: 15
   #      address: 7
   #      slave: 1
   #      input_type: holding
@@ -407,7 +407,7 @@ modbus:
   #      unit_of_measurement: "°C"
 
   #    - name: "Therma V DHW target temperature" # 0.1C
-  #      scan_interval: 14
+  #      scan_interval: 15
   #      address: 8
   #      slave: 1
   #      input_type: holding
@@ -417,7 +417,7 @@ modbus:
   #      unit_of_measurement: "°C"
 
   #    - name: "Therma V energy state register"
-  #      scan_interval: 14
+  #      scan_interval: 15
   #      address: 9
   #      slave: 1
   #      input_type: holding
@@ -477,67 +477,67 @@ modbus:
       - name: "Therma V Water flow state" # 0 OK, 1 LOW
         slave: 1
         address: 0
-        scan_interval: 14
+        scan_interval: 15
         input_type: discrete_input
 
       - name: "Therma V water pump state" # 0 OFF, 1 ON
         slave: 1
         address: 1
-        scan_interval: 14
+        scan_interval: 15
         input_type: discrete_input
       
       - name: "Therma V external water pump state" # 0 OFF, 1 ON
         slave: 1
         address: 2
-        scan_interval: 14
+        scan_interval: 15
         input_type: discrete_input
 
       - name: "Therma V compressor state" # 0 OFF, 1 ON
         slave: 1
         address: 3
-        scan_interval: 14
+        scan_interval: 15
         input_type: discrete_input
 
       - name: "Therma V defrost state" # 0 OFF, 1 ON
         slave: 1
         address: 4
-        scan_interval: 14
+        scan_interval: 15
         input_type: discrete_input
 
       - name: "Therma V DHW heating state" # 0 OFF, 1 ON
         slave: 1
         address: 5
-        scan_interval: 14
+        scan_interval: 15
         input_type: discrete_input
 
       - name: "Therma V DHW disinfection cycle state" # 0 OFF, 1 ON
         slave: 1
         address: 6
-        scan_interval: 14
+        scan_interval: 15
         input_type: discrete_input
 
       - name: "Therma V silent mode state" # 0 OFF, 1 ON
         slave: 1
         address: 7
-        scan_interval: 14
+        scan_interval: 15
         input_type: discrete_input
 
     #  - name: "Therma V cooling state" # 0 OFF, 1 ON
     #    slave: 1
     #    address: 8
-    #    scan_interval: 14
+    #    scan_interval: 15
     #    input_type: discrete_input
 
       - name: "Therma V DHW booster state" # 0 OFF, 1 ON
         slave: 1
         address: 12
-        scan_interval: 14
+        scan_interval: 15
         input_type: discrete_input
 
     # - name: "Therma V DHW error state" # 0 OK, 1 ERROR
     #   slave: 1
     #   address: 13
-    #   scan_interval: 14
+    #   scan_interval: 15
     #   input_type: discrete_input
 
 

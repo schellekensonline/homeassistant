@@ -104,10 +104,10 @@ automation:
     conditions:
       - condition: sun
         after: sunrise
-        after_offset: '-00:30:00'
+        after_offset: '-01:00:00'
       - condition: sun
         before: sunset
-        before_offset: '+00:30:00'
+        before_offset: '+01:00:00'
     actions:
       - variables:
           # Find entities with sensor.goodwe_
@@ -138,8 +138,8 @@ modbus:
     host: 192.168.1.21
     port: 502
     delay: 0
-    timeout: 3600 # Wait an hour for resonse to prevent errors in morning and evening
-    message_wait_milliseconds: 200
+    timeout: 20
+    message_wait_milliseconds: 100
 
     sensors:
       # HOLDING REGISTRERS

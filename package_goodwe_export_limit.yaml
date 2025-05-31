@@ -37,7 +37,7 @@ automation:
     max_exceeded: silent 
     triggers:
       - trigger: time_pattern
-        seconds: "/21" # response time of DT to setpoint changes is a bit over 10s so don't update too fast
+        seconds: "/20" # response time of DT to setpoint changes is a bit over 10s so don't update too fast
     conditions: 
       - condition: template
         value_template: "{{ has_value('sensor.goodwe_export_power_limit') }}"
@@ -50,10 +50,10 @@ automation:
           zero_on_meter: "{{ max(min( (states('input_number.goodwe_grid_export_limit') | float(0)) + update_ratio*100/rated_power*(states('sensor.p1_meter_active_power_filtered') | float(0)) ,100),0) }}"
           balanced_max:  "{{ max(min( 100.0 - 100.0*(states('sensor.nord_pool_nl_current_price') | float(0) | abs) / ((states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) | abs) + (states('sensor.nord_pool_nl_current_price') | float(0) | abs)) ,100),0)  }}" 
       - choose:
-          - conditions: # ZERO ON INC NEGATIVE
+          - conditions: # ZERO ON EXPORT for inc. negative prices
               - condition: numeric_state
                 entity_id: sensor.nord_pool_nl_current_prices_including_tax
-                below: -0.001
+                below: -0.001 # made slichtly negative to pervent trigering with -0.0
             sequence:
               - action: input_number.set_value
                 target:
@@ -72,7 +72,7 @@ automation:
                   entity_id: input_number.goodwe_grid_export_limit
                 data:
                   value: 100
-          - conditions: # BALANCED EXPORT
+          - conditions: # BALANCED EXPORT grid export is scaled down linearly with negative price
               - condition: template
                 value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 2 ] ) }}"
               - condition: numeric_state
@@ -93,7 +93,7 @@ automation:
                         value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 3 ] ) }}"
                       - condition: numeric_state
                         entity_id: sensor.nord_pool_nl_current_price
-                        below: -0.005
+                        below: 0.0 
                   - condition: template # NO EXPORT
                     value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 4 ] ) }}"
             sequence:
