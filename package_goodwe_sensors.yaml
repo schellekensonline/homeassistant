@@ -48,8 +48,8 @@ template:
     # Compatibility sensor Goodwe integration
     - name: "Goodwe L1 phase power"
       state_class: measurement
-      device_class: power
-      unit_of_measurement: "W" 
+      device_class: apparent_power
+      unit_of_measurement: "VA" 
       availability: >
         {% set VL1 = states('sensor.goodwe_l1_phase_voltage') | float("unknown") %}
         {% set IL1 = states('sensor.goodwe_l1_phase_current') | float("unknown") %}
@@ -62,8 +62,8 @@ template:
     # Compatibility sensor Goodwe integration
     - name: "Goodwe L2 phase power"
       state_class: measurement
-      device_class: power
-      unit_of_measurement: "W"
+      device_class: apparent_power
+      unit_of_measurement: "VA"
       availability: >
         {% set VL2 = states('sensor.goodwe_l2_phase_voltage') | float("unknown") %}
         {% set IL2 = states('sensor.goodwe_l2_phase_current') | float("unknown") %}
@@ -76,8 +76,8 @@ template:
     # Compatibility sensor Goodwe integration
     - name: "Goodwe L3 phase power"
       state_class: measurement
-      device_class: power
-      unit_of_measurement: "W"
+      device_class: apparent_power
+      unit_of_measurement: "VA"
       availability: >
         {% set VL3 = states('sensor.goodwe_l3_phase_voltage') | float("unknown") %}
         {% set IL3 = states('sensor.goodwe_l3_phase_current') | float("unknown") %}
@@ -88,30 +88,38 @@ template:
 
         {{ (VL3*IL3) | round(0) }}
 
-#automation:
-# # Manual pollig modbus to prevent polling over night
-# # Set scan_interval to 0
-# - id: update_modbus_gateway_goodwe_auto 
-#   alias: "Manual Goodwe modbus data polling"
-#   mode: single
-#   max_exceeded: silent
-#   triggers:
-#     - trigger: time_pattern
-#       seconds: "/15"
-#     - trigger: homeassistant
-#       event: start
-#   conditions:
-#     - condition: sun
-#       after: sunrise
-#       after_offset: '-00:30:00'
-#     - condition: sun
-#       before: sunset
-#       before_offset: '+00:30:00'
-#   actions:
-#     - action: homeassistant.update_entity
-#       target:
-#         entity_id: sensor.goodwe_export_power_limit
-
+automation:
+  # Manual pollig modbus to prevent polling over night when inverter is off
+  # Set scan_interval to 0 of all Goodwe modbus sensors
+  - id: update_modbus_gateway_goodwe_auto 
+    alias: "Manual Goodwe modbus data polling"
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: time_pattern
+        seconds: "/15"
+      - trigger: homeassistant
+        event: start
+    conditions:
+      - condition: sun
+        after: sunrise
+        after_offset: '-00:30:00'
+      - condition: sun
+        before: sunset
+        before_offset: '+00:30:00'
+    actions:
+      - variables:
+          # Find entities with sensor.goodwe_
+          goodwe_list: "{{ states.sensor | selectattr('entity_id', 'search', 'sensor.goodwe_') | list | map(attribute='entity_id') | list }}"
+          # Remaining items with other naming
+          other_list: 
+            - sensor.today_s_pv_generation
+            - sensor.total_pv_generation
+      - action: homeassistant.update_entity
+        target:
+          # Append lists
+          entity_id: "{{goodwe_list+other_list}}"
+            
 modbus:
   # Custom modbus interface
   #
@@ -128,23 +136,24 @@ modbus:
     type: tcp
     host: 192.168.1.21
     port: 502
-    delay: 1
+    delay: 0
+    timeout: 3600 # Wait an hour for resonse to prevent errors in morning and evening
     message_wait_milliseconds: 200
 
     sensors:
       # HOLDING REGISTRERS
-      - name: "Goodwe active power adjust" # 0 to 100%
-        scan_interval: 15
-        address: 256
-        slave: 1
-        input_type: holding
-        scale: 1 #0..100%
-        state_class: measurement
-        unit_of_measurement: "%"
-        data_type: uint16
+      # - name: "Goodwe active power adjust" # 0 to 100%
+      #   scan_interval: 0
+      #   address: 256
+      #   slave: 1
+      #   input_type: holding
+      #   scale: 1 #0..100%
+      #   state_class: measurement
+      #   unit_of_measurement: "%"
+      #   data_type: uint16
     
       - name: "Goodwe export power limit" # 0 to 100%
-        scan_interval: 15
+        scan_interval: 0
         address: 292
         slave: 1
         input_type: holding
@@ -152,22 +161,22 @@ modbus:
         state_class: measurement
         unit_of_measurement: "%"
         data_type: uint16
+      # # Should be one for for use of grid export limit function! Can be set manually on inverter, or with modbus_write.
+      # - name: "Goodwe export power limit switch" #0 or 1 %
+      #   scan_interval: 0
+      #   address: 291
+      #   slave: 1
+      #   input_type: holding
+      #   scale: 1 #0 or 1 %
+      #   data_type: uint16
 
-      - name: "Goodwe export power limit switch" #0 or 1 %
-        scan_interval: 15
-        address: 291
-        slave: 1
-        input_type: holding
-        scale: 1 #0 or 1 %
-        data_type: uint16
-
-      - name: "Goodwe shadow scan mode switch" #0 or 1 %
-        scan_interval: 15
-        address: 312
-        slave: 1
-        input_type: holding
-        scale: 1 #0 or 1 %
-        data_type: uint16
+      # - name: "Goodwe shadow scan mode switch" #0 or 1 %
+      #   scan_interval: 0
+      #   address: 312
+      #   slave: 1
+      #   input_type: holding
+      #   scale: 1 #0 or 1 %
+      #   data_type: uint16
 
       # Error message see table 8-2 modbus manual
       # Bit31 0x80000000 SPI Fail
@@ -203,7 +212,7 @@ modbus:
       # Bit1  0x00000002 AC HCT Check Fail (Hall sensor error)
       # Bit0  0x00000001 GFCI Check Fail
       - name: "Goodwe error code" 
-        scan_interval: 15
+        scan_interval: 0
         address: 544
         slave: 1
         input_type: holding
@@ -211,7 +220,7 @@ modbus:
         data_type: uint32
 
       - name: "Goodwe PV1 input voltage" # String 1 (west)
-        scan_interval: 15
+        scan_interval: 0
         address: 550
         slave: 1
         input_type: holding
@@ -223,7 +232,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe PV2 input voltage" # String 2 (east)
-        scan_interval: 15
+        scan_interval: 0
         address: 551
         slave: 1
         input_type: holding
@@ -235,7 +244,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe PV1 input current" # String 1 (west)
-        scan_interval: 15
+        scan_interval: 0
         address: 552
         slave: 1
         input_type: holding
@@ -247,7 +256,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe PV2 input current" # String 2 (east)
-        scan_interval: 15
+        scan_interval: 0
         address: 553
         slave: 1
         input_type: holding
@@ -259,7 +268,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe L1 phase voltage" # VAC1
-        scan_interval: 15
+        scan_interval: 0
         address: 554
         slave: 1
         input_type: holding
@@ -271,7 +280,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe L2 phase voltage" # VAC2
-        scan_interval: 15
+        scan_interval: 0
         address: 555
         slave: 1
         input_type: holding
@@ -283,7 +292,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe L3 phase voltage" # VAC3
-        scan_interval: 15
+        scan_interval: 0
         address: 556
         slave: 1
         input_type: holding
@@ -295,7 +304,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe L1 phase current" # IAC1
-        scan_interval: 15
+        scan_interval: 0
         address: 557
         slave: 1
         input_type: holding
@@ -307,7 +316,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe L2 phase current" # IAC2
-        scan_interval: 15
+        scan_interval: 0
         address: 558
         slave: 1
         input_type: holding
@@ -319,7 +328,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe L3 phase current" # IAC3
-        scan_interval: 15
+        scan_interval: 0
         address: 559
         slave: 1
         input_type: holding
@@ -331,7 +340,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe L1 phase frequency" # FAC1
-        scan_interval: 15
+        scan_interval: 0
         address: 560
         slave: 1
         input_type: holding
@@ -343,7 +352,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe L2 phase frequency" # FAC2
-        scan_interval: 15
+        scan_interval: 0
         address: 561
         slave: 1
         input_type: holding
@@ -355,7 +364,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe L3 phase frequency" # FAC3
-        scan_interval: 15
+        scan_interval: 0
         address: 562
         slave: 1
         input_type: holding
@@ -367,7 +376,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe internal temperature" # internal air temperature
-        scan_interval: 15
+        scan_interval: 0
         address: 565
         slave: 1
         input_type: holding
@@ -380,7 +389,7 @@ modbus:
 
       # Name same as original integration to not lose energy data
       - name: "Today's PV Generation" # daily energy produced
-        scan_interval: 15
+        scan_interval: 0
         address: 566
         slave: 1
         input_type: holding
@@ -395,7 +404,7 @@ modbus:
       # - name: "Goodwe total energy generation" # total energy produced
       # Name same as original integration to not lose energy dashboard data
       - name: "Total PV Generation" # total energy produced
-        scan_interval: 15
+        scan_interval: 0
         address: 786
         slave: 1
         input_type: holding
@@ -411,7 +420,7 @@ modbus:
       # 1 Normal
       # 2 Fault  
       - name: "Goodwe work mode code" 
-        scan_interval: 15
+        scan_interval: 0
         address: 782
         slave: 1
         input_type: holding
@@ -421,7 +430,7 @@ modbus:
       # Warning code
       # ?
       - name: "Goodwe warning code" 
-        scan_interval: 15
+        scan_interval: 0
         address: 791
         slave: 1
         input_type: holding
@@ -429,7 +438,7 @@ modbus:
         data_type: uint16
         
       - name: "Goodwe DC link voltage" # BUS Voltage
-        scan_interval: 15
+        scan_interval: 0
         address: 796
         slave: 1
         input_type: holding
@@ -441,7 +450,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe DC link center tab voltage" # NBUS voltage
-        scan_interval: 15
+        scan_interval: 0
         address: 797
         slave: 1
         input_type: holding
