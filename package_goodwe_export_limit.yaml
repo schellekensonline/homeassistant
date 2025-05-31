@@ -37,7 +37,7 @@ automation:
     max_exceeded: silent 
     triggers:
       - trigger: time_pattern
-        seconds: "/31"
+        seconds: "/21" # response time of DT to setpoint changes is a bit over 10s so don't update too fast
     conditions: 
       - condition: template
         value_template: "{{ not is_state('sensor.goodwe_export_power_limit', 'unavailable') }}"
@@ -48,7 +48,7 @@ automation:
     actions:
       - variables: # Calulate grid export limit for zero-on-meter and balances method
           rated_power: 8000 # rated power of inverter
-          update_ratio: 0.7 # set the speed of the algorithm, should be within (0 < update_ratio < 1) 0.9 is fast 0.1 is slow
+          update_ratio: 0.6 # set the speed of the algorithm, should be within (0 < update_ratio < 1) 0.9 is fast 0.1 is slow
           zero_on_meter: "{{ max(min( (states('input_number.goodwe_grid_export_limit') | float(0)) + update_ratio*100/rated_power*(states('sensor.p1_meter_active_power_filtered') | float(0)) ,100),0) }}"
           balanced_max:  "{{ max(min( 100.0 - 100.0*(states('sensor.nord_pool_nl_current_price') | float(0) | abs) / ((states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) | abs) + (states('sensor.nord_pool_nl_current_price') | float(0) | abs)) ,100),0)  }}" 
       - choose:
@@ -204,4 +204,4 @@ sensor:
     entity_id: sensor.p1_meter_3c39e72e6af0_active_power
     filters:
       - filter: lowpass
-        time_constant: 6
+        time_constant: 2
