@@ -25,8 +25,8 @@ template:
 automation:
   # switch on DHW heater when e-price incl. tax is negative
   # the DHW heater is switched with a separate parallel relay
-  - id: e_price_negative_dhw_auto
-    alias: e_price_negative_dhw_auto
+  - id: dhw_e_price_negative_auto
+    alias: "DHW e-price negative auto"
     description: Set DHW booster on when E-price is negative 
     mode: single
     triggers:
@@ -41,8 +41,8 @@ automation:
   # switch off DHW heater when e-price incl. tax is positive
   # Done every X minutes to make it robust for HA restarts
   # the DHW heater is switched with a separate parallel relay
-  - id: e_price_positive_dhw_auto
-    alias: e_price_negative_dhw_auto
+  - id: dhw_e_price_positive_auto
+    alias: "DHW e-price negative auto"
     description: Set DHW booster on when E-price is negative 
     mode: single
     triggers:

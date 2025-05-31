@@ -31,8 +31,8 @@ input_boolean:
     name: "Silent Mode at Startup" 
 
 automation:
-  - id: silent_on_based_on_temp_time_auto
-    alias: Therma V Silent ON based on temperature and time
+  - id: therma_v_silent_on_based_on_temp_time_auto
+    alias: "Therma V Silent ON based on temperature and time auto"
     description: Turns on silent mode at set time and when the temperature is high enough
     mode: single
     max_exceeded: silent
@@ -57,8 +57,8 @@ automation:
       - action: switch.turn_on
         entity_id: switch.silent_mode_state
 
-  - id: silent_off_based_on_temp_time_auto
-    alias: Therma V Silent OFF based on temperature and time
+  - id: therma_v_silent_off_based_on_temp_time_auto
+    alias: "Therma V Silent OFF based on temperature and time auto"
     description: Turns off silent mode when outside temp is too low respecting silent time window
     mode: single
     max_exceeded: silent
@@ -83,8 +83,8 @@ automation:
       - action: switch.turn_off
         entity_id: switch.silent_mode_state
 
-  - id: silent_on_at_startup_auto
-    alias: Therma V Silent ON at startup
+  - id: therma_v_silent_on_at_startup_auto
+    alias: "Therma V Silent ON at startup auto"
     description: Turns on silent mode for some minutes after start-up
     mode: restart
     max_exceeded: silent

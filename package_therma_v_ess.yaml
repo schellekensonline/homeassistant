@@ -19,7 +19,7 @@ input_select:
 automation:
   # Automation that deals with setting ESS for net negative energy prices
   - id: ess_based_on_e_price_negative_auto
-    alias: ess_based_on_e_price_negative_auto
+    alias: "ESS based on e-price negative auto"
     description: Set the ESS state of the Therma V based on negative e-price
     mode: restart
     triggers:
@@ -62,7 +62,7 @@ automation:
 
   # Automation that deals with setting ESS for positive energy prices low price difference
   - id: ess_based_on_e_price_positive_normal_auto
-    alias: ess_based_on_e_price_positive_normal_auto
+    alias: "ESS based on e-price positive normal auto"
     description: Set the ESS state of the Therma V based on positive e-price low price difference
     mode: restart
     triggers:
@@ -105,7 +105,7 @@ automation:
 
 # Automation that deals with setting ESS for positive energy prices high price difference
   - id: ess_based_on_e_price_positive_high_auto
-    alias: ess_based_on_e_price_positive_high_auto
+    alias: "ESS based on e-price positive high auto"
     description: Set the ESS state of the Therma V based on positive e-price high price difference
     mode: restart
     triggers:
@@ -166,7 +166,7 @@ automation:
 
   # Update function for ESS state. Sets input select based on HP state and vice verse
   - id: therma_v_update_energy_saving_state_auto
-    alias: Therma V Update Energy Saving State auto
+    alias: "Therma V Update Energy Saving State auto"
     description: Synchronizes the Therma V ESS input select and modbus state
     mode: single
     max_exceeded: silent

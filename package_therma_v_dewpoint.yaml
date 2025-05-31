@@ -50,7 +50,7 @@ template:
 automation:
   # Switch off cooling when dewpoint becomes to high, to prevent condensation when cooling
   - id: cooling_off_based_on_dewpoint_auto
-    alias: cooling_off_based_on_dewpoint_auto
+    alias: "Cooling off based on dewpoint auto"
     description: Switch off cooling if dewpoint is above 16C
     mode: restart
     triggers:

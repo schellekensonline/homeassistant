@@ -27,7 +27,7 @@ automation:
   # Switch on the circulation pump during long heating cycles and 
   # when the DHW heater has been turned on for a while
   - id: dhw_circulation_on_auto
-    alias: dhw_circulation_on_auto
+    alias: "DHW circulation on auto"
     description: Set the DHW circulation state to on
     mode: restart
     triggers:

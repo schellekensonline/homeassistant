@@ -91,8 +91,9 @@ template:
 automation:
   # Manual pollig modbus to prevent polling over night when inverter is off
   # Set scan_interval to 0 of all Goodwe modbus sensors
-  - id: update_modbus_gateway_goodwe_auto 
-    alias: "Manual Goodwe modbus data polling"
+  - id: goodwe_scan_modbus_auto 
+    alias: "Goodwe scan modbus auto"
+    description: "Polls all sensor entities for modbus_gateway_goodwe"
     mode: single
     max_exceeded: silent
     triggers:

@@ -7,8 +7,8 @@ template:
 
 automation:
   # Automation to switch on the UFH circulation pump when nesusary
-  - id: switch_on_ufh_pump_auto
-    alias: switch_on_ufh_pump_auto
+  - id: therma_v_switch_on_ufh_pump_auto
+    alias: "Therma V switch on ufh pump auto"
     description: Switch on underfloof heating pump when therma V external pump is active
     mode: single
     triggers:
