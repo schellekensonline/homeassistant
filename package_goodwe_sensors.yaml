@@ -104,10 +104,10 @@ automation:
     conditions:
       - condition: sun
         after: sunrise
-        after_offset: '-01:00:00'
+        after_offset: '-00:45:00'
       - condition: sun
         before: sunset
-        before_offset: '+01:00:00'
+        before_offset: '+00:45:00'
     actions:
       - variables:
           # Find entities with sensor.goodwe_
@@ -120,7 +120,10 @@ automation:
         target:
           # Append lists
           entity_id: "{{goodwe_list+other_list}}"
-            
+
+
+
+
 modbus:
   # Custom modbus interface
   #
