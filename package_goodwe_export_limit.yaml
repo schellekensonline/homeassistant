@@ -39,6 +39,12 @@ automation:
       - trigger: time_pattern
         seconds: "/20" # response time of DT to setpoint changes is a bit over 10s so don't update too fast
     conditions: 
+      - condition: sun
+        after: sunrise
+        # after_offset: '-00:15:00'
+      - condition: sun
+        before: sunset
+        # before_offset: '+00:15:00'
       - condition: template
         value_template: "{{ has_value('sensor.goodwe_export_power_limit') }}"
       - condition: template
@@ -128,6 +134,12 @@ automation:
         event: start
         id: grid_export_limit_ha_start_trig
     conditions:
+      - condition: sun
+        after: sunrise
+        # after_offset: '-00:15:00'
+      - condition: sun
+        before: sunset
+        # before_offset: '+00:15:00'
       - condition: template
         value_template: "{{ has_value('sensor.goodwe_export_power_limit') }}"
     actions:
@@ -165,29 +177,6 @@ automation:
             data:
               value: '{{ modbus_value }}'
 
-  # # Restart integration when grid export limit becomes unavailable
-  # - id: goodwe_grid_export_limit_check_auto 
-  #   alias: "Goodwe grid export limit check"
-  #   description: Restart Goodwe integration when grid export limit is unavailable
-  #   mode: single
-  #   triggers:
-  #     - trigger: time_pattern
-  #       hours: "/1"
-  #   conditions:
-  #     - condition: or
-  #       conditions:
-  #         - condition: template
-  #           value_template: "{{ has_value('number.goodwe_grid_export_limit') }}"        
-  #     - condition: template
-  #       value_template: "{{ not has_value('sensor.pv_power') }}"
-  #   actions:
-  #     - action: homeassistant.reload_config_entry
-  #       target:
-  #         entity_id: number.goodwe_grid_export_limit
-
-
-
-
 sensor:
   # Filtered power sensor, this filter acts as anti-aliasing filter for the 
   # zero on meter algorithm
@@ -197,3 +186,27 @@ sensor:
     filters:
       - filter: lowpass
         time_constant: 2
+
+
+
+
+# # Restart integration when grid export limit becomes unavailable
+# automation: 
+#   - id: goodwe_grid_export_limit_check_auto 
+#     alias: "Goodwe grid export limit check"
+#     description: Restart Goodwe integration when grid export limit is unavailable
+#     mode: single
+#     triggers:
+#       - trigger: time_pattern
+#         hours: "/1"
+#     conditions:
+#       - condition: or
+#         conditions:
+#           - condition: template
+#             value_template: "{{ has_value('number.goodwe_grid_export_limit') }}"        
+#       - condition: template
+#         value_template: "{{ not has_value('sensor.pv_power') }}"
+#     actions:
+#       - action: homeassistant.reload_config_entry
+#         target:
+#           entity_id: number.goodwe_grid_export_limit
