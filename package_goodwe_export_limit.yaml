@@ -23,8 +23,8 @@ input_number:
     name: "Goodwe grid export limit"
     initial: 100
     min: 0
-    max: 100
-    step: 1
+    max: 100 
+    step: 0.1 # 0.1 resolution leads to better integration accuracy of error
     mode: slider
     unit_of_measurement: "%"
 
@@ -62,7 +62,7 @@ automation:
     actions:
       - variables: # Calulate grid export limit for zero-on-meter and balances method
           rated_power: 8000 # rated power of inverter
-          update_ratio: 0.6 # set the speed of the algorithm, should be within (0 < update_ratio < 1) 0.9 is fast 0.1 is slow
+          update_ratio: 0.8 # set the convergence speed of the algorithm, should be within, 0 < update_ratio < 1, 0.9 is fast 0.1 is slow
           zero_on_meter: "{{ max(min( (states('input_number.goodwe_grid_export_limit') | float(0)) + update_ratio*100/rated_power*(states('sensor.p1_meter_active_power_filtered') | float(0)) ,100),0) }}"
           balanced_max:  "{{ max(min( 100.0 - 100.0*(states('sensor.nord_pool_nl_current_price') | float(0) | abs) / ((states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) | abs) + (states('sensor.nord_pool_nl_current_price') | float(0) | abs)) ,100),0)  }}" 
       - choose:
@@ -81,7 +81,7 @@ automation:
                 value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 1 ] ) }}"
               - condition: numeric_state
                 entity_id: sensor.nord_pool_nl_current_price
-                below: 0.0
+                below: -0.001 # made slichtly negative to pervent trigering with -0.0
             sequence:
               - action: input_number.set_value
                 target:
@@ -93,13 +93,13 @@ automation:
                 value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 2 ] ) }}"
               - condition: numeric_state
                 entity_id: sensor.nord_pool_nl_current_price
-                below: 0.0
+                below: -0.001 # made slichtly negative to pervent trigering with -0.0
             sequence:
               - action: input_number.set_value
                 target:
                   entity_id: input_number.goodwe_grid_export_limit
                 data:
-                  value: "{{ max(balanced_max,zero_on_meter) | round(0) }}"
+                  value: "{{ max(balanced_max,zero_on_meter) | round(1) }}"
           - conditions: # MINIMUM EXPORT OR NO EXPORT
               - condition: or
                 conditions: 
@@ -109,7 +109,7 @@ automation:
                         value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 3 ] ) }}"
                       - condition: numeric_state
                         entity_id: sensor.nord_pool_nl_current_price
-                        below: 0.0 
+                        below: -0.001 # made slichtly negative to pervent trigering with -0.0 
                   - condition: template # NO EXPORT
                     value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 4 ] ) }}"
             sequence:
@@ -117,7 +117,7 @@ automation:
                 target:
                   entity_id: input_number.goodwe_grid_export_limit
                 data:
-                  value: "{{ zero_on_meter | round(0) }}"
+                  value: "{{ zero_on_meter | round(1) }}"
         default:
           - action: input_number.set_value
             target:
@@ -157,6 +157,8 @@ automation:
         - conditions:
             - condition: trigger
               id: grid_export_limit_modbus_trig
+            - condition: template # allowing higher resolution of input_number leads to better integration accuracy of error, only write input_number when difference >1 
+              value_template: "{{ (trigger.to_state.state | float(0) - state('input_number.goodwe_grid_export_limit') | float(0)) | abs  > 1 }}"
           sequence:
             - variables:
                 modbus_value: '{{ trigger.to_state.state | round(0) }}'
@@ -174,10 +176,11 @@ automation:
                 address: 292
                 slave: 1
                 hub: modbus_gateway_goodwe
-                # Should be written as [array] mode 0x10 iso (single data) mode 0x06
-                # Even for int16 and uint16, which is in violation with modbus spec
-                # The goodwe modbus manual explains this correctly though    
-                value: '{{ [ (trigger.to_state.state | round(0) | int(0)) ]   }}'
+                # Should be written using [array] mode, i.e. 0x10, iso (single data) mode, i.e. 0x06
+                # Even for int16 and uint16, which is in violation with the modbus spec.
+                # The goodwe modbus manual explains this correctly though, all writes with function-code 0x10
+                # number is rounded and clipped to 0..100  
+                value: '{{ [ min(max( trigger.to_state.state | round(0) ,0),100) ]   }}'
         default:
           - variables:
               modbus_value: '{{ states("sensor.goodwe_export_power_limit") | round(0) }}'
