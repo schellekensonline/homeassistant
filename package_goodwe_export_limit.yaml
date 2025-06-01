@@ -51,10 +51,9 @@ automation:
     conditions: 
       - condition: sun
         after: sunrise
-        # after_offset: '-00:15:00'
-      - condition: sun
+        after_offset: "-00:15:00"
         before: sunset
-        # before_offset: '+00:15:00'
+        before_offset: "00:15:00"
       - condition: template
         value_template: "{{ has_value('sensor.goodwe_export_power_limit') }}"
       - condition: template
@@ -146,10 +145,9 @@ automation:
     conditions:
       - condition: sun
         after: sunrise
-        # after_offset: '-00:15:00'
-      - condition: sun
+        after_offset: "-00:15:00"
         before: sunset
-        # before_offset: '+00:15:00'
+        before_offset: "00:15:00"
       - condition: template
         value_template: "{{ has_value('sensor.goodwe_export_power_limit') }}"
     actions:

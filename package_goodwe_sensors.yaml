@@ -98,16 +98,15 @@ automation:
     max_exceeded: silent
     triggers:
       - trigger: time_pattern
-        seconds: "/15"
+        seconds: "/20"
       - trigger: homeassistant
         event: start
     conditions:
       - condition: sun
         after: sunrise
-        after_offset: '-00:45:00'
-      - condition: sun
+        after_offset: "-01:00:00"
         before: sunset
-        before_offset: '+00:45:00'
+        before_offset: "01:00:00"
     actions:
       - variables:
           # Find entities with sensor.goodwe_
