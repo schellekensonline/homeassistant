@@ -28,6 +28,16 @@ input_number:
     mode: slider
     unit_of_measurement: "%"
 
+sensor:
+  # Filtered power sensor, this filter acts as anti-aliasing filter for the 
+  # zero on meter algorithm
+  - platform: filter
+    name: "P1 meter active power filtered"
+    entity_id: sensor.p1_meter_3c39e72e6af0_active_power
+    filters:
+      - filter: lowpass
+        time_constant: 3
+
 automation:
   # Adjust grid export limit to 0 when e-price incl tax is negative
   - id: goodwe_e_price_negative_auto 
@@ -177,21 +187,7 @@ automation:
             data:
               value: '{{ modbus_value }}'
 
-sensor:
-  # Filtered power sensor, this filter acts as anti-aliasing filter for the 
-  # zero on meter algorithm
-  - platform: filter
-    name: "P1 meter active power filtered"
-    entity_id: sensor.p1_meter_3c39e72e6af0_active_power
-    filters:
-      - filter: lowpass
-        time_constant: 2
-
-
-
-
-# # Restart integration when grid export limit becomes unavailable
-# automation: 
+#   # Restart integration when grid export limit becomes unavailable
 #   - id: goodwe_grid_export_limit_check_auto 
 #     alias: "Goodwe grid export limit check"
 #     description: Restart Goodwe integration when grid export limit is unavailable
