@@ -47,13 +47,11 @@ automation:
     max_exceeded: silent 
     triggers:
       - trigger: time_pattern
-        seconds: "/20" # response time of DT to setpoint changes is a bit over 10s so don't update too fast
+        seconds: "/21" # response time of DT to setpoint changes is a bit over 10s so don't update too fast
     conditions: 
-      - condition: sun
-        after: sunrise
-        # after_offset: "-00:30:00"
-        before: sunset
-        # before_offset: "00:30:00"
+      - condition: state  # 'day' condition: from sunrise until sunset
+        entity_id: sun.sun
+        state: "above_horizon"
       - condition: template
         value_template: "{{ has_value('sensor.goodwe_export_power_limit') }}"
       - condition: template
@@ -143,11 +141,9 @@ automation:
         event: start
         id: grid_export_limit_ha_start_trig
     conditions:
-      - condition: sun
-        after: sunrise
-        # after_offset: "-00:30:00"
-        before: sunset
-        # before_offset: "00:30:00"
+      - condition: state  # 'day' condition: from sunrise until sunset
+        entity_id: sun.sun
+        state: "above_horizon"
       - condition: template
         value_template: "{{ has_value('sensor.goodwe_export_power_limit') }}"
     actions:

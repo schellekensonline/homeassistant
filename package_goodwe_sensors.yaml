@@ -98,15 +98,12 @@ automation:
     max_exceeded: silent
     triggers:
       - trigger: time_pattern
-        seconds: "/20"
+        seconds: "/15"
       - trigger: homeassistant
         event: start
     conditions:
-      - condition: sun
-        after: sunrise
-        after_offset: "-01:00:00"
-        before: sunset
-        before_offset: "01:00:00"
+      condition: template  # 'day' condition: from dawn to dusk, in typical locations
+      value_template: "{{ state_attr('sun.sun', 'elevation') > -6 }}"
     actions:
       - variables:
           # Find entities with sensor.goodwe_
