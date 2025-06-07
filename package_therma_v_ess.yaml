@@ -147,9 +147,10 @@ automation:
               data:
                 option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 2 ] }}' # At least Normal ESS during DHW run
         - conditions:
-            - condition: numeric_state
-              entity_id: sensor.current_percentage_of_energy_price
-              above: 75
+            - or:
+              - condition: numeric_state
+                entity_id: sensor.current_percentage_of_energy_price
+                above: 50
           sequence:
             - action: input_select.select_option
               target:
@@ -161,7 +162,7 @@ automation:
             target:
               entity_id: input_select.therma_v_ess_select
             data:
-              option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 7 ] }}' # Low power state
+              option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 7 ] }}' # low power state
 
 
   # Update function for ESS state. Sets input select based on HP state and vice verse
