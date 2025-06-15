@@ -23,6 +23,8 @@ automation:
     description: Set the ESS state of the Therma V based on negative e-price
     mode: restart
     triggers:
+      - trigger: time_pattern
+        minutes: "/30"  # catch missed triggers
       - trigger: state
         entity_id: sensor.nord_pool_nl_current_prices_including_tax
     conditions:
@@ -43,10 +45,9 @@ automation:
         - conditions:
             - condition: numeric_state
               entity_id: sensor.current_percentage_of_energy_price
-              below: 10
-            - condition: numeric_state
-              entity_id: sensor.nord_pool_nl_current_prices_including_tax
-              below: -0.05
+              below: 5
+            - condition: template
+              value_template: "{{ (states('sensor.nord_pool_nl_next_price') | float(0) ) >= (states('sensor.nord_pool_nl_current_price') | float(0) ) }}"   
           sequence:
             - action: input_select.select_option
               target:
@@ -66,6 +67,8 @@ automation:
     description: Set the ESS state of the Therma V based on positive e-price low price difference
     mode: restart
     triggers:
+      - trigger: time_pattern
+        minutes: "/30"  # catch missed triggers
       - trigger: state
         entity_id: sensor.nord_pool_nl_current_prices_including_tax
       - trigger: state
@@ -109,6 +112,8 @@ automation:
     description: Set the ESS state of the Therma V based on positive e-price high price difference
     mode: restart
     triggers:
+      - trigger: time_pattern
+        minutes: "/30"  # catch missed triggers
       - trigger: state
         entity_id: sensor.nord_pool_nl_current_prices_including_tax
       - trigger: state
@@ -147,10 +152,9 @@ automation:
               data:
                 option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 2 ] }}' # At least Normal ESS during DHW run
         - conditions:
-            - or:
-              - condition: numeric_state
-                entity_id: sensor.current_percentage_of_energy_price
-                above: 50
+            - condition: numeric_state
+              entity_id: sensor.current_percentage_of_energy_price
+              above: 50
           sequence:
             - action: input_select.select_option
               target:
