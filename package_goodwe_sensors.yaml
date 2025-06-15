@@ -98,7 +98,7 @@ automation:
     max_exceeded: silent
     triggers:
       - trigger: time_pattern
-        seconds: "/15"
+        seconds: "/20"
       - trigger: homeassistant
         event: start
     conditions:
