@@ -123,3 +123,35 @@ automation:
         default:
           - action: switch.turn_off
             entity_id: switch.therma_v_silent_mode
+
+  - id: therma_v_silent_switch_off_auto
+    alias: "Therma V Silent switch OFF auto"
+    description: "Turns off silent mode when heating/cooling is switched off"
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: "switch.therma_v_heating_cooling_on_off"
+        from: "on"
+        to: "off" # When heating/cooling switched off
+      - trigger: time_pattern
+        minutes: "/30"  # catch missed triggers
+    conditions: []
+    actions:
+      - action: switch.turn_off # Turn on silent mode
+        entity_id: switch.therma_v_silent_mode
+      - action: input_boolean.turn_off
+        entity_id: input_boolean.silent_mode_at_startup
+
+  - id: therma_v_silent_start_on_auto
+    alias: "Therma V Silent start ON auto"
+    description: "Turns on silent mode start when heating/cooling is switched on"
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: "switch.therma_v_heating_cooling_on_off"
+        from: "off"
+        to: "on" # When heating/cooling switched off
+    conditions: []
+    actions:
+      - action: input_boolean.turn_on
+        entity_id: input_boolean.silent_mode_at_startup

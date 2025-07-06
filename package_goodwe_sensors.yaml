@@ -102,8 +102,11 @@ automation:
       - trigger: homeassistant
         event: start
     conditions:
-      condition: template  # 'day' condition: from dawn to dusk, in typical locations
-      value_template: "{{ state_attr('sun.sun', 'elevation') > -6 }}"
+      - condition: state  # 'day' condition: from sunrise until sunset
+        entity_id: sun.sun
+        state: "above_horizon"
+      # condition: template  # 'day' condition: from dawn to dusk, in typical locations
+      # value_template: "{{ state_attr('sun.sun', 'elevation') > -6 }}"
     actions:
       - variables:
           # Find entities with sensor.goodwe_
@@ -137,7 +140,7 @@ modbus:
     host: 192.168.1.21
     port: 502
     delay: 0
-    timeout: 20
+    timeout: 5
     message_wait_milliseconds: 100
 
     sensors:
