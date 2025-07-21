@@ -1,0 +1,53 @@
+# Set silent mode time interval
+input_datetime:
+  lights_on_time: # start time of silent mode add to UI
+    name: "Lights on time"
+    has_date: false
+    has_time: true
+  lights_off_time: # stop time of silent mode add to UI
+    name: "Lights off time"
+    has_date: false
+    has_time: true
+
+# Extra input which acts as state memory for silent mode at start-up
+input_boolean:
+  holiday_mode_on:
+    name: "Holiday mode on" 
+
+automation:
+  - id: holiday_mode_lights_on_auto
+    alias: "Holiday mode lights on auto"
+    description: Turns on the lights automatically when on holiday
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: time
+        at: input_datetime.lights_on_time
+    conditions:
+        - condition: state
+          entity_id: input_boolean.holiday_mode_on
+          state: 'on' # Only when holiday mode is active
+    actions:
+      - action: light.turn_on
+        target:
+          entity_id: light.ikea_of_sweden_tradfri_bulb_e27_ww_g95_cl_470lm_light
+        data:
+          brightness: 254
+
+  
+  - id: holiday_mode_lights_off_auto
+    alias: "Holiday mode lights off auto"
+    description: Turns off the lights automatically when on holiday
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: time
+        at: input_datetime.lights_off_time
+    conditions:
+        - condition: state
+          entity_id: input_boolean.holiday_mode_on
+          state: 'on' # Only when holiday mode is active
+    actions:
+      - action: light.turn_off
+        target:
+          entity_id: light.ikea_of_sweden_tradfri_bulb_e27_ww_g95_cl_470lm_light

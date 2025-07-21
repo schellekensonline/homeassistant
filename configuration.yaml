@@ -70,6 +70,7 @@ homeassistant:
     goodwe_export_limit_pack:   !include package_goodwe_export_limit.yaml
     energy_cost_pack:           !include package_energy_cost.yaml
     unavailable_entities_pack:  !include package_unavailable_entities.yaml
+    holiday_mode_pack:          !include package_holiday_mode.yaml
 
 afvalbeheer:
       wastecollector: MijnAfvalwijzer
