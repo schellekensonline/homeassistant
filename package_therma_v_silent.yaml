@@ -163,9 +163,9 @@ automation:
         to: "on" # When heating/cooling switched off
     conditions: []
     actions:
-      # - action: switch.turn_on # Turn on silent mode
-      #   target:
-      #     entity_id: switch.silent_mode_state
+      - action: switch.turn_on # Turn on silent mode
+        target:
+          entity_id: switch.silent_mode_state
       - action: input_boolean.turn_on # Turn on silent start
         target:
           entity_id: input_boolean.silent_mode_startup
