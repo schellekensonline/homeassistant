@@ -80,7 +80,8 @@ afvalbeheer:
         - papier
       postcode: !secret postcode_home
       streetnumber: !secret streetnumber_home
-      dateformat: '%d-%m-%Y'           # (optional)
-      builtinicons: 0                  # (optional)
-      dutch: 0                         # (optional)
+      dateformat: '%d-%m-%Y'          # (optional)
+      builtinicons: 1                 # (optional)
+      builtiniconsnew: 1              # (optional)
+      dutch: 0                        # (optional)
 
