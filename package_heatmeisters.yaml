@@ -1,0 +1,308 @@
+input_number:
+  heatmeisters_master_fan_state:
+    name: "Heatmeister Master fan state"
+    initial: 0
+    min: 0
+    max: 100 
+    step: 1 
+    mode: box
+    unit_of_measurement: "%"
+  heatmeisters_chris_fan_state:
+    name: "Heatmeister Chris fan state"
+    initial: 0
+    min: 0
+    max: 100 
+    step: 1 
+    mode: box
+    unit_of_measurement: "%"
+  heatmeisters_julia_fan_state:
+    name: "Heatmeister Julia fan state"
+    initial: 0
+    min: 0
+    max: 100 
+    step: 1 
+    mode: box
+    unit_of_measurement: "%"
+  heatmeisters_computer_fan_state:
+    name: "Heatmeister Computer fan state"
+    initial: 0
+    min: 0
+    max: 100 
+    step: 1 
+    mode: box
+    unit_of_measurement: "%"
+  heatmeisters_start_up_fan_speed:
+    name: "Heatmeister start-up fan speed"
+    initial: 50
+    min: 0
+    max: 100 
+    step: 1 
+    mode: box
+    unit_of_measurement: "%"
+  heatmeisters_cooling_fan_speed:
+    name: "Heatmeister cooling fan speed"
+    initial: 50
+    min: 0
+    max: 100 
+    step: 1 
+    mode: box
+    unit_of_measurement: "%"
+
+automation:
+  - id: heatmeisters_on_at_startup_auto
+    alias: "Heatmeisters ON at Startup auto"
+    description: "Turns on the heatmeisters for some minutes after start-up"
+    mode: restart
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id: "binary_sensor.therma_v_compressor_state"
+        from: "off"
+        to: "on" # When compressor starts
+      - trigger: state
+        entity_id: "binary_sensor.therma_v_defrost_state"
+        from: "on"
+        to: "off" # Catch missed compressor restart  
+    conditions:
+      - condition: state 
+        entity_id: switch.therma_v_heating_cooling_on_off
+        state: "on" # And heating_cooling is on! otherwise RMC may crash
+      - condition: state 
+        entity_id: binary_sensor.therma_v_defrost_state
+        state: "off" # And no defrost is active
+      - condition: state 
+        entity_id: binary_sensor.therma_v_dhw_heating_state
+        state: "off" # And no DHW is active
+    actions:
+      # Safe current state
+      - sequence:
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.heatmeisters_master_fan_state
+            data:
+              value: "{{ states('input_number.heatbooster_master_bedroom_fan_speed') }}"
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.heatmeisters_chris_fan_state
+            data:
+              value: "{{ states('input_number.heatbooster_chris_bedroom_fan_speed') }}"
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.heatmeisters_julia_fan_state
+            data:
+              value: "{{ states('input_number.heatbooster_julia_bedroom_fan_speed') }}"
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.heatmeisters_computer_fan_state
+            data:
+              value: "{{ states('input_number.heatbooster_computer_room_fan_speed') }}"
+      # Set start-up speed
+      - conditions:
+          - condition: numeric_state
+            entity_id: input_number.heatbooster_master_bedroom_fan_speed
+            below: input_number.heatmeisters_start_up_fan_speed
+        sequence:
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.heatbooster_master_bedroom_fan_speed
+            data:
+              value: "{{ states('input_number.heatmeisters_start_up_fan_speed') }}"
+      - conditions:
+          - condition: numeric_state
+            entity_id: input_number.heatbooster_chris_bedroom_fan_speed
+            below: input_number.heatmeisters_start_up_fan_speed
+        sequence:
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.heatbooster_chris_bedroom_fan_speed
+            data:
+              value: "{{ states('input_number.heatmeisters_start_up_fan_speed') }}"
+      - conditions:
+          - condition: numeric_state
+            entity_id: input_number.heatbooster_julia_bedroom_fan_speed
+            below: input_number.heatmeisters_start_up_fan_speed
+        sequence:
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.heatbooster_julia_bedroom_fan_speed
+            data:
+              value: "{{ states('input_number.heatmeisters_start_up_fan_speed') }}"
+      - conditions:
+          - condition: numeric_state
+            entity_id: input_number.heatbooster_computer_room_fan_speed
+            below: input_number.heatmeisters_start_up_fan_speed
+        sequence:
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.heatbooster_computer_room_fan_speed
+            data:
+              value: "{{ states('input_number.heatmeisters_start_up_fan_speed') }}"
+      # Wait for startup to finish
+      - delay: 
+          minutes: 15 
+      # Restore state
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.heatbooster_master_bedroom_fan_speed
+        data:
+          value: "{{ states('input_number.heatmeisters_master_fan_state') }}"
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.heatbooster_chris_bedroom_fan_speed
+        data:
+          value: "{{ states('input_number.heatmeisters_chris_fan_state') }}"
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.heatbooster_julia_bedroom_fan_speed
+        data:
+          value: "{{ states('input_number.heatmeisters_julia_fan_state') }}"
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.heatbooster_computer_room_fan_speed
+        data:
+          value: "{{ states('input_number.heatmeisters_computer_fan_state') }}"
+
+  - id: heatmeisters_on_when_cooling_auto
+    alias: "Heatmeisters ON when cooling auto"
+    description: "Turns ON the heatmeisters when cooling"
+    mode: restart
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id: "binary_sensor.therma_v_compressor_state"
+        from: "off"
+        to: "on" # When compressor starts
+      - trigger: state
+        entity_id: "binary_sensor.therma_v_defrost_state"
+        from: "on"
+        to: "off" # Catch missed compressor restart
+      - trigger: numeric_state
+        entity_id: "automation.heatmeisters_on_at_startup_auto"
+        attribute: current  # Attribute is number of active instances of automation 
+        below: 1  # Below 1 means no active startup_auto instances                    
+    conditions:
+      - condition: state 
+        entity_id: switch.therma_v_heating_cooling_on_off
+        state: "on" # And heating_cooling is on! otherwise RMC may crash
+      - condition: state 
+        entity_id: binary_sensor.therma_v_defrost_state
+        state: "off" # And no defrost is active
+      - condition: state 
+        entity_id: binary_sensor.therma_v_dhw_heating_state
+        state: "off" # And no DHW is active
+      - condition: template 
+        value_template: "{{ is_state_attr('climate.therma_v_heating_cooling', 'hvac_modes', 'cool') }}"
+      - condition: numeric_state # Allow only when startup_auto not active
+        entity_id: "automation.heatmeisters_on_at_startup_auto"
+        attribute: current  # Attribute is number of active instances of automation                  
+        below: 1            # Below 1 means no active startup_auto instances
+    actions:
+      # Safe current state
+      -  sequence:
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.heatmeisters_master_fan_state
+            data:
+              value: "{{ states('input_number.heatbooster_master_bedroom_fan_speed') }}"
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.heatmeisters_chris_fan_state
+            data:
+              value: "{{ states('input_number.heatbooster_chris_bedroom_fan_speed') }}"
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.heatmeisters_julia_fan_state
+            data:
+              value: "{{ states('input_number.heatbooster_julia_bedroom_fan_speed') }}"
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.heatmeisters_computer_fan_state
+            data:
+              value: "{{ states('input_number.heatbooster_computer_room_fan_speed') }}"
+      # Set cooling speed
+      - conditions:
+          - condition: numeric_state
+            entity_id: input_number.heatbooster_master_bedroom_fan_speed
+            below: input_number.heatmeisters_cooling_fan_speed
+        sequence:
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.heatbooster_master_bedroom_fan_speed
+            data:
+              value: "{{ states('input_number.heatmeisters_cooling_fan_speed') }}"
+      - conditions:
+          - condition: numeric_state
+            entity_id: input_number.heatbooster_chris_bedroom_fan_speed
+            below: input_number.heatmeisters_cooling_fan_speed
+        sequence:
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.heatbooster_chris_bedroom_fan_speed
+            data:
+              value: "{{ states('input_number.heatmeisters_cooling_fan_speed') }}"
+      - conditions:
+          - condition: numeric_state
+            entity_id: input_number.heatbooster_julia_bedroom_fan_speed
+            below: input_number.heatmeisters_cooling_fan_speed
+        sequence:
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.heatbooster_julia_bedroom_fan_speed
+            data:
+              value: "{{ states('input_number.heatmeisters_cooling_fan_speed') }}"
+      - conditions:
+          - condition: numeric_state
+            entity_id: input_number.heatbooster_computer_room_fan_speed
+            below: input_number.heatmeisters_cooling_fan_speed
+        sequence:
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.heatbooster_computer_room_fan_speed
+            data:
+              value: "{{ states('input_number.heatmeisters_cooling_fan_speed') }}"
+
+
+  - id: heatmeisters_off_when_cooling_stops_auto
+    alias: "Heatmeisters OFF when cooling stops auto"
+    description: "Turns OFF the heatmeisters when cooling stops"
+    mode: restart
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id: "binary_sensor.therma_v_compressor_state"
+        from: "on"
+        to: "off" # When compressor starts
+    conditions:
+      - condition: state 
+        entity_id: switch.therma_v_heating_cooling_on_off
+        state: "on" # And heating_cooling is on! otherwise RMC may crash
+      - condition: state 
+        entity_id: binary_sensor.therma_v_defrost_state
+        state: "off" # And no defrost is active
+      - condition: state 
+        entity_id: binary_sensor.therma_v_dhw_heating_state
+        state: "off" # And no DHW is active
+      - condition: template 
+        value_template: "{{ is_state_attr('climate.therma_v_heating_cooling', 'hvac_modes', 'cool') }}"
+    actions:
+      # Restore state
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.heatbooster_master_bedroom_fan_speed
+        data:
+          value: "{{ states('input_number.heatmeisters_master_fan_state') }}"
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.heatbooster_chris_bedroom_fan_speed
+        data:
+          value: "{{ states('input_number.heatmeisters_chris_fan_state') }}"
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.heatbooster_julia_bedroom_fan_speed
+        data:
+          value: "{{ states('input_number.heatmeisters_julia_fan_state') }}"
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.heatbooster_computer_room_fan_speed
+        data:
+          value: "{{ states('input_number.heatmeisters_computer_fan_state') }}"
