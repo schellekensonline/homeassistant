@@ -57,7 +57,7 @@ homeassistant:
     switch:
       assumed_state: false
 
-# Packages with bundles for sertain functions
+# Packages with bundles for automations
   packages:
     dhw_circulation_pack:       !include package_dhw_circulation.yaml
     dhw_booster_pack:           !include package_dhw_booster.yaml
@@ -66,22 +66,9 @@ homeassistant:
     therma_v_sensors_pack:      !include package_therma_v_sensors.yaml
     therma_v_silent_pack:       !include package_therma_v_silent.yaml
     therma_v_ess_pack:          !include package_therma_v_ess.yaml
+    heatmeisters_pack:          !include package_heatmeisters.yaml
     goodwe_sensors_pack:        !include package_goodwe_sensors.yaml
     goodwe_export_limit_pack:   !include package_goodwe_export_limit.yaml
     energy_cost_pack:           !include package_energy_cost.yaml
     unavailable_entities_pack:  !include package_unavailable_entities.yaml
     holiday_mode_pack:          !include package_holiday_mode.yaml
-
-afvalbeheer:
-      wastecollector: MijnAfvalwijzer
-      resources:
-        - restafval
-        - gft
-        - papier
-      postcode: !secret postcode_home
-      streetnumber: !secret streetnumber_home
-      dateformat: '%d-%m-%Y'          # (optional)
-      builtinicons: 1                 # (optional)
-      builtiniconsnew: 1              # (optional)
-      dutch: 0                        # (optional)
-
