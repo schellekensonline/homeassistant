@@ -19,7 +19,7 @@ input_number:
   # Input number to set the price difference that results in high price regime
   therma_v_ess_high_price_difference:
     name: "Therma V ESS high price difference"
-    initial: 0.5
+#    initial: 0.07
     min: 0
     max: 1 
     step: 0.01 # 1ct accuracy 
