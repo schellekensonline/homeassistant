@@ -7,19 +7,19 @@ template:
       state_class: measurement
       state: >
         {% set cost = states('sensor.nord_pool_nl_current_price') | float(0) %}
-        {% set next_energy = 0.022 | float(0) %}
+        {% set zonneplan = 0.020 | float(0) %}
         {% set energy_tax  = 0.1088 | float(0) %}
         {% set VAT         = 0.21 | float(0) %}
-        {{ ( (cost + next_energy + energy_tax) * (1+VAT) ) | round(2, default=0) }}
+        {{ ( (cost + zonneplan + energy_tax) * (1+VAT) ) | round(2, default=0) }}
       attributes:
         prices: >
-          {% set next_energy = 0.022 | float(0) %}
+          {% set zonneplan = 0.022 | float(0) %}
           {% set energy_tax  = 0.1088 | float(0) %}
           {% set VAT         = 0.21 | float(0) %}
           {% set energy_prices = state_attr('sensor.nord_pool_nl_current_prices_excluding_tax','prices') %}
           {% set ns = namespace(list=[]) %}
           {% for i in range(energy_prices|length) %}
-          {%   set ns.list = ns.list+[{'time': energy_prices[i]['time'], 'price':( (energy_prices[i]['price']|float) + next_energy + energy_tax)*(1+VAT)}] %}  
+          {%   set ns.list = ns.list+[{'time': energy_prices[i]['time'], 'price':( (energy_prices[i]['price']|float) + zonneplan + energy_tax)*(1+VAT)}] %}  
           {% endfor %}
           {{ ns.list }}
 
