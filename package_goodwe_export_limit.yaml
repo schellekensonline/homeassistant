@@ -129,17 +129,25 @@ automation:
     mode: single
     max_exceeded: silent
     triggers:
-      - trigger: state
-        entity_id:
-          - sensor.goodwe_export_power_limit
-        id: grid_export_limit_modbus_trig
+      # # When updated on inverter
+      # - trigger: state
+      #   entity_id:
+      #     - sensor.goodwe_export_power_limit
+      #   id: grid_export_limit_modbus_trig
+      # when updated from gui
       - trigger: state
         entity_id:
           - input_number.goodwe_grid_export_limit
         id: grid_export_limit_number_trig
-      - trigger: homeassistant
-        event: start
-        id: grid_export_limit_ha_start_trig
+      # when inconsistent for
+      - trigger: template
+        value_template: "{{ (states('sensor.goodwe_export_power_limit') | float(0) - states('input_number.goodwe_grid_export_limit') | float(0)) | abs  > 1 }}"
+        for: "00:15:00"
+        id: grid_export_limit_catch_trig
+      # # when HA starts
+      # - trigger: homeassistant
+      #   event: start
+      #   id: grid_export_limit_ha_start_trig
     conditions:
       - condition: state  # 'day' condition: from sunrise until sunset
         entity_id: sun.sun
@@ -147,42 +155,48 @@ automation:
       - condition: template
         value_template: "{{ has_value('sensor.goodwe_export_power_limit') }}"
     actions:
-      - choose:
-        - conditions:
-            - condition: trigger
-              id: grid_export_limit_modbus_trig
-            - condition: template # allowing higher resolution of input_number leads to better integration accuracy of error, only write input_number when difference >1 
-              value_template: "{{ (trigger.to_state.state | float(0) - state('input_number.goodwe_grid_export_limit') | float(0)) | abs  > 1 }}"
-          sequence:
-            - variables:
-                modbus_value: '{{ trigger.to_state.state | round(0) }}'
-            - action: input_number.set_value
-              target:
-                entity_id: input_number.goodwe_grid_export_limit
-              data:
-                value: '{{ modbus_value }}'
-        - conditions:
-            - condition: trigger
-              id: grid_export_limit_number_trig
-          sequence:
-            - action: modbus.write_register
-              data_template:
-                address: 292
-                slave: 1
-                hub: modbus_gateway_goodwe
-                # Should be written using [array] mode, i.e. 0x10, iso (single data) mode, i.e. 0x06
-                # Even for int16 and uint16, which is in violation with the modbus spec.
-                # The goodwe modbus manual explains this correctly though, all writes with function-code 0x10
-                # number is rounded and clipped to 0..100  
-                value: '{{ [ min(max( trigger.to_state.state | round(0) ,0),100) ]   }}'
-        default:
-          - variables:
-              modbus_value: '{{ states("sensor.goodwe_export_power_limit") | round(0) }}'
-          - action: input_number.set_value
-            target:
-              entity_id: input_number.goodwe_grid_export_limit
-            data:
-              value: '{{ modbus_value }}'
+      # - choose:
+      #   - conditions:
+      #       - condition: trigger
+      #         id: grid_export_limit_modbus_trig
+      #       - condition: template # allowing higher resolution of input_number leads to better integration accuracy of error, only write input_number when difference >1 
+      #         value_template: "{{ (trigger.to_state.state | float(0) - states('input_number.goodwe_grid_export_limit') | float(0)) | abs  > 1 }}"
+      #     sequence:
+      #       - variables:
+      #           modbus_value: '{{ trigger.to_state.state | round(0) }}'
+      #       - action: input_number.set_value
+      #         target:
+      #           entity_id: input_number.goodwe_grid_export_limit
+      #         data:
+      #           value: '{{ modbus_value }}'
+      #   - conditions:
+      #       - condition: trigger
+      #         id: grid_export_limit_number_trig
+      #     sequence:
+      #       - action: modbus.write_register
+      #         data_template:
+      #           address: 292
+      #           slave: 1
+      #           hub: modbus_gateway_goodwe
+      #           # Should be written using [array] mode, i.e. 0x10, iso (single data) mode, i.e. 0x06
+      #           # Even for int16 and uint16, which is in violation with the modbus spec.
+      #           # The goodwe modbus manual explains this correctly though, all writes with function-code 0x10
+      #           # number is rounded and clipped to 0..100  
+      #           value: '{{ [ min(max( trigger.to_state.state | round(0) ,0),100) ] }}'
+      #   default: #otherwise reset value from input number 
+      # Always write input-number to inverter not vice verse
+      - variables:
+          input_value: '{{ states("input_number.goodwe_grid_export_limit") | round(0) }}'
+      - action: modbus.write_register
+        data_template:
+          address: 292
+          slave: 1
+          hub: modbus_gateway_goodwe
+          # Should be written using [array] mode, i.e. 0x10, iso (single data) mode, i.e. 0x06
+          # Even for int16 and uint16, which is in violation with the modbus spec.
+          # The goodwe modbus manual explains this correctly though, all writes with function-code 0x10
+          # number is rounded and clipped to 0..100  
+          value: '{{ [ min(max( input_value | round(0) ,0),100) ] }}'
 
 #   # Restart integration when grid export limit becomes unavailable
 #   - id: goodwe_grid_export_limit_check_auto 
