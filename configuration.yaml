@@ -61,8 +61,8 @@ homeassistant:
   packages:
     dhw_circulation_pack:       !include package_dhw_circulation.yaml
     dhw_booster_pack:           !include package_dhw_booster.yaml
+    dhw_disinfection_pack:      !include package_dhw_disinfection.yaml
     therma_v_dewpoint_pack:     !include package_therma_v_dewpoint.yaml
-    therma_v_ufh_pack:          !include package_therma_v_ufh.yaml
     therma_v_sensors_pack:      !include package_therma_v_sensors.yaml
     therma_v_silent_pack:       !include package_therma_v_silent.yaml
     therma_v_ess_pack:          !include package_therma_v_ess.yaml
