@@ -1,0 +1,90 @@
+input_datetime:
+  dhw_last_disinfection: # start time of silent mode add to UI
+    name: DHW last disinfection
+    has_date: true
+    has_time: true
+  dhw_next_disinfection: # start time of silent mode add to UI
+    name: DHW next disinfection
+    has_date: true
+    has_time: true
+
+# input_select:
+#   dhw_disinfection_day:
+#   name: DHW disinfection dey
+#   options:
+#     - Monday
+#     - Thuesday
+#     - Wednesday
+#     - Thursday
+#     - Friday
+#     - Saturday
+#     - Sunday
+#   initial: Sunday
+
+automation:
+  # Detect when last disinfection occured, note can be due to planned disinfection or unplanned 
+  - id: dhw_disinfection_detection_auto
+    alias: "DHW disinfection detection auto"
+    description: Detect when last disinfection has occured
+    mode: single
+    # https://www.heatgeek.com/hot-water-temperature-scalding-and-legionella/
+    # 55˚C 90% of legionella dies in approximately 20 minutes and 100% is killed over 5 to 6 hours. 
+    # 60⁰C 90% it dies in 2 minutes and 100% in 30 minutes.
+    # 65⁰C = 90% in around 10  seconds and 100% in 2 minutes
+    # 70⁰C - it’s instant death for legionella 
+    triggers:
+      - trigger: numeric_state
+        entity_id: climate.therma_v_dhw
+        attribute: current_temperature
+        above: 55
+        for:
+          hours: 6
+      - trigger: numeric_state
+        entity_id: climate.therma_v_dhw
+        attribute: current_temperature
+        above: 60
+        for:
+          minutes: 30
+      - trigger: numeric_state
+        entity_id: climate.therma_v_dhw
+        attribute: current_temperature
+        above: 65
+        for:
+          minutes: 2
+    actions:
+      # store the last disinfection
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.dhw_last_disinfection
+        data:
+          timestamp: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+      # plan one X days ahead
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.dhw_next_disinfection
+        data:
+          timestamp: "{{ ( now()+timedelta(days=7) ).strftime('%Y-%m-%d %H:%M:%S') }}"
+
+  # # Plan disinfection at cheapest hours on the disinfection day 
+  # - id: dhw_disinfection_planning_auto
+  #   alias: "DHW disinfection planning auto"
+  #   description: Plan disinfection at cheapest hour on the disinfection day
+  #   mode: single
+  #   triggers:
+  #     - trigger: time
+  #       at:
+  #         - input_datetime.dhw_next_disinfection
+  #       weekday: 
+  #   actions:
+
+  # # Run disinfection at planned moment 
+  # - id: dhw_disinfection_run_auto
+  #   alias: "DHW disinfection run auto"
+  #   description: Run disinfection planned moment
+  #   mode: single
+  #   triggers:
+  #     - trigger: time
+  #       at:
+  #         - input_datetime.dhw_next_disinfection
+  #   actions:
+  #   # Run disinfection
