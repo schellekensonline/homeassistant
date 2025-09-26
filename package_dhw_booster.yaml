@@ -42,8 +42,8 @@ automation:
   # Done every X minutes to make it robust for HA restarts
   # the DHW heater is switched with a separate parallel relay
   - id: dhw_e_price_positive_auto
-    alias: "DHW e-price negative auto"
-    description: Set DHW booster on when E-price is negative 
+    alias: "DHW e-price positive auto"
+    description: Set DHW booster on when E-price is positive
     mode: single
     triggers:
       - trigger: time_pattern
