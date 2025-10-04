@@ -586,8 +586,8 @@ modbus:
         address: 7
         slave: 1
         input_type: input
-        max_temp: 30
-        min_temp: 16
+        max_temp: 45 # for water temp control mode
+        min_temp: -2 # for AI mode
         offset: 0
         precision: 1
         scale: 0.1
