@@ -1,32 +1,49 @@
 input_datetime:
   dhw_last_disinfection: # start time of silent mode add to UI
-    name: DHW last disinfection
+    name: "DHW last disinfection"
     has_date: true
     has_time: true
   dhw_next_disinfection: # start time of silent mode add to UI
-    name: DHW next disinfection
+    name: "DHW next disinfection"
     has_date: true
     has_time: true
 
-# input_select:
-#   dhw_disinfection_day:
-#   name: DHW disinfection dey
-#   options:
-#     - Monday
-#     - Thuesday
-#     - Wednesday
-#     - Thursday
-#     - Friday
-#     - Saturday
-#     - Sunday
-#   initial: Sunday
+input_number:
+  dhw_max_days_between_disinfections:
+    name: "DHW max days between disinfections"
+    initial: 10 # not adjustable in UI, comment when made adjustable
+    min: 5
+    max: 28
+    step: 1
+    mode: slider
+  dhw_min_days_between_disinfections:
+    name: "DHW min days between disinfections"
+    initial: 5 # not adjustable in UI, comment when made adjustable
+    min: 5
+    max: 14
+    step: 1
+    mode: slider
+
+input_select:
+  dhw_disinfection_day:
+    name: "DHW disinfection day"
+    options:
+      - Mon
+      - Tue
+      - Wed
+      - Thu
+      - Fri
+      - Sat
+      - Sun
+    initial: Sun # not adjustable in UI, comment when made adjustable
 
 automation:
-  # Detect when last disinfection occured, note can be due to planned disinfection or unplanned 
+  # Detect when last disinfection occured, note can be due to planned disinfection or unplanned
+  # can be either by a planned disinfection or a negative energy price event 
   - id: dhw_disinfection_detection_auto
     alias: "DHW disinfection detection auto"
-    description: Detect when last disinfection has occured
-    mode: single
+    description: "Detect when last disinfection has occured"
+    mode: parallel
     # https://www.heatgeek.com/hot-water-temperature-scalding-and-legionella/
     # 55˚C 90% of legionella dies in approximately 20 minutes and 100% is killed over 5 to 6 hours. 
     # 60⁰C 90% it dies in 2 minutes and 100% in 30 minutes.
@@ -58,24 +75,40 @@ automation:
           entity_id: input_datetime.dhw_last_disinfection
         data:
           timestamp: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
-      # plan one X days ahead
-      - action: input_datetime.set_datetime
-        target:
-          entity_id: input_datetime.dhw_next_disinfection
-        data:
-          timestamp: "{{ ( now()+timedelta(days=7) ).strftime('%Y-%m-%d %H:%M:%S') }}"
+      # # plan one X days ahead
+      # - variables:
+      #     next_in_days: "{{ states('input_number.dhw_max_days_between_disinfections') }}" 
+      # - action: input_datetime.set_datetime
+      #   target:
+      #     entity_id: input_datetime.dhw_next_disinfection
+      #   data:
+      #     timestamp: "{{ ( now()+timedelta(days=next_in_days) ).strftime('%Y-%m-%d %H:%M:%S') }}"
 
-  # # Plan disinfection at cheapest hours on the disinfection day 
+
+  # Plan disinfection at cheapest hours on the disinfection day 
   # - id: dhw_disinfection_planning_auto
   #   alias: "DHW disinfection planning auto"
-  #   description: Plan disinfection at cheapest hour on the disinfection day
+  #   description: "Plan disinfection at cheapest hours on the disinfection day"
   #   mode: single
   #   triggers:
   #     - trigger: time
-  #       at:
-  #         - input_datetime.dhw_next_disinfection
-  #       weekday: 
+  #       at: 00:05 # every day just after midnight 
+  #   variables:
+  #     days_passed_since: "{{ ( ( as_timestamp(now()) - state_attr('input_datetime.dhw_last_disinfection','timestamp') ) / (60*60*24) ) | round(0)}}"
+  #   conditions:
+  #     - or:
+  #       - and:
+  #         # check it it is the right day
+  #         - condition: template
+  #           value_template: "{{ now().weekday() == state_attr('input_select.dhw_disinfection_day', 'options').index(states('input_select.dhw_disinfection_day')) }}"
+  #         # and the minumum days since is passed
+  #         - condition: template
+  #           value_template: "{{ days_passed_since >= states('input_number.dhw_min_days_between_disinfections') }}"
+  #       # or the maximum time since is passed
+  #       - condition: template
+  #         value_template: "{{ days_passed_since >= states('input_number.dhw_max_days_between_disinfections') }}"  
   #   actions:
+  #     # plan event
 
   # # Run disinfection at planned moment 
   # - id: dhw_disinfection_run_auto
@@ -88,3 +121,4 @@ automation:
   #         - input_datetime.dhw_next_disinfection
   #   actions:
   #   # Run disinfection
+
