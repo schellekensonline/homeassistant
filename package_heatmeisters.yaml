@@ -33,7 +33,7 @@ input_number:
     unit_of_measurement: "%"
   heatmeisters_start_up_fan_speed:
     name: "Heatmeister start-up fan speed"
-    initial: 50
+#    initial: 50     # Comment when set in UI
     min: 0
     max: 100 
     step: 1 
@@ -41,7 +41,7 @@ input_number:
     unit_of_measurement: "%"
   heatmeisters_cooling_fan_speed:
     name: "Heatmeister cooling fan speed"
-    initial: 50
+#    initial: 50     # Comment when set in UI 
     min: 0
     max: 100 
     step: 1 
@@ -80,85 +80,89 @@ automation:
             target:
               entity_id: input_number.heatmeisters_master_fan_state
             data:
-              value: "{{ states('input_number.heatbooster_master_bedroom_fan_speed') }}"
+              value: "{{ states('number.heatbooster_master_bedroom_fan_speed') }}"
           - action: input_number.set_value
             target:
               entity_id: input_number.heatmeisters_chris_fan_state
             data:
-              value: "{{ states('input_number.heatbooster_chris_bedroom_fan_speed') }}"
+              value: "{{ states('number.heatbooster_chris_bedroom_fan_speed') }}"
           - action: input_number.set_value
             target:
               entity_id: input_number.heatmeisters_julia_fan_state
             data:
-              value: "{{ states('input_number.heatbooster_julia_bedroom_fan_speed') }}"
+              value: "{{ states('number.heatbooster_julia_bedroom_fan_speed') }}"
           - action: input_number.set_value
             target:
               entity_id: input_number.heatmeisters_computer_fan_state
             data:
-              value: "{{ states('input_number.heatbooster_computer_room_fan_speed') }}"
+              value: "{{ states('number.heatbooster_computer_room_fan_speed') }}"
       # Set start-up speed
-      - conditions:
-          - condition: numeric_state
-            entity_id: input_number.heatbooster_master_bedroom_fan_speed
-            below: input_number.heatmeisters_start_up_fan_speed
-        sequence:
-          - action: input_number.set_value
-            target:
-              entity_id: input_number.heatbooster_master_bedroom_fan_speed
-            data:
-              value: "{{ states('input_number.heatmeisters_start_up_fan_speed') }}"
-      - conditions:
-          - condition: numeric_state
-            entity_id: input_number.heatbooster_chris_bedroom_fan_speed
-            below: input_number.heatmeisters_start_up_fan_speed
-        sequence:
-          - action: input_number.set_value
-            target:
-              entity_id: input_number.heatbooster_chris_bedroom_fan_speed
-            data:
-              value: "{{ states('input_number.heatmeisters_start_up_fan_speed') }}"
-      - conditions:
-          - condition: numeric_state
-            entity_id: input_number.heatbooster_julia_bedroom_fan_speed
-            below: input_number.heatmeisters_start_up_fan_speed
-        sequence:
-          - action: input_number.set_value
-            target:
-              entity_id: input_number.heatbooster_julia_bedroom_fan_speed
-            data:
-              value: "{{ states('input_number.heatmeisters_start_up_fan_speed') }}"
-      - conditions:
-          - condition: numeric_state
-            entity_id: input_number.heatbooster_computer_room_fan_speed
-            below: input_number.heatmeisters_start_up_fan_speed
-        sequence:
-          - action: input_number.set_value
-            target:
-              entity_id: input_number.heatbooster_computer_room_fan_speed
-            data:
-              value: "{{ states('input_number.heatmeisters_start_up_fan_speed') }}"
+      - choose:
+          - conditions:
+              - condition: numeric_state
+                entity_id: number.heatbooster_master_bedroom_fan_speed
+                below: input_number.heatmeisters_start_up_fan_speed
+            sequence:
+              - action: number.set_value
+                target:
+                  entity_id: number.heatbooster_master_bedroom_fan_speed
+                data:
+                  value: "{{ states('input_number.heatmeisters_start_up_fan_speed') }}"
+      - choose:
+          - conditions:
+              - condition: numeric_state
+                entity_id: number.heatbooster_chris_bedroom_fan_speed
+                below: input_number.heatmeisters_start_up_fan_speed
+            sequence:
+              - action: number.set_value
+                target:
+                  entity_id: number.heatbooster_chris_bedroom_fan_speed
+                data:
+                  value: "{{ states('input_number.heatmeisters_start_up_fan_speed') }}"
+      - choose:
+          - conditions:
+              - condition: numeric_state
+                entity_id: number.heatbooster_julia_bedroom_fan_speed
+                below: input_number.heatmeisters_start_up_fan_speed
+            sequence:
+              - action: number.set_value
+                target:
+                  entity_id: number.heatbooster_julia_bedroom_fan_speed
+                data:
+                  value: "{{ states('input_number.heatmeisters_start_up_fan_speed') }}"
+      - choose:
+          - conditions:
+              - condition: numeric_state
+                entity_id: number.heatbooster_computer_room_fan_speed
+                below: input_number.heatmeisters_start_up_fan_speed
+            sequence:
+              - action: number.set_value
+                target:
+                  entity_id: number.heatbooster_computer_room_fan_speed
+                data:
+                  value: "{{ states('input_number.heatmeisters_start_up_fan_speed') }}"
       # Wait for startup to finish
       - delay: 
           minutes: 15 
       # Restore state
-      - action: input_number.set_value
+      - action: number.set_value
         target:
-          entity_id: input_number.heatbooster_master_bedroom_fan_speed
+          entity_id: number.heatbooster_master_bedroom_fan_speed
         data:
           value: "{{ states('input_number.heatmeisters_master_fan_state') }}"
-      - action: input_number.set_value
+      - action: number.set_value
         target:
-          entity_id: input_number.heatbooster_chris_bedroom_fan_speed
+          entity_id: number.heatbooster_chris_bedroom_fan_speed
         data:
           value: "{{ states('input_number.heatmeisters_chris_fan_state') }}"
-      - action: input_number.set_value
+      - action: number.set_value
         target:
-          entity_id: input_number.heatbooster_julia_bedroom_fan_speed
+          entity_id: number.heatbooster_julia_bedroom_fan_speed
         data:
           value: "{{ states('input_number.heatmeisters_julia_fan_state') }}"
-      - action: input_number.set_value
+      - action: number.set_value
         target:
-          entity_id: input_number.heatbooster_computer_room_fan_speed
+          entity_id: number.heatbooster_computer_room_fan_speed
         data:
           value: "{{ states('input_number.heatmeisters_computer_fan_state') }}"
 
@@ -203,63 +207,67 @@ automation:
             target:
               entity_id: input_number.heatmeisters_master_fan_state
             data:
-              value: "{{ states('input_number.heatbooster_master_bedroom_fan_speed') }}"
+              value: "{{ states('number.heatbooster_master_bedroom_fan_speed') }}"
           - action: input_number.set_value
             target:
               entity_id: input_number.heatmeisters_chris_fan_state
             data:
-              value: "{{ states('input_number.heatbooster_chris_bedroom_fan_speed') }}"
+              value: "{{ states('number.heatbooster_chris_bedroom_fan_speed') }}"
           - action: input_number.set_value
             target:
               entity_id: input_number.heatmeisters_julia_fan_state
             data:
-              value: "{{ states('input_number.heatbooster_julia_bedroom_fan_speed') }}"
+              value: "{{ states('number.heatbooster_julia_bedroom_fan_speed') }}"
           - action: input_number.set_value
             target:
               entity_id: input_number.heatmeisters_computer_fan_state
             data:
-              value: "{{ states('input_number.heatbooster_computer_room_fan_speed') }}"
+              value: "{{ states('number.heatbooster_computer_room_fan_speed') }}"
       # Set cooling speed
-      - conditions:
-          - condition: numeric_state
-            entity_id: input_number.heatbooster_master_bedroom_fan_speed
-            below: input_number.heatmeisters_cooling_fan_speed
-        sequence:
-          - action: input_number.set_value
-            target:
-              entity_id: input_number.heatbooster_master_bedroom_fan_speed
-            data:
-              value: "{{ states('input_number.heatmeisters_cooling_fan_speed') }}"
-      - conditions:
-          - condition: numeric_state
-            entity_id: input_number.heatbooster_chris_bedroom_fan_speed
-            below: input_number.heatmeisters_cooling_fan_speed
-        sequence:
-          - action: input_number.set_value
-            target:
-              entity_id: input_number.heatbooster_chris_bedroom_fan_speed
-            data:
-              value: "{{ states('input_number.heatmeisters_cooling_fan_speed') }}"
-      - conditions:
-          - condition: numeric_state
-            entity_id: input_number.heatbooster_julia_bedroom_fan_speed
-            below: input_number.heatmeisters_cooling_fan_speed
-        sequence:
-          - action: input_number.set_value
-            target:
-              entity_id: input_number.heatbooster_julia_bedroom_fan_speed
-            data:
-              value: "{{ states('input_number.heatmeisters_cooling_fan_speed') }}"
-      - conditions:
-          - condition: numeric_state
-            entity_id: input_number.heatbooster_computer_room_fan_speed
-            below: input_number.heatmeisters_cooling_fan_speed
-        sequence:
-          - action: input_number.set_value
-            target:
-              entity_id: input_number.heatbooster_computer_room_fan_speed
-            data:
-              value: "{{ states('input_number.heatmeisters_cooling_fan_speed') }}"
+      - choose:
+          - conditions:
+              - condition: numeric_state
+                entity_id: number.heatbooster_master_bedroom_fan_speed
+                below: input_number.heatmeisters_cooling_fan_speed
+            sequence:
+              - action: number.set_value
+                target:
+                  entity_id: number.heatbooster_master_bedroom_fan_speed
+                data:
+                  value: "{{ states('input_number.heatmeisters_cooling_fan_speed') }}"
+      - choose:
+          - conditions:
+              - condition: numeric_state
+                entity_id: number.heatbooster_chris_bedroom_fan_speed
+                below: input_number.heatmeisters_cooling_fan_speed
+            sequence:
+              - action: number.set_value
+                target:
+                  entity_id: number.heatbooster_chris_bedroom_fan_speed
+                data:
+                  value: "{{ states('input_number.heatmeisters_cooling_fan_speed') }}"
+      - choose:
+          - conditions:
+              - condition: numeric_state
+                entity_id: number.heatbooster_julia_bedroom_fan_speed
+                below: input_number.heatmeisters_cooling_fan_speed
+            sequence:
+              - action: number.set_value
+                target:
+                  entity_id: number.heatbooster_julia_bedroom_fan_speed
+                data:
+                  value: "{{ states('input_number.heatmeisters_cooling_fan_speed') }}"
+      - choose:
+          - conditions:
+              - condition: numeric_state
+                entity_id: number.heatbooster_computer_room_fan_speed
+                below: input_number.heatmeisters_cooling_fan_speed
+            sequence:
+              - action: number.set_value
+                target:
+                  entity_id: number.heatbooster_computer_room_fan_speed
+                data:
+                  value: "{{ states('input_number.heatmeisters_cooling_fan_speed') }}"
 
 
   - id: heatmeisters_off_when_cooling_stops_auto
@@ -286,23 +294,23 @@ automation:
         value_template: "{{ is_state_attr('climate.therma_v_heating_cooling', 'hvac_modes', 'cool') }}"
     actions:
       # Restore state
-      - action: input_number.set_value
+      - action: number.set_value
         target:
-          entity_id: input_number.heatbooster_master_bedroom_fan_speed
+          entity_id: number.heatbooster_master_bedroom_fan_speed
         data:
           value: "{{ states('input_number.heatmeisters_master_fan_state') }}"
-      - action: input_number.set_value
+      - action: number.set_value
         target:
-          entity_id: input_number.heatbooster_chris_bedroom_fan_speed
+          entity_id: number.heatbooster_chris_bedroom_fan_speed
         data:
           value: "{{ states('input_number.heatmeisters_chris_fan_state') }}"
-      - action: input_number.set_value
+      - action: number.set_value
         target:
-          entity_id: input_number.heatbooster_julia_bedroom_fan_speed
+          entity_id: number.heatbooster_julia_bedroom_fan_speed
         data:
           value: "{{ states('input_number.heatmeisters_julia_fan_state') }}"
-      - action: input_number.set_value
+      - action: number.set_value
         target:
-          entity_id: input_number.heatbooster_computer_room_fan_speed
+          entity_id: number.heatbooster_computer_room_fan_speed
         data:
           value: "{{ states('input_number.heatmeisters_computer_fan_state') }}"
