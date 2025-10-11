@@ -4,7 +4,7 @@
   use_blueprint:
     path: SgtBatten/Stable.yaml
     input:
-      camera: camera.front
+      camera: camera.ipcam2_front
       notify_device: 284c6d83502161ac82eb9f8be04cf2ce
       base_url: !secret hass_base_url
       title: 'Person at front door '
@@ -32,7 +32,7 @@
   use_blueprint:
     path: SgtBatten/Stable.yaml
     input:
-      camera: camera.back
+      camera: camera.ipcam1_back
       notify_device: 284c6d83502161ac82eb9f8be04cf2ce
       base_url: !secret hass_base_url
       title: Person at back door
