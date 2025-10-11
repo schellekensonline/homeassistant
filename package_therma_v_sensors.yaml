@@ -40,11 +40,10 @@ template:
       device_class: power
       unit_of_measurement: "W"
       state: >
-        {% set p_ufh     = states('sensor.shelly_plug_s2_power') | float(0) %}
         {% set p_dhw_cir = states('sensor.shelly_plug_s3_power') | float(0) %}
         {% set p_hp      = states('sensor.kwh_meter_3_phase_3c39e72df94a_active_power') | float(0) %}
 
-        {{ (p_hp+p_ufh+p_dhw_cir) | round(0) }}
+        {{ (p_hp+p_dhw_cir) | round(0) }}
 
     # Calculates the cost of heat as EURO/kWhr
     - name: "Price of heat incl tax"
