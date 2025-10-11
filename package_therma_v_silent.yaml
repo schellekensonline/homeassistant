@@ -71,7 +71,7 @@ automation:
     conditions:
       - and:
         - condition: numeric_state # Allow only when startup_auto not active
-          entity_id: "automation.therma_v_silent_on_at_startup"  
+          entity_id: "automation.therma_v_silent_on_at_startup_auto"  
           attribute: current  # Attribute is number of active instances of automation                  
           below: 1            # Below 1 means no active startup_auto instances
         - condition: numeric_state
