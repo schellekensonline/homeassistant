@@ -11,17 +11,17 @@ input_datetime:
     name: "DHW disinfection window start"
     has_date: false
     has_time: true
-    initial: "00:05"
+    initial: "00:05" # not adjustable in UI, comment when made adjustable
   dhw_disinfection_windown_end: # disinfection window end
     name: "DHW disinfection window end"
     has_date: false
     has_time: true
-    initial: "10:00"
+    initial: "10:00" # not adjustable in UI, comment when made adjustable
 
 input_number:
   dhw_max_days_between_disinfections:
     name: "DHW max days between disinfections"
-    initial: 10 # not adjustable in UI, comment when made adjustable
+    initial: 12 # not adjustable in UI, comment when made adjustable
     min: 5
     max: 28
     step: 1
@@ -33,6 +33,13 @@ input_number:
     max: 14
     step: 1
     mode: slider
+  dhw_setpoint_state: # state to restore setpoint after disinfection
+    name: "DHW setpoint state"
+    min: 0
+    max: 80
+    step: 1
+    mode: slider
+
 
 input_select:
   dhw_disinfection_day:
@@ -87,15 +94,15 @@ automation:
           entity_id: input_datetime.dhw_last_disinfection
         data:
           timestamp: "{{ now().timestamp() }}"
-      # plan one X days ahead
-      - action: input_datetime.set_datetime
-        target:
-          entity_id: input_datetime.dhw_next_disinfection
-        data:
-          timestamp: "{{ ( now()+timedelta(days=next_in_days) ).timestamp() }}"
+      # # plan one X days ahead
+      # - action: input_datetime.set_datetime
+      #   target:
+      #     entity_id: input_datetime.dhw_next_disinfection
+      #   data:
+      #     timestamp: "{{ ( now()+timedelta(days=next_in_days) ).timestamp() }}"
 
 
-  # Plan disinfection at cheapest hours on the disinfection day 
+  # Plan disinfection at cheapest hours on the disinfection day or when forces by max days passed
   - id: dhw_disinfection_planning_auto
     alias: "DHW disinfection planning auto"
     description: "Plan disinfection at cheapest hours on the disinfection day"
@@ -123,23 +130,58 @@ automation:
         - condition: template
           value_template: "{{ days_passed_since >= (states('input_number.dhw_max_days_between_disinfections')|int) }}"  
     actions:
-      # plan event
+      # plan disinfection event
       - action: input_datetime.set_datetime
         target:
           entity_id: input_datetime.dhw_next_disinfection
         data:
           timestamp: "{{cheepest_hours}}" 
-  
-  
-  # # Run disinfection at planned moment 
-  # - id: dhw_disinfection_run_auto
-  #   alias: "DHW disinfection run auto"
-  #   description: Run disinfection planned moment
-  #   mode: single
-  #   triggers:
-  #     - trigger: time
-  #       at:
-  #         - input_datetime.dhw_next_disinfection
-  #   actions:
-  #   # Run disinfection
+
+  # Run disinfection at planned moment 
+  - id: dhw_disinfection_run_auto
+    alias: "DHW disinfection run auto"
+    description: "Run disinfection planned moment"
+    mode: single
+    triggers:
+      - trigger: time
+        at: input_datetime.dhw_next_disinfection
+    actions:
+      # Run disinfection
+      - sequence:
+        # store DHW setpoint
+        - action: input_number.set_value
+          target:
+            entity_id: input_number.dhw_setpoint_state
+          data:
+            value: "{{ {{ state_attr('climate.therma_v_dhw','temperature') }} }}"
+        # set dhw to 60C
+        - action: climate.set_temperature
+          target:
+            entity_id: climate.therma_v_dhw
+          data:
+            temperature: 60
+        # wait 15min
+        - delay:
+            minutes: 15
+        # trigger disinfection over modbus
+        - action: switch.turn_on
+          target:
+            entity_id: switch.therma_v_trigger_dhw_disinfection_cycle
+
+  # Restore dhw set-point after disinfection
+  - id: dhw_disinfection_restore_setpoint_auto
+    alias: "DHW disinfection restore setpoint auto"
+    description: "Restore setpoint after disinfection"
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.therma_v_dhw_disinfection_cycle_state
+        from: "on"
+        to: "off"
+    actions:
+      - action: climate.set_temperature
+        target:
+          entity_id: climate.therma_v_dhw
+        data:
+          temperature: "{{ states('input_number.dhw_setpoint_state') }}"
 
