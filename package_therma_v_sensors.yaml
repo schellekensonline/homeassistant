@@ -150,7 +150,7 @@ template:
       availability: >
         {% set Pin_com   = states('sensor.therma_v_compressor_pressure_low') | float("unknown") %}
         {% set Pout_com    = states('sensor.therma_v_compressor_pressure_high') | float("unknown") %}
-        {{ Tout_buf|is_number and Tin_buf|is_number}}
+        {{ Pin_com|is_number and Pout_com|is_number}}
       state: >
         {% set Pin_com   = states('sensor.therma_v_compressor_pressure_low') | float(0) %}
         {% set Pout_com    = states('sensor.therma_v_compressor_pressure_high') | float(0) %}
@@ -378,11 +378,11 @@ modbus:
   #      slave: 1
   #      input_type: holding
 
-  #    - name: "Therma V control mode" # 0 water outlet 4 water inlet 3 room
-  #      scan_interval: 20
-  #      address: 1
-  #      slave: 1
-  #      input_type: holding
+      # - name: "Therma V control mode" # 0 water outlet 4 water inlet 3 room
+      #   scan_interval: 20
+      #   address: 1
+      #   slave: 1
+      #   input_type: holding
 
   #    - name: "Therma V target temperature circuit 1" # 0.1C
   #      scan_interval: 20
@@ -394,15 +394,15 @@ modbus:
   #      device_class: temperature
   #      unit_of_measurement: "°C"
 
-  #    - name: "Therma V room air temperature circuit 1" # 0.1C
-  #      scan_interval: 20
-  #      address: 3
-  #      slave: 1
-  #      input_type: holding
-  #      scale: 0.1
-  #      state_class: measurement
-  #      device_class: temperature
-  #      unit_of_measurement: "°C"
+      # - name: "Therma V room air temperature circuit 1" # 0.1C
+      #   scan_interval: 20
+      #   address: 3
+      #   slave: 1
+      #   input_type: holding
+      #   scale: 0.1
+      #   state_class: measurement
+      #   device_class: temperature
+      #   unit_of_measurement: "°C"
 
   #    - name: "Therma V auto mode target temperature delta circuit 1" # 1C
   #      scan_interval: 20
@@ -414,25 +414,25 @@ modbus:
   #      device_class: temperature
   #      unit_of_measurement: "°C"
 
-  #    - name: "Therma V target temperature circuit 2" # 0.1C
-  #      scan_interval: 20
-  #      address: 5
-  #      slave: 1
-  #      input_type: holding
-  #      scale: 0.1
-  #      state_class: measurement
-  #      device_class: temperature
-  #      unit_of_measurement: "°C"
+      # - name: "Therma V target temperature circuit 2" # 0.1C
+      #   scan_interval: 20
+      #   address: 5
+      #   slave: 1
+      #   input_type: holding
+      #   scale: 0.1
+      #   state_class: measurement
+      #   device_class: temperature
+      #   unit_of_measurement: "°C"
 
-  #    - name: "Therma V room air temperature circuit 2" # 0.1C
-  #      scan_interval: 20
-  #      address: 6
-  #      slave: 1
-  #      input_type: holding
-  #      scale: 0.1
-  #      state_class: measurement
-  #      device_class: temperature
-  #      unit_of_measurement: "°C"
+      # - name: "Therma V room air temperature circuit 2" # 0.1C
+      #   scan_interval: 20
+      #   address: 6
+      #   slave: 1
+      #   input_type: holding
+      #   scale: 0.1
+      #   state_class: measurement
+      #   device_class: temperature
+      #   unit_of_measurement: "°C"
 
   #    - name: "Therma V auto mode target temperature delta circuit 2" # 1C
   #      scan_interval: 20
@@ -586,11 +586,12 @@ modbus:
         slave: 1
         input_type: input
         max_temp: 45 # for water temp control mode
-        min_temp: -2 # for AI mode
+        min_temp: -2 # for AI/auto mode
         offset: 0
         precision: 1
         scale: 0.1
-        target_temp_register: 2
+        target_temp_register: 2 # water / room mode
+        # target_temp_register: 4 # AI/auto mode
         temp_step: 1
         temperature_unit: "°C"
         hvac_mode_register:
@@ -598,7 +599,7 @@ modbus:
           values:
             state_cool: 0
             state_heat: 4
-            state_auto: 3
+            # state_auto: 3
               
       - name: "Therma V DHW"
         address: 5
