@@ -1,12 +1,22 @@
 input_datetime:
-  dhw_last_disinfection: # start time of silent mode add to UI
+  dhw_last_disinfection: # date and time of last disinfection
     name: "DHW last disinfection"
     has_date: true
     has_time: true
-  dhw_next_disinfection: # start time of silent mode add to UI
+  dhw_next_disinfection: # start date and time of next disinfection
     name: "DHW next disinfection"
     has_date: true
     has_time: true
+  dhw_disinfection_windown_start: # disinfection window start
+    name: "DHW disinfection window start"
+    has_date: false
+    has_time: true
+    initial: "00:05"
+  dhw_disinfection_windown_end: # disinfection window end
+    name: "DHW disinfection window end"
+    has_date: false
+    has_time: true
+    initial: "10:00"
 
 input_number:
   dhw_max_days_between_disinfections:
@@ -92,24 +102,26 @@ automation:
     mode: single
     triggers:
       - trigger: time
-        at: 00:05 # every day just after midnight 
+        at: "00:01" # every day just after midnight 
     variables:
+      # days passed since last disinfection
       days_passed_since: "{{ ( ( as_timestamp(now()) - state_attr('input_datetime.dhw_last_disinfection','timestamp') ) / (60*60*24) ) | round(0)}}"
+      # start time of the cheapes 3 hours between disinfection window start and end
       cheepest_hours: >
         {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
-        {{ as_timestamp(cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', hours=3, look_ahead=true, include_today=true, include_tomorrow=false)) }}
+        {{ as_timestamp(cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', hours=3, look_ahead=false, include_today=true, include_tomorrow=false, start=states('input_datetime.dhw_disinfection_windown_start'), end=states('input_datetime.dhw_disinfection_windown_end'))) }}
     conditions:
       - or:
         - and:
           # check it it is the right day
           - condition: template
             value_template: "{{ now().weekday() == state_attr('input_select.dhw_disinfection_day', 'options').index(states('input_select.dhw_disinfection_day')) }}"
-          # and the minumum days since is passed
+          # and the minumum days since are passed
           - condition: template
-            value_template: "{{ days_passed_since >= states('input_number.dhw_min_days_between_disinfections') }}"
-        # or the maximum time since is passed
+            value_template: "{{ days_passed_since >= (states('input_number.dhw_min_days_between_disinfections')|int) }}"
+        # or the maximum days since are passed
         - condition: template
-          value_template: "{{ days_passed_since >= states('input_number.dhw_max_days_between_disinfections') }}"  
+          value_template: "{{ days_passed_since >= (states('input_number.dhw_max_days_between_disinfections')|int) }}"  
     actions:
       # plan event
       - action: input_datetime.set_datetime
