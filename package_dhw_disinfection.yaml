@@ -153,7 +153,7 @@ automation:
           target:
             entity_id: input_number.dhw_setpoint_state
           data:
-            value: "{{ {{ state_attr('climate.therma_v_dhw','temperature') }} }}"
+            value: "{{ state_attr('climate.therma_v_dhw','temperature') }}"
         # set dhw to 60C
         - action: climate.set_temperature
           target:
