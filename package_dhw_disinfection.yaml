@@ -7,12 +7,12 @@ input_datetime:
     name: "DHW next disinfection"
     has_date: true
     has_time: true
-  dhw_disinfection_windown_start: # disinfection window start
+  dhw_disinfection_window_start: # disinfection window start
     name: "DHW disinfection window start"
     has_date: false
     has_time: true
     initial: "00:05" # not adjustable in UI, comment when made adjustable
-  dhw_disinfection_windown_end: # disinfection window end
+  dhw_disinfection_window_end: # disinfection window end
     name: "DHW disinfection window end"
     has_date: false
     has_time: true
@@ -116,7 +116,7 @@ automation:
       # start time of the cheapes 3 hours between disinfection window start and end
       cheepest_hours: >
         {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
-        {{ as_timestamp(cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', hours=3, look_ahead=false, include_today=true, include_tomorrow=false, start=states('input_datetime.dhw_disinfection_windown_start'), end=states('input_datetime.dhw_disinfection_windown_end'))) }}
+        {{ as_timestamp(cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', hours=3, look_ahead=false, include_today=true, include_tomorrow=false, start=states('input_datetime.dhw_disinfection_window_start'), end=states('input_datetime.dhw_disinfection_window_end'))) }}
     conditions:
       - or:
         - and:
