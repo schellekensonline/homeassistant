@@ -32,8 +32,8 @@ input_boolean:
 
 automation:
   - id: therma_v_silent_on_based_on_temp_time_auto
-    alias: "Therma V Silent ON based on temperature and time auto"
-    description: Turns on silent mode at set time and when the temperature is high enough
+    alias: "Therma V Silent ON based on temp and time auto"
+    description: Turns on silent mode at set time
     mode: single
     max_exceeded: silent
     triggers:
@@ -47,16 +47,20 @@ automation:
           entity_id: switch.therma_v_heating_cooling_on_off
           state: 'on' # Allow only when heating is on! otherwise RMC may crash
         - or:
+          - and:
+            - condition: numeric_state
+              entity_id: "sensor.therma_v_outside_temperature"
+              above: 8 # Silent mode on above 6 degrees for better defrosts
+            - condition: state
+              entity_id: switch.silent_mode_state
+              state: 'on' # Allow only when silent on
           - condition: time 
-            after: input_datetime.silent_start_time
-            before: input_datetime.silent_stop_time
-          - condition: numeric_state
-            entity_id: "sensor.therma_v_outside_temperature"
-            above: 8 # Silent mode off below 6 degrees for better defrosts
+            after: input_datetime.silent_stop_time
+            before: input_datetime.silent_start_time        
     actions:
       - action: switch.turn_on
         target:
-          entity_id: switch.silent_mode_state
+          entity_id: switch.therma_v_silent_mode
 
   - id: therma_v_silent_off_based_on_temp_time_auto
     alias: "Therma V Silent OFF based on temperature and time auto"
@@ -83,7 +87,7 @@ automation:
     actions:
       - action: switch.turn_off
         target:
-          entity_id: switch.silent_mode_state
+          entity_id: switch.therma_v_silent_mode
 
   - id: therma_v_silent_on_at_startup_auto
     alias: "Therma V Silent ON at startup auto"
@@ -152,9 +156,9 @@ automation:
         target:
           entity_id: input_boolean.silent_mode_startup
 
-  - id: therma_v_silent_mode_on_auto
-    alias: "Therma V Silent Mode ON auto"
-    description: "Turns on silent mode when heating/cooling is switched on"
+  - id: therma_v_silent_mode_start_on_auto
+    alias: "Therma V Silent Mode Start ON auto"
+    description: "Turns on silent mode start when heating/cooling is switched on"
     mode: single
     triggers:
       - trigger: state
@@ -163,9 +167,6 @@ automation:
         to: "on" # When heating/cooling switched off
     conditions: []
     actions:
-      - action: switch.turn_on # Turn on silent mode
-        target:
-          entity_id: switch.silent_mode_state
       - action: input_boolean.turn_on # Turn on silent start
         target:
           entity_id: input_boolean.silent_mode_startup
