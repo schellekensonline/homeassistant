@@ -65,7 +65,7 @@ automation:
       - choose:
           - conditions: # ZERO ON EXPORT for inc. negative prices
               - condition: numeric_state
-                entity_id: sensor.nord_pool_nl_current_prices_including_tax
+                entity_id: sensor.current_hourly_electricity_price_including_tax
                 below: -0.001 # made slichtly negative to pervent trigering with -0.0
             sequence:
               - action: input_number.set_value
@@ -77,7 +77,7 @@ automation:
               - condition: template
                 value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 1 ] ) }}"
               - condition: numeric_state
-                entity_id: sensor.nord_pool_nl_current_price
+                entity_id: sensor.current_hourly_electricity_price_excluding_tax
                 below: -0.001 # made slichtly negative to pervent trigering with -0.0
             sequence:
               - action: input_number.set_value
@@ -89,7 +89,7 @@ automation:
               - condition: template
                 value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 2 ] ) }}"
               - condition: numeric_state
-                entity_id: sensor.nord_pool_nl_current_price
+                entity_id: sensor.current_hourly_electricity_price_excluding_tax
                 below: -0.001 # made slichtly negative to pervent trigering with -0.0
             sequence:
               - action: input_number.set_value
@@ -105,7 +105,7 @@ automation:
                       - condition: template
                         value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 3 ] ) }}"
                       - condition: numeric_state
-                        entity_id: sensor.nord_pool_nl_current_price
+                        entity_id: sensor.current_hourly_electricity_price_excluding_tax
                         below: -0.001 # made slichtly negative to pervent trigering with -0.0 
                   - condition: template # NO EXPORT
                     value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 4 ] ) }}"
