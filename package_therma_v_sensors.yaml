@@ -120,29 +120,29 @@ template:
 
         {{ (Tout_buf-Tin_buf) | round(2) }}
 
-    # Delta T of compressor
-    - name: "Therma V refrigirant delta T"
-      state_class: measurement
-      device_class: temperature
-      unit_of_measurement: "°C"
-      availability: >
-        {% set Theat   = states('sensor.therma_v_refrigirant_temperature_heating') | float("unknown") %}
-        {% set Tcool   = states('sensor.therma_v_refrigirant_temperature_cooling') | float("unknown") %}
-        {% set Thex    = states('sensor.therma_v_heat_exchanger_temperature') | float("unknown") %}
-        {{ Theat|is_number and Tcool|is_number and Thex|is_number}}
-      state: >
-        {% set Theat   = states('sensor.therma_v_refrigirant_temperature_heating') | float("unknown") %}
-        {% set Tcool   = states('sensor.therma_v_refrigirant_temperature_cooling') | float("unknown") %}
-        {% set Thex    = states('sensor.therma_v_heat_exchanger_temperature') | float("unknown") %}
+    # # Delta T of compressor
+    # - name: "Therma V refrigirant delta T"
+    #   state_class: measurement
+    #   device_class: temperature
+    #   unit_of_measurement: "°C"
+    #   availability: >
+    #     {% set Theat   = states('sensor.therma_v_refrigirant_temperature_heating') | float("unknown") %}
+    #     {% set Tcool   = states('sensor.therma_v_refrigirant_temperature_cooling') | float("unknown") %}
+    #     {% set Thex    = states('sensor.therma_v_heat_exchanger_temperature') | float("unknown") %}
+    #     {{ Theat|is_number and Tcool|is_number and Thex|is_number}}
+    #   state: >
+    #     {% set Theat   = states('sensor.therma_v_refrigirant_temperature_heating') | float("unknown") %}
+    #     {% set Tcool   = states('sensor.therma_v_refrigirant_temperature_cooling') | float("unknown") %}
+    #     {% set Thex    = states('sensor.therma_v_heat_exchanger_temperature') | float("unknown") %}
         
-        {% set cool    = is_state('climate.therma_v_heating_cooling','cool') %}
-        {% set not_dhw = is_state('binary_sensor.therma_v_dhw_heating_state','off') %}
+    #     {% set cool    = is_state('climate.therma_v_heating_cooling','cool') %}
+    #     {% set not_dhw = is_state('binary_sensor.therma_v_dhw_heating_state','off') %}
         
-        {% if (cool and not_dhw) %}
-          {{ (Tcool-Thex) | round(2) }}
-        {% else %}
-          {{ (Theat-Thex) | round(2) }}
-        {% endif %}  
+    #     {% if (cool and not_dhw) %}
+    #       {{ (Tcool-Thex) | round(2) }}
+    #     {% else %}
+    #       {{ (Theat-Thex) | round(2) }}
+    #     {% endif %}  
 
     # Delta P of compressor
     - name: "Therma V compression ratio"
@@ -288,7 +288,17 @@ modbus:
         device_class: temperature
         unit_of_measurement: "°C"
 
-      - name: "Therma V refrigirant temperature heating"
+      # - name: "Therma V water pressure"
+      #   scan_interval: 20
+      #   address: 13
+      #   slave: 1
+      #   input_type: input
+      #   scale: 0.1
+      #   state_class: measurement
+      #   device_class: pressure
+      #   unit_of_measurement: "bar"
+
+      - name: "Therma V refrigirant temperature liquid gas"
         scan_interval: 20
         address: 16
         slave: 1
@@ -309,7 +319,7 @@ modbus:
       #   device_class: temperature
       #   unit_of_measurement: "°C"
 
-      - name: "Therma V refrigirant temperature cooling"
+      - name: "Therma V refrigirant temperature suction"
         scan_interval: 20
         address: 18
         slave: 1
@@ -320,18 +330,30 @@ modbus:
         device_class: temperature
         unit_of_measurement: "°C"
 
-      - name: "Therma V fan RPM"
+      - name: "Therma V refrigirant temperature heat gas"
         scan_interval: 20
         address: 19
         slave: 1
         input_type: input
-        scale: 1
+        scale: 0.1
         state_class: measurement
-        unit_of_measurement: "RPM"
+        device_class: temperature
+        unit_of_measurement: "°C"
 
-      - name: "Therma V heat exchanger temperature"
+      - name: "Therma V temperature before heat exchanger"
         scan_interval: 20
         address: 20
+        slave: 1
+        input_type: input
+        precision: 1
+        scale: 0.1
+        state_class: measurement
+        device_class: temperature
+        unit_of_measurement: "°C"
+
+      - name: "Therma V temperature after heat exchanger"
+        scan_interval: 20
+        address: 21
         slave: 1
         input_type: input
         precision: 1
