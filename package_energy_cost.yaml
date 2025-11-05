@@ -44,7 +44,7 @@ template:
         {{ ( (eprice_hig-eprice_low) )  | round(2) }} 
 
     # Template sensors to determine the electricity cost per hour EURO/hr excl. tax
-    - name: "Power cost including tax"
+    - name: "Electric power cost per hour including tax"
       state_class: measurement
       unit_of_measurement: "€/h"
       availability: >
@@ -56,7 +56,7 @@ template:
           {% set cost    = states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) %}
           {{ power/1000*cost }}
     # Template sensors to determine the electricity cost per hour EURO/hr incl. tax
-    - name: "Power cost excluding tax"
+    - name: "Electric power cost per hour excluding tax"
       state_class: measurement
       unit_of_measurement: "€/h"
       availability: >
