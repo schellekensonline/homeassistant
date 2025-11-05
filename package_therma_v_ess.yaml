@@ -38,10 +38,8 @@ automation:
       - trigger: time_pattern
         minutes: "/30"  # catch missed triggers
       - trigger: state
-        entity_id: sensor.nord_pool_nl_current_prices_including_tax
-    conditions:
-      - condition: template
-        value_template: "{{ (states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) ) <= 0 }}"       
+        entity_id: sensor.current_hourly_electricity_price_including_tax
+    conditions: "{{ (states('sensor.current_hourly_electricity_price_including_tax') | float(0) ) <= 0.0 }}"
     actions:
       - delay:
           hours: 0
@@ -59,10 +57,8 @@ automation:
       - choose:
         - conditions:
             - condition: numeric_state
-              entity_id: sensor.current_percentage_of_energy_price
-              below: 5
-            - condition: template
-              value_template: "{{ (states('sensor.nord_pool_nl_next_price') | float(0) ) >= (states('sensor.nord_pool_nl_current_price') | float(0) ) }}"   
+              entity_id: sensor.current_percentage_of_electricity_price
+              below: 1
           sequence:
             - action: input_select.select_option
               target:
@@ -85,14 +81,12 @@ automation:
       - trigger: time_pattern
         minutes: "/30"  # catch missed triggers
       - trigger: state
-        entity_id: sensor.nord_pool_nl_current_prices_including_tax
+        entity_id: sensor.current_hourly_electricity_price_including_tax
       - trigger: state
         entity_id: binary_sensor.therma_v_dhw_heating_state
     conditions:
-      - condition: template
-        value_template: "{{ (states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) ) > 0 }}"
-      - condition: template
-        value_template: "{{ (states('sensor.difference_in_electricity_price_today') | float(0) ) < (states('input_number.therma_v_ess_high_price_difference') | float(0)) }}"
+      - "{{ (states('sensor.current_hourly_electricity_price_including_tax') | float(0) ) > 0 }}"
+      - "{{ (states('sensor.difference_in_electricity_price_today') | float(0) ) < (states('input_number.therma_v_ess_high_price_difference') | float(0)) }}"
     actions:
       - delay:
           hours: 0
@@ -102,7 +96,7 @@ automation:
           - conditions:
               - or:
                   - condition: numeric_state
-                    entity_id: sensor.current_percentage_of_energy_price
+                    entity_id: sensor.current_percentage_of_electricity_price
                     below: 50
                   - condition: state
                     entity_id: binary_sensor.therma_v_dhw_heating_state
@@ -121,6 +115,7 @@ automation:
               data:
                 option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 7 ] }}' # Low power state
 
+
 # Automation that deals with setting ESS for positive energy prices high price difference
   - id: ess_based_on_e_price_positive_high_auto
     alias: "ESS based on e-price positive high auto"
@@ -130,14 +125,12 @@ automation:
       - trigger: time_pattern
         minutes: "/30"  # catch missed triggers
       - trigger: state
-        entity_id: sensor.nord_pool_nl_current_prices_including_tax
+        entity_id: sensor.current_hourly_electricity_price_including_tax
       - trigger: state
         entity_id: binary_sensor.therma_v_dhw_heating_state
     conditions:
-      - condition: template
-        value_template: "{{ (states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) ) > 0 }}"
-      - condition: template
-        value_template: "{{ (states('sensor.difference_in_electricity_price_today') | float(0) ) >= (states('input_number.therma_v_ess_high_price_difference') | float(0)) }}"
+      - "{{ (states('sensor.current_hourly_electricity_price_including_tax') | float(0) ) > 0 }}"
+      - "{{ (states('sensor.difference_in_electricity_price_today') | float(0) ) >= (states('input_number.therma_v_ess_high_price_difference') | float(0)) }}"
     actions:
       - delay:
           hours: 0
@@ -146,10 +139,8 @@ automation:
       - choose:
         - conditions:
             - condition: numeric_state
-              entity_id: sensor.current_percentage_of_energy_price
-              below: 5
-            - condition: template
-              value_template: "{{ (states('sensor.nord_pool_nl_next_price') | float(0) ) >= (states('sensor.nord_pool_nl_current_price') | float(0) ) }}"    
+              entity_id: sensor.current_percentage_of_electricity_price
+              below: 1
           sequence:
             - action: input_select.select_option
               target:
@@ -168,7 +159,7 @@ automation:
                 option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 2 ] }}' # At least Normal ESS during DHW run
         - conditions:
             - condition: numeric_state
-              entity_id: sensor.current_percentage_of_energy_price
+              entity_id: sensor.current_percentage_of_electricity_price
               above: 50
           sequence:
             - action: input_select.select_option
