@@ -23,25 +23,54 @@ template:
           {% endfor %}
           {{ ns.list }}
 
+    # Template sensors for current hourly price
+    - name: "Current hourly electricity price excluding tax"
+      unit_of_measurement: "€"
+      state_class: measurement
+      state: >
+        {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
+        {% set current = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='min', use_hourly_avg=true, hours=0.1, look_ahead=false, include_today=true, include_tomorrow=false, start=now()) %}
+
+        {{ current | round(3, default=0) }}
+
+    - name: "Current hourly electricity price including tax"
+      unit_of_measurement: "€"
+      state_class: measurement
+      state: >
+        {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
+        {% set current = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='min', use_hourly_avg=true, hours=0.1, look_ahead=false, include_today=true, include_tomorrow=false, start=now()) %}
+        {% set zonneplan = 0.020 | float(0) %}
+        {% set energy_tax  = 0.1088 | float(0) %}
+        {% set VAT         = 0.21 | float(0) %}
+        {{ ( (current + zonneplan + energy_tax) * (1+VAT) ) | round(3, default=0) }}
+        
+
+
     # Template sensors for current percentage of energy price
-    - name: "Current percentage of energy price"
+    - name: "Current percentage of electricity price"
       unit_of_measurement: "%"
       state_class: measurement
       state: >
-        {% set current = states('sensor.nord_pool_nl_current_price') | float(0) %}
-        {% set high    = states('sensor.nord_pool_nl_highest_price') | float(0) %}
-        {% set low     = states('sensor.nord_pool_nl_lowest_price') | float(0) %}
-        {{ ( (current-low)/(high-low) * 100 ) | round(2, default=0) }}
+        {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
+        {% set high = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='max', use_hourly_avg=true, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) %}
+        {% set low = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='min', use_hourly_avg=true, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) %}
+        {% set current = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='min', use_hourly_avg=true, hours=0.1, look_ahead=false, include_today=true, include_tomorrow=false, start=now()) %}
+        {# set current_old = states('sensor.nord_pool_nl_current_price') | float(0) #}
+        {# set high_old    = states('sensor.nord_pool_nl_highest_price') | float(0) #}
+        {# set low_old     = states('sensor.nord_pool_nl_lowest_price') | float(0) #}
+
+        {{ ( (current-low)/(high-low) * 100 ) | round(0, default=0) }}
 
     # sensor that determines the e-price difference today
     - name: "Difference in electricity price today"
       state_class: measurement
       unit_of_measurement: '%'
       state: >
-        {% set eprice_low = states('sensor.nord_pool_nl_lowest_price') | float(0) %} 
-        {% set eprice_hig = states('sensor.nord_pool_nl_highest_price') | float(0) %}   
+        {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
+        {% set high = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='max', use_hourly_avg=true, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) %}
+        {% set low = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='min', use_hourly_avg=true, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) %}
         
-        {{ ( (eprice_hig-eprice_low) )  | round(2) }} 
+        {{ ( (high-low) )  | round(3) }}
 
     # Template sensors to determine the electricity cost per hour EURO/hr excl. tax
     - name: "Electric power cost per hour including tax"
