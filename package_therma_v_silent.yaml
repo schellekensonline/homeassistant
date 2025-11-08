@@ -46,14 +46,13 @@ automation:
         - condition: state
           entity_id: switch.therma_v_heating_cooling_on_off
           state: 'on' # Allow only when heating is on! otherwise RMC may crash
+        - condition: state
+          entity_id: switch.silent_mode_state
+          state: 'on' # Allow only when silent on
         - or:
-          - and:
-            - condition: numeric_state
-              entity_id: "sensor.therma_v_outside_temperature"
-              above: 8 # Silent mode on above 6 degrees for better defrosts
-            - condition: state
-              entity_id: switch.silent_mode_state
-              state: 'on' # Allow only when silent on
+          - condition: numeric_state
+            entity_id: "sensor.therma_v_outside_temperature"
+            above: 8 # Silent mode on above 6 degrees for better defrosts
           - condition: time 
             after: input_datetime.silent_stop_time
             before: input_datetime.silent_start_time        
@@ -164,7 +163,7 @@ automation:
       - trigger: state
         entity_id: "switch.therma_v_heating_cooling_on_off"
         from: "off"
-        to: "on" # When heating/cooling switched off
+        to: "on" # When heating/cooling switched on
     conditions: []
     actions:
       - action: input_boolean.turn_on # Turn on silent start
