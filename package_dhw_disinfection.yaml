@@ -93,13 +93,7 @@ automation:
         target:
           entity_id: input_datetime.dhw_last_disinfection
         data:
-          timestamp: "{{ now().timestamp() }}"
-      # # plan one X days ahead
-      # - action: input_datetime.set_datetime
-      #   target:
-      #     entity_id: input_datetime.dhw_next_disinfection
-      #   data:
-      #     timestamp: "{{ ( now()+timedelta(days=next_in_days) ).timestamp() }}"
+          datetime: "{{ as_datetime(now()) }}"
 
 
   # Plan disinfection at cheapest hours on the disinfection day or when forces by max days passed
@@ -116,7 +110,7 @@ automation:
       # start time of the cheapes 3 hours between disinfection window start and end
       cheepest_hours: >
         {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
-        {{ as_timestamp(cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', hours=3, look_ahead=false, include_today=true, include_tomorrow=false, start=states('input_datetime.dhw_disinfection_window_start'), end=states('input_datetime.dhw_disinfection_window_end'))) }}
+        {{ cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', hours=3, look_ahead=false, include_today=true, include_tomorrow=false, start=states('input_datetime.dhw_disinfection_window_start'), end=states('input_datetime.dhw_disinfection_window_end') ) }}
     conditions:
       - or:
         - and:
@@ -135,7 +129,7 @@ automation:
         target:
           entity_id: input_datetime.dhw_next_disinfection
         data:
-          timestamp: "{{cheepest_hours}}" 
+          datetime: "{{cheepest_hours}}" 
 
   # Run disinfection at planned moment 
   - id: dhw_disinfection_run_auto
