@@ -1,3 +1,34 @@
+input_datetime:
+  start_time_electricity_lowest_hours:
+    name: Start time electricity lowest hours
+    has_date: false
+    has_time: true
+
+automation:
+  # Plan low and high hours
+  - id: plan_electricity_lowest_hours_auto
+    alias: "Plan electricity highest and lowest hours auto"
+    description: "Plan start moment of higest and lowest electricity price hours"
+    mode: single
+    triggers:
+      - trigger: time
+        at: "00:01" # every day just after midnight 
+    actions:
+          # start_highest_hours: >
+          #   {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
+          #   {{ as_timestamp(cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices', time_key='time', value_key='price', use_hourly_avg=true, hours=(24-number_of_highest_hours), look_ahead=false, include_today=true, include_tomorrow=false, start='00:00', end='23:59')) }}
+      - variables:
+          number_of_lowest_hours: 1  # Peak and low hours
+          start_lowest_hours: >
+            {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
+            {{ cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices', time_key='time', value_key='price', use_hourly_avg=true, hours=number_of_lowest_hours,  look_ahead=false, include_today=true, include_tomorrow=false, start='00:00', end='23:59') }}
+      # plan start lowest hours
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.start_time_electricity_lowest_hours
+        data:
+          datetime: "{{start_lowest_hours}}" 
+
 template:
   - sensor:
     # Template sensor for prices including tax  
@@ -27,44 +58,64 @@ template:
     - name: "Current hourly electricity price excluding tax"
       unit_of_measurement: "€"
       state_class: measurement
+      availability: >
+        {% set current = states('sensor.nord_pool_nl_current_prices_excluding_tax') | float("unknown") %}
+        {{ current|is_number }}
       state: >
         {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
-        {% set current = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='min', use_hourly_avg=true, hours=0.1, look_ahead=false, include_today=true, include_tomorrow=false, start=now()) %}
+        {% set current = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='average', use_hourly_avg=true, hours='all', look_ahead=false, include_today=true, include_tomorrow=false, start=as_timestamp(now())|timestamp_custom('%H')+':00', end=as_timestamp(now())|timestamp_custom('%H')+':59') %}
 
         {{ current | round(3, default=0) }}
 
     - name: "Current hourly electricity price including tax"
       unit_of_measurement: "€"
       state_class: measurement
+      availability: >
+        {% set current = states('sensor.nord_pool_nl_current_prices_including_tax') | float("unknown") %}
+        {{ current|is_number }}
       state: >
         {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
-        {% set current = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='min', use_hourly_avg=true, hours=0.1, look_ahead=false, include_today=true, include_tomorrow=false, start=now()) %}
-        {% set zonneplan = 0.020 | float(0) %}
-        {% set energy_tax  = 0.1088 | float(0) %}
-        {% set VAT         = 0.21 | float(0) %}
-        {{ ( (current + zonneplan + energy_tax) * (1+VAT) ) | round(3, default=0) }}
+        {% set current = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_including_tax', attr_all='prices',time_key='time', value_key='price', mode='average', use_hourly_avg=true, hours='all', look_ahead=false, include_today=true, include_tomorrow=false, start=as_timestamp(now())|timestamp_custom('%H')+':00', end=as_timestamp(now())|timestamp_custom('%H')+':59') %}
+
+        {{ current  | round(3, default=0) }}
         
-
-
     # Template sensors for current percentage of energy price
     - name: "Current percentage of electricity price"
       unit_of_measurement: "%"
       state_class: measurement
+      availability: >
+        {% set current = states('sensor.nord_pool_nl_current_prices_including_tax') | float("unknown") %}
+        {{ current|is_number }}
       state: >
         {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
         {% set high = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='max', use_hourly_avg=true, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) %}
         {% set low = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='min', use_hourly_avg=true, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) %}
-        {% set current = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='min', use_hourly_avg=true, hours=0.1, look_ahead=false, include_today=true, include_tomorrow=false, start=now()) %}
+        {% set current = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='average', use_hourly_avg=true, hours='all', look_ahead=false, include_today=true, include_tomorrow=false, start=as_timestamp(now())|timestamp_custom('%H')+':00', end=as_timestamp(now())|timestamp_custom('%H')+':59') %}
         {# set current_old = states('sensor.nord_pool_nl_current_price') | float(0) #}
         {# set high_old    = states('sensor.nord_pool_nl_highest_price') | float(0) #}
         {# set low_old     = states('sensor.nord_pool_nl_lowest_price') | float(0) #}
 
-        {{ ( (current-low)/(high-low) * 100 ) | round(0, default=0) }}
+        {{ ( (current-low)/(high-low) * 100 ) | round(1, default=0) }}
 
     # sensor that determines the e-price difference today
     - name: "Difference in electricity price today"
       state_class: measurement
-      unit_of_measurement: '%'
+      unit_of_measurement: '€'
+      availability: >
+        {% set current = states('sensor.nord_pool_nl_current_prices_including_tax') | float("unknown") %}
+        {{ current|is_number }}
+      state: >
+        {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
+        {% set high = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='max', use_hourly_avg=true, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) %}
+        {% set low = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='min', use_hourly_avg=true, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) %}
+        
+        {{ ( (high-low) )  | round(3) }}
+
+    # sensor that determines the e-price difference today
+    - name: "Start peak hours electricity price today"
+      availability: >
+        {% set current = states('sensor.nord_pool_nl_current_prices_including_tax') | float("unknown") %}
+        {{ current|is_number }}
       state: >
         {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
         {% set high = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='max', use_hourly_avg=true, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) %}
@@ -97,6 +148,36 @@ template:
           {% set cost    = states('sensor.nord_pool_nl_current_price') | float(0) %}
           {{ power/1000*cost }}
 
+  # Triggered Nord Pool price gathering in attributes excluding tax
+  - trigger:
+      - platform: state
+        entity_id: sensor.nord_pool_nl_current_price
+      - platform: homeassistant
+        event: start
+    action:
+      - action: nordpool.get_prices_for_date
+        response_variable: energyprices
+        data:
+          config_entry: !secret nord_pole_config_entry
+          date: "{{ now().date() + timedelta(days=0) }}"
+          areas: NL
+          currency: EUR
+    sensor:
+      name: Nord pool NL current prices Excluding Tax
+      unique_id: nord_pool_nl_current_prices_excluding_tax
+      unit_of_measurement: "€/kWh"
+      state: >
+        {{ states('sensor.nord_pool_nl_current_price') | float(0) }}
+      attributes:
+        prices: >
+          {% set energy_prices = energyprices['NL'] %}
+          {% set ns = namespace(list=[]) %}
+          {% for i in range(energy_prices|length) %}
+          {%   set ns.list = ns.list+[{'time': energy_prices[i]['start'], 'price':((energy_prices[i]['price']|float)/1000)}] %}  
+          {% endfor %}
+          {{ ns.list }}
+
+
   # triggered sensors for the total energy cost per day based on the statistics sensors
   - trigger:
     - trigger: time_pattern
@@ -117,44 +198,16 @@ template:
         unit_of_measurement: "€"
         state: "{{ states('sensor.energy_cost_over_one_day_excluding_tax')|float(0) }}"
 
-  # Nord Pool price gathering in attributes excluding tax
-  - trigger:
-    - trigger: time_pattern
-      hours: /1
-    action:
-      - action: nordpool.get_prices_for_date
-        response_variable: energyprices
-        data:
-          config_entry: !secret nord_pole_config_entry
-          date: "{{ now().date() + timedelta(days=0) }}"
-          areas: NL
-          currency: EUR
-    sensor:
-      name: Nord pool NL current prices Excluding Tax
-      unique_id: nord_pool_nl_current_prices_excluding_tax
-      unit_of_measurement: "€/kWh"
-      state: >
-        {% set energy_prices = energyprices['NL'] %}
-        {{ (energy_prices[now().hour]['price'] | float(0)) / 1000 }}
-      attributes:
-        prices: >
-          {% set energy_prices = energyprices['NL'] %}
-          {% set ns = namespace(list=[]) %}
-          {% for i in range(energy_prices|length) %}
-          {%   set ns.list = ns.list+[{'time': energy_prices[i]['start'], 'price':((energy_prices[i]['price']|float)/1000)}] %}  
-          {% endfor %}
-          {{ ns.list }}
-
 sensor:
   # integration of Euro/hr result is Euros
   - platform: integration
-    source: sensor.power_cost_including_tax
+    source: sensor.electric_power_cost_per_hour_including_tax
     name: "Energy cost including tax"
     method: left
     unit_time: h
     round: 2
   - platform: integration
-    source: sensor.power_cost_excluding_tax
+    source: sensor.electric_power_cost_per_hour_excluding_tax
     name: "Energy cost excluding tax"
     method: left
     unit_time: h
