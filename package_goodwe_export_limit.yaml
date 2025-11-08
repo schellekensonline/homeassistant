@@ -129,7 +129,7 @@ automation:
     mode: single
     max_exceeded: silent
     triggers:
-      # # When updated on inverter
+      # # When updated on inverter  # Not done anymore was unreliable 
       # - trigger: state
       #   entity_id:
       #     - sensor.goodwe_export_power_limit
@@ -197,23 +197,3 @@ automation:
           # The goodwe modbus manual explains this correctly though, all writes with function-code 0x10
           # number is rounded and clipped to 0..100  
           value: '{{ [ min(max( input_value | round(0) ,0),100) ] }}'
-
-#   # Restart integration when grid export limit becomes unavailable
-#   - id: goodwe_grid_export_limit_check_auto 
-#     alias: "Goodwe grid export limit check"
-#     description: Restart Goodwe integration when grid export limit is unavailable
-#     mode: single
-#     triggers:
-#       - trigger: time_pattern
-#         hours: "/1"
-#     conditions:
-#       - condition: or
-#         conditions:
-#           - condition: template
-#             value_template: "{{ has_value('number.goodwe_grid_export_limit') }}"        
-#       - condition: template
-#         value_template: "{{ not has_value('sensor.pv_power') }}"
-#     actions:
-#       - action: homeassistant.reload_config_entry
-#         target:
-#           entity_id: number.goodwe_grid_export_limit
