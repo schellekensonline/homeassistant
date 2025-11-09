@@ -158,6 +158,46 @@ template:
         {{ (Pout_com/Pin_com) | round(2) }}
 
 
+
+## OPTIONAL TEMPLATE SENSORS FOR CLIMATE DATA
+    - name: "Therma V current temerature"
+      state_class: measurement
+      availability: >
+        {% set Temp   = state_attr('climate.therma_v_heating_cooling','current_temperature') | float("unknown") %}
+        {{ Temp|is_number }}
+      state: >
+        {% set Temp   = state_attr('climate.therma_v_heating_cooling','current_temperature') | float(0) %}        
+        {{ (Temp) | round(1) }}
+
+    - name: "Therma V target temerature"
+      state_class: measurement
+      availability: >
+        {% set Temp   = state_attr('climate.therma_v_heating_cooling','temperature') | float("unknown") %}
+        {{ Temp|is_number }}
+      state: >
+        {% set Temp   = state_attr('climate.therma_v_heating_cooling','temperature') | float(0) %}        
+        {{ (Temp) | round(1) }}
+
+    - name: "Therma V DHW current temerature"
+      state_class: measurement
+      availability: >
+        {% set Temp   = state_attr('climate.therma_v_dhw','current_temperature') | float("unknown") %}
+        {{ Temp|is_number }}
+      state: >
+        {% set Temp   = state_attr('climate.therma_v_dhw','current_temperature') | float(0) %}        
+        {{ (Temp) | round(1) }}
+
+    - name: "Therma V DHW target temerature"
+      state_class: measurement
+      availability: >
+        {% set Temp   = state_attr('climate.therma_v_dhw','temperature') | float("unknown") %}
+        {{ Temp|is_number }}
+      state: >
+        {% set Temp   = state_attr('climate.therma_v_dhw','temperature') | float(0) %}        
+        {{ (Temp) | round(1) }}
+
+
+
 sensor:
 # Energy
   - platform: integration
@@ -604,11 +644,13 @@ modbus:
   # THERMOSTATS
     climates:
       - name: "Therma V heating/cooling"
-        address: 7
+        address: 7 # room temperarure 
+        # address: 2 # inlet temperarure 
+        # address: 3 # outlet temperarure 
         slave: 1
         input_type: input
         max_temp: 45 # for water temp control mode
-        min_temp: -2 # for AI/auto mode
+        min_temp: -5 # for AI/auto mode
         offset: 0
         precision: 1
         scale: 0.1
