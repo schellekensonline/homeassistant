@@ -12,7 +12,7 @@ input_select:
       - "6 - High power state (1/1/5)"
       - "7 - Low power state (-/1/3)"
       - "8 - Very low power state (-/2/6)"
-    initial: "0 - Power saving state not used"
+ #   initial: "0 - Power saving state not used" # remember previous state
     icon: mdi:state
 
 input_number:
@@ -52,6 +52,7 @@ automation:
       - action: input_boolean.turn_on
         target:
           entity_id: input_boolean.silent_mode_startup
+      - delay: '00:01' # to ensure prices are updated
       - choose:
         - conditions:
             - condition: trigger
@@ -89,14 +90,11 @@ automation:
       - "{{ (states('sensor.current_hourly_electricity_price_including_tax') | float(0) ) > -0.001 }}"
       - "{{ (states('sensor.difference_in_electricity_price_today') | float(0) ) < (states('input_number.therma_v_ess_high_price_difference') | float(0)) }}"
     actions:
+      - delay: '00:01' # to ensure the prices are updated
       - choose:
           - conditions:
-              - or:
-                - condition: trigger
-                  id: lowest_time_trig
-                - condition: state
-                  entity_id: binary_sensor.therma_v_dhw_heating_state
-                  state: "on"
+              - condition: trigger
+                id: lowest_time_trig
             sequence:
               - action: input_select.select_option
                 target:
@@ -104,6 +102,17 @@ automation:
                 data:
                   option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 6 ] }}' # High power state to force a DHW run also always during DHW run
               - delay: '00:50' # prevent secondary triggers from price
+          - conditions:
+              - condition: state
+                entity_id: binary_sensor.therma_v_dhw_heating_state
+                state: "on"
+            sequence:
+              - action: input_select.select_option
+                target:
+                  entity_id: input_select.therma_v_ess_select
+                data:
+                  option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 6 ] }}' # At least high state for DHW
+              - delay: '00:05' # prevent secondary triggers from price
           - conditions:
               - condition: numeric_state
                 entity_id: sensor.current_percentage_of_electricity_price
@@ -142,6 +151,7 @@ automation:
       - "{{ (states('sensor.current_hourly_electricity_price_including_tax') | float(0) ) > -0.001 }}"
       - "{{ (states('sensor.difference_in_electricity_price_today') | float(0) ) >= (states('input_number.therma_v_ess_high_price_difference') | float(0)) }}"
     actions:
+      - delay: '00:01' # to ensure prices are updated
       - choose:
           - conditions:
               - condition: trigger
