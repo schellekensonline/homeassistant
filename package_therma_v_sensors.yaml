@@ -238,7 +238,7 @@ modbus:
   #    slave: 1 
   #    address: Therma V manual-1!
   - name: "modbus_gateway_therma_v"
-    type: tcp
+    type: rtuovertcp  # tcp
     host: 192.168.1.20
     port: 502
     delay: 0

@@ -136,7 +136,7 @@ modbus:
   #    slave: 1 
   #    address: from Goodwe manual
   - name: "modbus_gateway_goodwe"
-    type: tcp
+    type: rtuovertcp # tcp
     host: 192.168.1.21
     port: 502
     delay: 0
