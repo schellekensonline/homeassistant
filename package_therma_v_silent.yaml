@@ -72,17 +72,21 @@ automation:
       - trigger: state
         entity_id: "sensor.therma_v_outside_temperature"
     conditions:
-      - and:
-        - condition: numeric_state # Allow only when startup_auto not active
-          entity_id: "automation.therma_v_silent_on_at_startup_auto"  
-          attribute: current  # Attribute is number of active instances of automation                  
-          below: 1            # Below 1 means no active startup_auto instances
-        - condition: numeric_state
-          entity_id: "sensor.therma_v_outside_temperature"
-          below: 6 # Silent mode of below 6 degrees for better defrosts
-        - condition: time 
-          after: input_datetime.silent_stop_time
-          before: input_datetime.silent_start_time
+      - or:
+        - condition: state
+          entity_id: switch.silent_mode_state
+          state: 'off' # Allow only when silent on
+        - and:
+          - condition: numeric_state # Allow only when startup_auto not active
+            entity_id: "automation.therma_v_silent_on_at_startup_auto"  
+            attribute: current  # Attribute is number of active instances of automation                  
+            below: 1            # Below 1 means no active startup_auto instances
+          - condition: numeric_state
+            entity_id: "sensor.therma_v_outside_temperature"
+            below: 6 # Silent mode of below 6 degrees for better defrosts
+          - condition: time 
+            after: input_datetime.silent_stop_time
+            before: input_datetime.silent_start_time
     actions:
       - action: switch.turn_off
         target:
@@ -117,7 +121,7 @@ automation:
         target:
           entity_id: switch.therma_v_silent_mode
       - delay:
-          minutes: 15 # Wait for startup to finish
+          minutes: 30 # Wait for startup to finish!!!!!!!!!!!!!!!
       - choose: # Restore previous state of silent mode
           - conditions:
               - condition: state
