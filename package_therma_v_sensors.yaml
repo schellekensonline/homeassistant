@@ -252,11 +252,11 @@ modbus:
         slave: 1
         input_type: input
 
-      # - name: "Therma V outdoor unit state" # 0 off, 1 cooling, 2 heating
-      #   scan_interval: 20
-      #   address: 1
-      #   slave: 1
-      #   input_type: input
+      - name: "Therma V outdoor unit state" # 0 off, 1 cooling, 2 heating
+        scan_interval: 20
+        address: 1
+        slave: 1
+        input_type: input
 
       - name: "Therma V inlet temperature"
         scan_interval: 20

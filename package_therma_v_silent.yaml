@@ -118,30 +118,54 @@ automation:
         state: "on" # And silent mode startup is ON
     actions:
       - variables:
-          time_rate: 5  # minutes per degree difference
-          heat_min_temp: 28 # minimum temperature heating curve
-          dhw_min_temp: 50 # minimum temperature dhw
-          heat_silent_wait: "{{ min( max(15 , time_rate * ( (heat_min_temp|float(0)) - (states('sensor.therma_v_inlet_temperature')|float(0)) )) , 59) }}"
+          heat_target_temp: 28 # minimum temperature heating curve
+          cool_target_temp: 16 # minimum temperature cooling curve
+          timeout_minutes: 45 # time out after which wait for target is stopped
+          wait_minutes: 15 # extra wait added after target reached or timeout occured
       - action: switch.turn_on # Turn on silent mode
         target:
           entity_id: switch.therma_v_silent_mode
+      - delay: # Wait for modbus registers to settle
+          minutes: "1" 
       - choose: # Wait for start-up to finish 
           - conditions: # In case of DHW run
               - condition: state
                 entity_id: binary_sensor.therma_v_dhw_heating_state
                 state: "on"
             sequence:
-              wait_template: "{{ is_state('binary_sensor.therma_v_dhw_heating_state', 'off') }}"
-        default: 
-          - delay: # In case of a normal run
-              minutes: "{{ heat_silent_wait }}" # Wait for normal startup to finish!!!
-      - choose: # Restore previous state of silent mode
+              - wait_template: "{{ is_state('binary_sensor.therma_v_dhw_heating_state', 'off') }}"
+                timeout: 
+                  minutes: "{{ timeout_minutes }}"
+          - conditions: # In case of cooling run
+              - condition: state
+                entity_id: sensor.therma_v_outdoor_unit_state
+                state: "1" # 0 off 1 cooling 2 heating
+            sequence:
+              - wait_template: "{{ (states('sensor.therma_v_inlet_temperature')|float(0)) < cool_target_temp }}"
+                timeout: 
+                  minutes: "{{ timeout_minutes }}" # Wait for target or timeout
+              - delay: # In case of a heat run
+                  minutes: "{{ wait_minutes }}" # Wait for X more minutes              
+          - conditions: # In case of heating run
+              - condition: state
+                entity_id: sensor.therma_v_outdoor_unit_state
+                state: "2" # 0 off 1 cooling 2 heating
+            sequence:
+              - wait_template: "{{ (states('sensor.therma_v_inlet_temperature')|float(0)) > heat_target_temp }}"
+                timeout: 
+                  minutes: "{{ timeout_minutes }}" # Wait for target or timeout
+              - delay: 
+                  minutes: "{{ wait_minutes }}" # Wait for X more minutes              
+        default: # in case of unknown run
+              - delay: 
+                  minutes: "{{ wait_minutes }}" # Wait for X minutes      
+      - choose: # Restore previous silent mode state
           - conditions:
               - condition: state
                 entity_id: switch.silent_mode_state
                 state: "on"
             sequence:
-              - action: switch.turn_on # If silent mode on leave it on
+              - action: switch.turn_on # If on leave silent mode on
                 target:
                   entity_id: switch.therma_v_silent_mode
         default:
