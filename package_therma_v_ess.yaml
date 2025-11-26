@@ -208,7 +208,7 @@ automation:
       # when inconsistent for x run default
       - trigger: template
         value_template: "{{ ( (states('sensor.therma_v_energy_state') | int(0)) - (state_attr('input_select.therma_v_ess_select', 'options').index(states('input_select.therma_v_ess_select')) | int(0)) ) | abs > 0 }}"
-        for: "00:05:00"
+        for: "00:02:00"
         id: ess_catch_trig
     conditions: []
     actions:
@@ -234,7 +234,7 @@ automation:
                 slave: 1
                 hub: modbus_gateway_therma_v
                 value: '{{ trigger.to_state.state[0] | int(0)  }}'
-            - delay: '00:00:30' # prevent retriggering on write event
+            # - delay: '00:00:01' # prevent retriggering on write event
         default:
           - action: modbus.write_register
             data_template:
@@ -242,5 +242,5 @@ automation:
               slave: 1
               hub: modbus_gateway_therma_v
               value: '{{ trigger.to_state.state[0] | int(0)  }}'
-          - delay: '00:00:30' # prevent retriggering on write event
+          # - delay: '00:00:01' # prevent retriggering on write event
             
