@@ -1,0 +1,514 @@
+# Climate template from github, add to HACS as custom integration
+# https://github.com/jcwillox/hass-template-climate
+climate:
+  - platform: climate_template
+    name: "Therma V heating/cooling"
+    temp_step: 1
+    max_temp_template: >
+      {% if is_state('sensor.therma_v_operation_mode', '3') %}  {# auto mode #}
+        {{ 5 }}
+      {% elif states('sensor.therma_v_control_mode') < '2' %}   {# water temp. control, inlet or outlet #}
+        {{ 40 }}
+      {% else %}                                                {# probably room temp. control#}
+        {{ 25 }}
+      {% endif %}
+    min_temp_template: >
+      {% if is_state('sensor.therma_v_operation_mode', '3') %}  {# auto mode #}
+        {{ -5 }}
+      {% elif states('sensor.therma_v_control_mode') < '2' %}   {# water temp. control, inlet or outlet #}
+        {{ 25 }}
+      {% else %}                                                {# probably room temp. control #}
+        {{ 16 }}
+      {% endif %}
+    current_temperature_template: > 
+      {% if is_state('sensor.therma_v_control_mode', '0') %}        {# outlet water temperature control #}
+        {{ states('sensor.therma_v_outlet_temperature') }}
+      {% elif is_state('sensor.therma_v_control_mode', '1') %}   {# inlet water temperature control #}
+        {{ states('sensor.therma_v_inlet_temperature') }}
+      {% else %}                                                    {# probably a form of room temperature control #}
+        {{ states('sensor.therma_v_room_temperature') }}
+      {% endif %}
+    target_temperature_template: >
+      {% if is_state('sensor.therma_v_operation_mode', '3') %} {# auto mode thus delta register #}
+        {{ states('sensor.therma_v_auto_mode_target_temperature_delta_circuit_1') }}
+      {% else %} {# other modes in regular register #}
+        {{ states('sensor.therma_v_target_temperature_circuit_1') }}
+      {% endif %}
+    set_temperature: # variables temperature, target_temp_high, target_temp_low and hvac_mode 
+      - choose:     
+        - conditions:
+            - "{{ is_state('sensor.therma_v_operation_mode', '3') }}" # auto mode 
+          sequence:
+            - action: modbus.write_register
+              data_template:
+                address: 4
+                slave: 1
+                hub: modbus_gateway_therma_v
+                value: >
+                  {% if temperature | int(0) < 0 %}
+                    {{ temperature | int + 65536 }}
+                  {% else %}
+                    {{ temperature | int }}
+                  {% endif %}
+        default: # not auto mode   
+          - action: modbus.write_register
+            data_template:
+              address: 2
+              slave: 1
+              hub: modbus_gateway_therma_v
+              value: "{{ ((temperature | float(0)) * 10) | int }}"
+    modes: ["off","cool","heat","auto"]
+    hvac_mode_template: >
+      {% if is_state('switch.therma_v_heating_cooling_on_off', 'off') %}
+        {{'off'}}
+      {% elif is_state('sensor.therma_v_operation_mode', '0') %}
+        {{'cool'}}
+      {% elif is_state('sensor.therma_v_operation_mode', '4') %}
+        {{'heat'}}
+      {% elif is_state('sensor.therma_v_operation_mode', '3') %}
+        {{'auto'}}
+      {% endif %}
+    # "{{ states('input_select.therma_v_operation_mode') }}"
+    set_hvac_mode: # variable hvac_mode
+      - choose:     
+        - conditions:
+            - "{{ hvac_mode == 'off'}}"
+          sequence:
+            - action: switch.turn_off # Turn off unit
+              target:
+                entity_id: switch.therma_v_heating_cooling_on_off
+        - conditions:
+            - "{{ hvac_mode == 'cool'}}"
+          sequence:
+            - action: switch.turn_on # Turn on unit
+              target:
+                entity_id: switch.therma_v_heating_cooling_on_off
+            - action: modbus.write_register
+              data_template:
+                address: 0
+                slave: 1
+                hub: modbus_gateway_therma_v
+                value: 0
+        - conditions:
+            - "{{ hvac_mode == 'heat'}}"
+          sequence:
+            - action: switch.turn_on # Turn on unit
+              target:
+                entity_id: switch.therma_v_heating_cooling_on_off
+            - action: modbus.write_register
+              data_template:
+                address: 0
+                slave: 1
+                hub: modbus_gateway_therma_v
+                value: 4
+        - conditions:
+            - "{{ hvac_mode == 'auto'}}"
+          sequence:
+            - action: switch.turn_on # Turn on unit
+              target:
+                entity_id: switch.therma_v_heating_cooling_on_off
+            - action: modbus.write_register
+              data_template:
+                address: 0
+                slave: 1
+                hub: modbus_gateway_therma_v
+                value: 3
+        default:
+          - action: switch.turn_on # Turn on unit
+            target:
+              entity_id: switch.therma_v_heating_cooling_on_off
+
+
+  - platform: climate_template
+    name: "Therma V DHW"
+    max_temp: 70
+    min_temp: 40    
+    temp_step: 1
+    current_temperature_template: "{{ states('sensor.therma_v_dhw_temperature') }}"
+    target_temperature_template: "{{ states('sensor.therma_v_dhw_target_temperature') }}" #"{{ states('input_number.therma_v_dhw_target_temperature') }}"
+    set_temperature:
+       # - action: input_number.set_value
+      #   target:
+      #     entity_id: input_number.therma_v_dhw_target_temperature
+      #   data:
+      #     value: "{{ temperature }}"
+      - action: modbus.write_register
+        data_template:
+          address: 8
+          slave: 1
+          hub: modbus_gateway_therma_v
+          value: "{{ (( temperature | float(0) )*10) | int }}"      
+    modes: ["off","auto"]
+    hvac_mode_template: >
+      {% if is_state('switch.therma_v_dhw_on_off','off') %}
+        {{"off"}}
+      {% else %}  
+        {{"auto"}}
+      {% endif %}
+    set_hvac_mode: # variable hvac_mode
+      - choose:
+        - conditions:
+            - "{{ hvac_mode == 'off'}}"
+          sequence:
+            - action: switch.turn_off # Turn off unit
+              target:
+                entity_id: switch.therma_v_dhw_on_off
+        - conditions:
+            - "{{ hvac_mode == 'auto'}}"
+          sequence:
+            - action: switch.turn_on # Turn on unit
+              target:
+                entity_id: switch.therma_v_dhw_on_off
+
+
+# input_number:
+#   # Input Number
+#   # -----------------------------------------
+#   therma_v_auto_mode_delta_temperature:
+#     name: "Therma V auto mode delta temperature"
+#     min: -5
+#     max: 5
+#     step: 1
+
+#   therma_v_target_temperature:
+#     name: "Therma V target temperature"
+#     min: 20
+#     max: 45
+#     step: 1
+
+  # therma_v_dhw_target_temperature:
+  #   name: "Therma V DHW target temperature"
+  #   min: 40
+  #   max: 70
+  #   step: 1
+
+# input_select:
+#   # Input Select
+#   # -----------------------------------------
+#   therma_v_operation_mode:
+#     name: "Therma V operation mode"
+#     options:
+#       - "cool" # 0
+#       - "heat" # 4
+#       - "auto" # 3
+
+  # therma_v_control_mode: # NEEDS SOME WORKING ON, NO NEED FOR IT NOW
+  #   name: "Therma V control mode"
+  #   options:
+  #     - "Water outlet temperature"  # 0
+  #     - "Water inlet temperature"   # 1
+  #     - "Room temperature"          # 2
+  #     - "Unknown"                   # 3 water+air
+
+
+automation:
+  # # ### Input Select Operation Mode ###
+  # # #-------------------------------------------------------------------------------
+
+  # - id: "therma_v_operation_mode_update_auto"
+  #   alias: "Therma V operation mode update auto"
+  #   description: "Updates the operation mode based on input number and modbus"
+  #   mode: restart
+  #   # max_exceeded: silent
+  #   triggers:
+  #     - trigger: state
+  #       entity_id: input_select.therma_v_operation_mode
+  #       id: oper_select_trig
+  #     - trigger: state
+  #       entity_id: sensor.therma_v_operation_mode
+  #       id: oper_modbus_trig
+  #     # # when inconsistent for x run default
+  #     # - trigger: template
+  #     #   value_template: "{{ ( (states('sensor.therma_v_operation_mode') | round(0)) - (states('sensor.therma_v_target_temperature_circuit_1') | round(0)) ) | abs > 0 }}"
+  #     #   for: "00:02:00"
+  #     #   id: auto_catch_trig
+  #   condition: []
+  #   variables:
+  #     cool: 0
+  #     heat: 4
+  #     auto: 3
+  #   action:
+  #     choose:
+  #       - conditions:
+  #           - condition: trigger
+  #             id: oper_modbus_trig
+  #         sequence:
+  #           - action: input_select.select_option
+  #             target:
+  #               entity_id: input_select.therma_v_operation_mode
+  #             data:
+  #               option: >
+  #                 {% if is_state('sensor.therma_v_operation_mode', cool|string) %}
+  #                   {{'cool'}}
+  #                 {% elif is_state('sensor.therma_v_operation_mode', heat|string) %}
+  #                 {{'heat'}}
+  #                 {% elif is_state('sensor.therma_v_operation_mode', auto|string) %}
+  #                   {{'auto'}}
+  #                 {% else %}
+  #                   {{'auto'}}
+  #                 {% endif %}
+  #       - conditions:
+  #           - condition: trigger
+  #             id: oper_select_trig
+  #         sequence:
+  #           - action: modbus.write_register
+  #             data_template:
+  #               address: 0
+  #               slave: 1
+  #               hub: modbus_gateway_therma_v
+  #               value: >-
+  #                 {% if is_state('input_select.therma_v_operation_mode', 'cool') %} {{cool}}
+  #                 {% elif is_state('input_select.therma_v_operation_mode', 'heat') %} {{heat}}
+  #                 {% elif is_state('input_select.therma_v_operation_mode', 'auto') %} {{auto}}
+  #                 {% else %} {{auto}}
+  #                 {% endif %}
+  #           # - delay: '00:00:01' # prevent retriggering on write event
+  #     default:
+  #       - action: modbus.write_register
+  #         data_template:
+  #           address: 0
+  #           slave: 1
+  #           hub: modbus_gateway_therma_v
+  #           value: >-
+  #             {% if is_state('input_select.therma_v_operation_mode', 'cool') %} {{cool}}
+  #             {% elif is_state('input_select.therma_v_operation_mode', 'heat') %} {{heat}}
+  #             {% elif is_state('input_select.therma_v_operation_mode', 'auto') %} {{auto}}
+  #             {% else %} {{auto}}
+  #             {% endif %}
+  #       # - delay: '00:00:01' # prevent retriggering on write event
+
+
+  # ### Input Select Control Mode ### --> NEEDS SOME WORKING ON, NO NEED FOR IT NOW
+  # #-------------------------------------------------------------------------------
+
+  # - id: "therma_v_control_mode_update_auto"
+  #   alias: "Therma V control mode update auto"
+  #   description: "Updates the control mode based on input number and modbus"
+  #   mode: restart
+  #   # max_exceeded: silent
+  #   triggers:
+  #     - trigger: state
+  #       entity_id: input_select.therma_v_control_mode
+  #       id: ctrl_select_trig
+  #     - trigger: state
+  #       entity_id: sensor.therma_v_control_mode
+  #       id: ctrl_modbus_trig
+  #     # # when inconsistent for x run default
+  #     # - trigger: template
+  #     #   value_template: "{{ ( (states('sensor.therma_v_control_mode') | round(0)) - (states('sensor.therma_v_target_temperature_circuit_1') | round(0)) ) | abs > 0 }}"
+  #     #   for: "00:02:00"
+  #     #   id: auto_catch_trig
+  #   condition: []
+  #   variables:
+  #     outlet: 0
+  #     inlet: 1
+  #     room: 2
+  #   action:
+  #     choose:
+  #       - conditions:
+  #           - condition: trigger
+  #             id: ctrl_modbus_trig
+  #         sequence:
+  #           - action: input_select.select_option
+  #             target:
+  #               entity_id: input_select.therma_v_control_mode
+  #             data:
+  #               option: >
+  #                 {% set index = trigger.to_state.state | int(0) %}
+  #                 {% if index < 3 %}
+  #                   {{ state_attr("input_select.therma_v_ess_select", "options")[ index ] }}
+  #                 {% else %}
+  #                   {{ state_attr("input_select.therma_v_ess_select", "options")[ 3 ] }}
+  #                 {% endif %}
+  #       - conditions:
+  #           - condition: trigger
+  #             id: ctrl_select_trig
+  #         sequence:
+  #           - action: modbus.write_register
+  #             data_template:
+  #               address: 1
+  #               slave: 1
+  #               hub: modbus_gateway_therma_v
+  #               value: >-
+  #                 {% set index = trigger.to_state.state[0] | int(0) %}
+  #                 {% if index < 3 %}
+  #                   {{index}}
+  #                 {% endif %}
+  #           # - delay: '00:00:01' # prevent retriggering on write event
+  #     default:
+  #       - action: modbus.write_register
+  #         data_template:
+  #           address: 1
+  #           slave: 1
+  #           hub: modbus_gateway_therma_v
+  #           value: >-
+  #             {% set index = state_attr('input_select.therma_v_control_mode', 'options').index(states('input_select.therma_v_control_mode')) | int(0) %}
+  #             {% if index < 3 %}
+  #               {{index}}
+  #             {% endif %}
+  #       # - delay: '00:00:01' # prevent retriggering on write event
+
+  # ### Auto mode temperature
+  # #-------------------------------------------------------------------------------
+  # - id: "therma_v_auto_temperature_update_auto"
+  #   alias: "Therma V auto temperature update auto"
+  #   description: "Updates the auto mode target temperature based on input number and modbus"
+  #   mode: restart
+  #   # max_exceeded: silent
+  #   triggers:
+  #     - trigger: state
+  #       entity_id: input_number.therma_v_auto_mode_delta_temperature
+  #       id: auto_number_trig
+  #     - trigger: state
+  #       entity_id: sensor.therma_v_auto_mode_target_temperature_delta_circuit_1
+  #       id: auto_modbus_trig
+  #     # when inconsistent for x run default
+  #     - trigger: template
+  #       value_template: "{{ ( (states('input_number.therma_v_auto_mode_delta_temperature') | round(0)) - (states('sensor.therma_v_auto_mode_target_temperature_delta_circuit_1') | round(0)) ) | abs > 0 }}"
+  #       for: "00:02:00"
+  #       id: auto_catch_trig
+  #   condition: []
+  #   action:
+  #     choose:
+  #       - conditions:
+  #           - condition: trigger
+  #             id: auto_modbus_trig
+  #         sequence:
+  #           - action: input_number.set_value
+  #             target:
+  #               entity_id: input_number.therma_v_auto_mode_delta_temperature
+  #             data:
+  #               value: "{{ trigger.to_state.state | round(0) }}"
+  #       - conditions:
+  #           - condition: trigger
+  #             id: auto_number_trig
+  #         sequence:
+  #           - action: modbus.write_register
+  #             data_template:
+  #               address: 4
+  #               slave: 1
+  #               hub: modbus_gateway_therma_v
+  #               value: >
+  #                 {% if trigger.to_state.state | int(0) < 0 %}
+  #                   {{ trigger.to_state.state | int + 65536 }}
+  #                 {% else %}
+  #                   {{ trigger.to_state.state | int }}
+  #                 {% endif %}
+  #           # - delay: '00:00:01' # prevent retriggering on write event
+  #     default:
+  #       - action: modbus.write_register
+  #         data_template:
+  #           address: 4
+  #           slave: 1
+  #           hub: modbus_gateway_therma_v
+  #           value: >
+  #             {% if states('input_number.therma_v_auto_mode_delta_temperature') | int(0) < 0 %}
+  #               {{ states('input_number.therma_v_auto_mode_delta_temperature') | int + 65536 }}
+  #             {% else %}
+  #               {{ states('input_number.therma_v_auto_mode_delta_temperature') | int }}
+  #             {% endif %}
+  #       # - delay: '00:00:01' # prevent retriggering on write event
+
+
+  # #-------------------------------------------------------------------------------
+  # ### Target temperature ###
+  
+  # - id: "therma_v_target_temperature_update_auto"
+  #   alias: "Therma V target temperature update auto"
+  #   description: "Updates the target temperature based on input number and modbus"
+  #   mode: restart
+  #   # max_exceeded: silent
+  #   triggers:
+  #     - trigger: state
+  #       entity_id: input_number.therma_v_target_temperature
+  #       id: target_number_trig
+  #     - trigger: state
+  #       entity_id: sensor.therma_v_target_temperature_circuit_1
+  #       id: target_modbus_trig
+  #     # when inconsistent for x run default
+  #     - trigger: template
+  #       value_template: "{{ ( (states('input_number.therma_v_target_temperature') | int(0)) - (states('sensor.therma_v_target_temperature_circuit_1') | int(0)) ) | abs > 0 }}"
+  #       for: "00:02:00"
+  #       id: target_catch_trig
+  #   condition: []
+  #   action:
+  #     choose:
+  #       - conditions:
+  #           - condition: trigger
+  #             id: target_modbus_trig
+  #         sequence:
+  #           - action: input_number.set_value
+  #             target:
+  #               entity_id: input_number.therma_v_target_temperature
+  #             data:
+  #               value: "{{ (trigger.to_state.state | float(0)) }}"
+  #       - conditions:
+  #           - condition: trigger
+  #             id: target_number_trig
+  #         sequence:
+  #           - action: modbus.write_register
+  #             data_template:
+  #               address: 2
+  #               slave: 1
+  #               hub: modbus_gateway_therma_v
+  #               value: "{{ ((trigger.to_state.state | float(0)) *10) | int}}"
+  #           # - delay: '00:00:01' # prevent retriggering on write event
+  #     default:
+  #       - action: modbus.write_register
+  #         data_template:
+  #           address: 2
+  #           slave: 1
+  #           hub: modbus_gateway_therma_v
+  #           value: "{{ ((states('input_number.therma_v_target_temperature') | float(0)) * 10) | int}}"
+  #       # - delay: '00:00:01' # prevent retriggering on write event
+  
+  # #-------------------------------------------------------------------------------
+  # ### DHW target temperature ###
+  # - id: "therma_v_dhw_target_temperatur_update_auto"
+  #   alias: "Therma v dhw target temperatur update auto"
+  #   description: "Updates DHW target temperature based on input number and modbus"
+  #   mode: restart
+  #   # max_exceeded: silent
+  #   triggers:
+  #     - trigger: state
+  #       entity_id: input_number.therma_v_dhw_target_temperature
+  #       id: dhw_number_trig
+  #     - trigger: state
+  #       entity_id: sensor.therma_v_dhw_target_temperature
+  #       id: dhw_modbus_trig
+  #     # when inconsistent for x run default
+  #     - trigger: template
+  #       value_template: "{{ ( (states('input_number.therma_v_dhw_target_temperature') | int(0)) - (states('sensor.therma_v_dhw_target_temperature') | int(0)) ) | abs > 0 }}"
+  #       for: "00:02:00"
+  #       id: dhw_catch_trig
+  #   condition: []
+  #   action:
+  #     choose:
+  #       - conditions:
+  #           - condition: trigger
+  #             id: dhw_modbus_trig
+  #         sequence:
+  #           - action: input_number.set_value
+  #             target:
+  #               entity_id: input_number.therma_v_dhw_target_temperature
+  #             data:
+  #               value: "{{ (trigger.to_state.state | float(0)) }}"
+  #       - conditions:
+  #           - condition: trigger
+  #             id: dhw_number_trig
+  #         sequence:
+  #           - action: modbus.write_register
+  #             data_template:
+  #               address: 8
+  #               slave: 1
+  #               hub: modbus_gateway_therma_v
+  #               value: "{{ ((trigger.to_state.state | float(0)) *10) | int}}"
+  #           # - delay: '00:00:01' # prevent retriggering on write event
+  #     default:
+  #       - action: modbus.write_register
+  #         data_template:
+  #           address: 8
+  #           slave: 1
+  #           hub: modbus_gateway_therma_v
+  #           value: "{{ ((states('input_number.therma_v_dhw_target_temperature') |float(0)) * 10) | int}}"
+  #       # - delay: '00:00:01' # prevent retriggering on write event

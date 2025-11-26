@@ -28,7 +28,7 @@ template:
         {% endif %}  
 
         {% if active_p and (flow_lg > 8) %}
-          {{ min( (((rho_water*flow_lg/60*c_water*(Tout_lg-Tin_lg)) | abs ) + p_boost) , 15000) | round(0) }}
+          {{ min( (((rho_water*flow_lg/60*c_water*(Tout_lg-Tin_lg)) | abs ) + p_boost) , 20000) | round(0) }}
         {% else %}
           {{ ( (Tout_lg-Tin_lg) + p_boost ) | round(0) }}
         {% endif %}
@@ -157,47 +157,6 @@ template:
 
         {{ (Pout_com/Pin_com) | round(2) }}
 
-
-
-## OPTIONAL TEMPLATE SENSORS FOR CLIMATE DATA
-    - name: "Therma V current temerature"
-      state_class: measurement
-      availability: >
-        {% set Temp   = state_attr('climate.therma_v_heating_cooling','current_temperature') | float("unknown") %}
-        {{ Temp|is_number }}
-      state: >
-        {% set Temp   = state_attr('climate.therma_v_heating_cooling','current_temperature') | float(0) %}        
-        {{ (Temp) | round(1) }}
-
-    - name: "Therma V target temerature"
-      state_class: measurement
-      availability: >
-        {% set Temp   = state_attr('climate.therma_v_heating_cooling','temperature') | float("unknown") %}
-        {{ Temp|is_number }}
-      state: >
-        {% set Temp   = state_attr('climate.therma_v_heating_cooling','temperature') | float(0) %}        
-        {{ (Temp) | round(1) }}
-
-    - name: "Therma V DHW current temerature"
-      state_class: measurement
-      availability: >
-        {% set Temp   = state_attr('climate.therma_v_dhw','current_temperature') | float("unknown") %}
-        {{ Temp|is_number }}
-      state: >
-        {% set Temp   = state_attr('climate.therma_v_dhw','current_temperature') | float(0) %}        
-        {{ (Temp) | round(1) }}
-
-    - name: "Therma V DHW target temerature"
-      state_class: measurement
-      availability: >
-        {% set Temp   = state_attr('climate.therma_v_dhw','temperature') | float("unknown") %}
-        {{ Temp|is_number }}
-      state: >
-        {% set Temp   = state_attr('climate.therma_v_dhw','temperature') | float(0) %}        
-        {{ (Temp) | round(1) }}
-
-
-
 sensor:
 # Energy
   - platform: integration
@@ -280,25 +239,25 @@ modbus:
         device_class: temperature
         unit_of_measurement: "°C"
 
-      # - name: "Therma V DHW temperature"
-      #   scan_interval: 20
-      #   address: 5
-      #   slave: 1
-      #   input_type: input
-      #   precision: 1
-      #   scale: 0.1
-      #   device_class: temperature
-      #   unit_of_measurement: "°C"
+      - name: "Therma V DHW temperature"
+        scan_interval: 20
+        address: 5
+        slave: 1
+        input_type: input
+        precision: 1
+        scale: 0.1
+        device_class: temperature
+        unit_of_measurement: "°C"
 
-      # - name: "Therma V room temperature"
-      #   scan_interval: 20
-      #   address: 7
-      #   slave: 1
-      #   input_type: input
-      #   precision: 1
-      #   scale: 0.1
-      #   device_class: temperature
-      #   unit_of_measurement: "°C"
+      - name: "Therma V room temperature"
+        scan_interval: 20
+        address: 7
+        slave: 1
+        input_type: input
+        precision: 1
+        scale: 0.1
+        device_class: temperature
+        unit_of_measurement: "°C"
 
       - name: "Therma V water flow rate"
         scan_interval: 20
@@ -434,47 +393,47 @@ modbus:
 
   # HOLDING REGISTRERS
 
-  #    - name: "Therma V operation mode" # 0 cooling 4 heating 3 auto
-  #      scan_interval: 20
-  #      address: 0
-  #      slave: 1
-  #      input_type: holding
+      - name: "Therma V operation mode" # 0 cooling 4 heating 3 auto
+        scan_interval: 10
+        address: 0
+        slave: 1
+        input_type: holding
 
-      # - name: "Therma V control mode" # 0 water outlet 4 water inlet 3 room
-      #   scan_interval: 20
-      #   address: 1
-      #   slave: 1
-      #   input_type: holding
+      - name: "Therma V control mode" # 0 water outlet 1 water inlet 2 room
+        scan_interval: 10
+        address: 1
+        slave: 1
+        input_type: holding
 
-  #    - name: "Therma V target temperature circuit 1" # 0.1C
-  #      scan_interval: 20
-  #      address: 2
-  #      slave: 1
-  #      input_type: holding
-  #      scale: 0.1
-  #      state_class: measurement
-  #      device_class: temperature
-  #      unit_of_measurement: "°C"
+      - name: "Therma V target temperature circuit 1" # 0.1C  ENABLE IN CASE OF AUTOMODE
+        scan_interval: 10
+        address: 2
+        slave: 1
+        input_type: holding
+        scale: 0.1
+        state_class: measurement
+        device_class: temperature
+        unit_of_measurement: "°C"
 
-      # - name: "Therma V room air temperature circuit 1" # 0.1C
-      #   scan_interval: 20
-      #   address: 3
-      #   slave: 1
-      #   input_type: holding
-      #   scale: 0.1
-      #   state_class: measurement
-      #   device_class: temperature
-      #   unit_of_measurement: "°C"
+      - name: "Therma V room air temperature circuit 1" # 0.1C
+        scan_interval: 10
+        address: 3
+        slave: 1
+        input_type: holding
+        scale: 0.1
+        state_class: measurement
+        device_class: temperature
+        unit_of_measurement: "°C"
 
-  #    - name: "Therma V auto mode target temperature delta circuit 1" # 1C
-  #      scan_interval: 20
-  #      address: 4
-  #      slave: 1
-  #      input_type: holding
-  #      scale: 1
-  #      state_class: measurement
-  #      device_class: temperature
-  #      unit_of_measurement: "°C"
+      - name: "Therma V auto mode target temperature delta circuit 1" # 1C
+        scan_interval: 10
+        address: 4
+        slave: 1
+        input_type: holding
+        scale: 1
+        state_class: measurement
+        device_class: temperature
+        unit_of_measurement: "°C"
 
       # - name: "Therma V target temperature circuit 2" # 0.1C
       #   scan_interval: 20
@@ -506,15 +465,15 @@ modbus:
   #      device_class: temperature
   #      unit_of_measurement: "°C"
 
-  #    - name: "Therma V DHW target temperature" # 0.1C
-  #      scan_interval: 20
-  #      address: 8
-  #      slave: 1
-  #      input_type: holding
-  #      scale: 0.1
-  #      state_class: measurement
-  #      device_class: temperature
-  #      unit_of_measurement: "°C"
+      - name: "Therma V DHW target temperature" # 0.1C
+        scan_interval: 10
+        address: 8
+        slave: 1
+        input_type: holding
+        scale: 0.1
+        state_class: measurement
+        device_class: temperature
+        unit_of_measurement: "°C"
 
   #    - name: "Therma V energy state register"
   #      scan_interval: 20
@@ -642,38 +601,39 @@ modbus:
 
 
   # THERMOSTATS
-    climates:
-      - name: "Therma V heating/cooling"
-        address: 7 # room temperarure 
-        # address: 2 # inlet temperarure 
-        # address: 3 # outlet temperarure 
-        slave: 1
-        input_type: input
-        max_temp: 45 # for water temp control mode
-        min_temp: -5 # for AI/auto mode
-        offset: 0
-        precision: 1
-        scale: 0.1
-        target_temp_register: 2 # water / room mode
-        # target_temp_register: 4 # AI/auto mode
-        temp_step: 1
-        temperature_unit: "°C"
-        hvac_mode_register:
-          address: 0
-          values:
-            state_cool: 0
-            state_heat: 4
-            # state_auto: 3
+    # climates:
+    #   - name: "Therma V heating/cooling"
+    #     address: 7 # room temperarure 
+    #     # address: 2 # inlet temperarure 
+    #     # address: 3 # outlet temperarure 
+    #     slave: 1
+    #     input_type: input
+    #     max_temp: 5 #45 # for water temp control mode
+    #     min_temp: -5 # for AI/auto mode
+    #     offset: 0
+    #     precision: 1
+    #     scale: 1
+    #     # target_temp_register: 2 # water / room mode
+    #     target_temp_register: 4 # AI/auto mode
+    #     temp_step: 1
+    #     temperature_unit: "°C"
+    #     hvac_mode_register:
+    #       address: 0
+    #       values:
+    #         #state_cool: 0
+    #         #state_heat: 4
+    #         state_auto: 3
               
-      - name: "Therma V DHW"
-        address: 5
-        slave: 1
-        input_type: input
-        max_temp: 70
-        min_temp: 40
-        offset: 0
-        precision: 1
-        scale: 0.1
-        target_temp_register: 8
-        temp_step: 1
-        temperature_unit: "°C"
+    #   - name: "Therma V DHW"
+    #     address: 5
+    #     slave: 1
+    #     input_type: input
+    #     max_temp: 70
+    #     min_temp: 40
+    #     offset: 0
+    #     precision: 1
+    #     scale: 0.1
+    #     target_temp_register: 8
+    #     temp_step: 1
+    #     temperature_unit: "°C"
+
