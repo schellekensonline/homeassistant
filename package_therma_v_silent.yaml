@@ -46,16 +46,17 @@ automation:
         - condition: state
           entity_id: switch.therma_v_heating_cooling_on_off
           state: 'on' # Allow only when heating is on! otherwise RMC may crash
-        - condition: state
-          entity_id: switch.silent_mode_state
-          state: 'on' # Allow only when silent on
         - or:
-          - condition: numeric_state
-            entity_id: "sensor.therma_v_outside_temperature"
-            above: 8 # Silent mode on above 6 degrees for better defrosts
           - condition: time 
             after: input_datetime.silent_stop_time
             before: input_datetime.silent_start_time        
+          - and:
+            - condition: numeric_state
+              entity_id: "sensor.therma_v_outside_temperature"
+              above: 8 # Silent mode on above 6 degrees for better defrosts
+            - condition: state
+              entity_id: switch.silent_mode_state
+              state: 'on' # Allow only when silent mode state is on
     actions:
       - action: switch.turn_on
         target:
@@ -78,15 +79,16 @@ automation:
           attribute: current  # Attribute is number of active instances of automation                  
           below: 1            # Below 1 means no active startup_auto instances
         - or:
-          - condition: state
-            entity_id: switch.silent_mode_state
-            state: 'off' # Allow only when silent on
           - condition: numeric_state
             entity_id: "sensor.therma_v_outside_temperature"
             below: 6 # Silent mode of below 6 degrees for higher power
-          - condition: time 
-            after: input_datetime.silent_stop_time
-            before: input_datetime.silent_start_time
+          - and:
+            - condition: state
+              entity_id: switch.silent_mode_state
+              state: 'off' # Allow only when silent mode state is off
+            - condition: time 
+              after: input_datetime.silent_stop_time
+              before: input_datetime.silent_start_time
     actions:
       - action: switch.turn_off
         target:
@@ -118,10 +120,10 @@ automation:
         state: "on" # And silent mode startup is ON
     actions:
       - variables:
-          heat_target_temp: 28 # minimum temperature heating curve
-          cool_target_temp: 16 # minimum temperature cooling curve
+          heat_target_temp: 29.5 # minimum temperature heating curve
+          cool_target_temp: 17 # minimum temperature cooling curve
           timeout_minutes: 45 # time out after which wait for target is stopped
-          wait_minutes: 15 # extra wait added after target reached or timeout occured
+          wait_minutes: 20 # extra wait added after target reached or timeout occured
       - action: switch.turn_on # Turn on silent mode
         target:
           entity_id: switch.therma_v_silent_mode
