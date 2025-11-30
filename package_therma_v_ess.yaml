@@ -5,15 +5,16 @@ input_select:
     options:
       - "0 - Power saving state not used"
       - "1 - Forced off (unit locked)"
-      - "2 - Normal operation (-/-/-)"
-      - "3 - High power state (2/-/5)"
-      - "4 - Very high DHW power state (-/-/80)"
-      - "5 - Very high power state (2/2/10)"
-      - "6 - High power state (1/1/5)"
-      - "7 - Low power state (-/1/3)"
-      - "8 - Very low power state (-/2/6)"
+      - "2 - Normal operation (0/0/0)"
+      - "3 - High power state (2/0/5)"
+      - "4 - Very high DHW power state (0/0/80)"
+      - "5 - Very high power state (1/2/8)"
+      - "6 - High power state (0/1/4)"
+      - "7 - Low power state (0/1/3)"
+      - "8 - Very low power state (1/2/6)"
+    # icon: mdi:state
  #   initial: "0 - Power saving state not used" # remember previous state
-    icon: mdi:state
+
 
 input_number:
   # Input number to set the price difference that results in high price regime
@@ -177,7 +178,7 @@ automation:
           - conditions:
               - condition: numeric_state
                 entity_id: sensor.current_percentage_of_electricity_price
-                above: 50
+                above: 75
             sequence:
               - action: input_select.select_option
                 target:
