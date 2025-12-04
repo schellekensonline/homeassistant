@@ -117,7 +117,7 @@ automation:
           - conditions:
               - condition: numeric_state
                 entity_id: sensor.current_percentage_of_electricity_price
-                below: 50
+                below: 75
             sequence:
               - action: input_select.select_option
                 target:
