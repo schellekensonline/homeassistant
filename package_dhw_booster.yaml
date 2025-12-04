@@ -1,10 +1,17 @@
-switch:
-  # Template switch to used by the automationsas state memory
-  # seperately from the real state of the relay which can be switched manually too
-  - platform: template
-    switches:
-      dhw_booster_2_switch:
-        friendly_name: "DHW booster 2 switch (S1)" 
+template:
+  # State of shelly switche S1 for Therma V DHW heater 2
+  # which switches the DHW heater separately from the heatpump
+  - binary_sensor: 
+      - name: "Therma V DHW booster 2 state (S1)"
+        state: >
+          {{ is_state('switch.shelly_plug_s1', 'on') }}
+
+  # Switch which acts as state memory for the automations
+  # So the automation knows the previous silent mode setting
+  - switch:
+#      - state: "{{ is_state('switch.shelly_plug_s1', 'on') }}"
+#        availability: "{{ has_value('switch.shelly_plug_s1') }}" 
+      - name: dhw_booster_2_switch
         turn_on:
           action: switch.turn_on
           target:
@@ -14,13 +21,6 @@ switch:
           target:
             entity_id: switch.shelly_plug_s1
 
-template:
-  # State of shelly switche S1 for Therma V DHW heater 2
-  # which switches the DHW heater separately from the heatpump
-  - binary_sensor: 
-      - name: "Therma V DHW booster 2 state (S1)"
-        state: >
-          {{ is_state('switch.shelly_plug_s1', 'on') }}
 
 automation:
   # switch on DHW heater when e-price incl. tax is negative

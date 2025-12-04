@@ -9,13 +9,13 @@ input_datetime:
     has_date: false
     has_time: true
 
-switch:
+template:
   # Switch which acts as state memory for the automations
   # So the automation knows the previous silent mode setting
-  - platform: template
-    switches:
-      silent_mode_state:
-        friendly_name: "Silent Mode State for automations" 
+  - switch:
+#      - state: "{{ is_state('switch.therma_v_silent_mode', 'on') }}"
+#        availability: "{{ has_value('switch.therma_v_silent_mode') }}" 
+      - name: silent_mode_state
         turn_on:
           action: switch.turn_on
           target:
@@ -123,7 +123,7 @@ automation:
           heat_target_temp: 29.5 # minimum temperature heating curve
           cool_target_temp: 17 # minimum temperature cooling curve
           timeout_minutes: 45 # time out after which wait for target is stopped
-          wait_minutes: 20 # extra wait added after target reached or timeout occured
+          wait_minutes: 20 # extra wait added after target reached for heating and timeout for DHW
       - action: switch.turn_on # Turn on silent mode
         target:
           entity_id: switch.therma_v_silent_mode
@@ -137,7 +137,7 @@ automation:
             sequence:
               - wait_template: "{{ is_state('binary_sensor.therma_v_dhw_heating_state', 'off') }}"
                 timeout: 
-                  minutes: "{{ timeout_minutes }}"
+                  minutes: "{{ wait_minutes }}"
           - conditions: # In case of cooling run
               - condition: state
                 entity_id: sensor.therma_v_outdoor_unit_state

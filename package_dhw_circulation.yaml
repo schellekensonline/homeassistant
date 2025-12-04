@@ -1,18 +1,4 @@
-switch:
-  # Template switch to used by the automationsas as state memory
-  # seperately from the real state of the relay which can be switched manually too
-  - platform: template
-    switches:
-      dhw_circulation_switch:
-        friendly_name: "DHW circulation switch (S3)" 
-        turn_on:
-          action: switch.turn_on
-          target:
-            entity_id: switch.shelly_plug_s3
-        turn_off:
-          action: switch.turn_off
-          target:
-            entity_id: switch.shelly_plug_s3
+
 
 template:
   # State of shelly switche S3 for DHW circulation pump
@@ -22,6 +8,21 @@ template:
       - name: "Therma V DHW circulation state (S3)"
         state: >
           {{ is_state('switch.shelly_plug_s3', 'on') }}
+
+  - switch:
+      # Template switch to used by the automationsas as state memory
+      # seperately from the real state of the relay which can be switched manually too
+      - name: dhw_circulation_switch
+#      - state: "{{ is_state('switch.shelly_plug_s3', 'on') }}"
+#        availability: "{{ has_value('switch.shelly_plug_s3') }}" 
+        turn_on:
+          action: switch.turn_on
+          target:
+            entity_id: switch.shelly_plug_s3
+        turn_off:
+          action: switch.turn_off
+          target:
+            entity_id: switch.shelly_plug_s3
 
 automation:
   # Switch on the circulation pump during long heating cycles and 
@@ -35,7 +36,7 @@ automation:
         entity_id: binary_sensor.therma_v_dhw_heating_state
         to: 'on'
         for:
-          minutes: 10
+          minutes: 20
       - trigger: state
         entity_id: binary_sensor.therma_v_dhw_booster_state
         to: 'on'
