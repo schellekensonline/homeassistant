@@ -117,20 +117,30 @@ automation:
           - conditions:
               - condition: numeric_state
                 entity_id: sensor.current_percentage_of_electricity_price
-                below: 75
+                above: 75
             sequence:
               - action: input_select.select_option
                 target:
                   entity_id: input_select.therma_v_ess_select
                 data:
-                  option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 2 ] }}' # Normal power state
+                  option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 7 ] }}' # Low power state
+          - conditions:
+              - condition: numeric_state
+                entity_id: sensor.current_percentage_of_electricity_price
+                below: 25
+            sequence:
+              - action: input_select.select_option
+                target:
+                  entity_id: input_select.therma_v_ess_select
+                data:
+                  option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 6 ] }}' # High power state
         default:
           sequence:
             - action: input_select.select_option
               target:
                 entity_id: input_select.therma_v_ess_select
               data:
-                option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 7 ] }}' # Low power state
+                option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 2 ] }}' # Normal power state
 
 
 # Automation that deals with setting ESS for positive energy prices high price difference
@@ -185,6 +195,16 @@ automation:
                   entity_id: input_select.therma_v_ess_select
                 data:
                   option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 8 ] }}' # Very low power state
+          - conditions:
+              - condition: numeric_state
+                entity_id: sensor.current_percentage_of_electricity_price
+                below: 25
+            sequence:
+              - action: input_select.select_option
+                target:
+                  entity_id: input_select.therma_v_ess_select
+                data:
+                  option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 6 ] }}' # High power state
         default:
           - action: input_select.select_option
             target:
@@ -219,12 +239,12 @@ automation:
               id: ess_modbus_trig
           sequence:
             - variables:
-                index: '{{ trigger.to_state.state | int(0) }}'
+                idx: '{{ trigger.to_state.state | int(0) }}'
             - action: input_select.select_option
               target:
                 entity_id: input_select.therma_v_ess_select
               data:
-                option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ index ] }}'
+                option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ idx ] }}'
         - conditions:
             - condition: trigger
               id: ess_select_trig
