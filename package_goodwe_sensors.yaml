@@ -44,12 +44,12 @@ template:
         {% set Vpv2 = states('sensor.goodwe_pv2_input_voltage') | float(0) %}
         {% set Ipv2 = states('sensor.goodwe_pv2_input_current') | float(0) %}
         {{ ((Vpv1*Ipv1)+(Vpv2*Ipv2)) | round(0) }}
-    
+
     # Compatibility sensor Goodwe integration
     - name: "Goodwe L1 phase power"
       state_class: measurement
       device_class: apparent_power
-      unit_of_measurement: "VA" 
+      unit_of_measurement: "VA"
       availability: >
         {% set VL1 = states('sensor.goodwe_l1_phase_voltage') | float("unknown") %}
         {% set IL1 = states('sensor.goodwe_l1_phase_current') | float("unknown") %}
@@ -91,7 +91,7 @@ template:
 automation:
   # Manual pollig modbus to prevent polling over night when inverter is off
   # Set scan_interval to 0 of all Goodwe modbus sensors
-  - id: goodwe_scan_modbus_auto 
+  - id: goodwe_scan_modbus_auto
     alias: "Goodwe scan modbus auto"
     description: "Polls all sensor entities for modbus_gateway_goodwe"
     mode: single
@@ -112,7 +112,7 @@ automation:
           # Find entities with sensor.goodwe_
           goodwe_list: "{{ states.sensor | selectattr('entity_id', 'search', 'sensor.goodwe_') | list | map(attribute='entity_id') | list }}"
           # Remaining items with other naming
-          other_list: 
+          other_list:
             - sensor.today_s_pv_generation
             - sensor.total_pv_generation
       - action: homeassistant.update_entity
@@ -136,12 +136,12 @@ modbus:
   #    slave: 1 
   #    address: from Goodwe manual
   - name: "modbus_gateway_goodwe"
-    type: rtuovertcp # tcp
+    type: rtuovertcp
     host: 192.168.1.21
     port: 502
     delay: 0
     timeout: 5
-    message_wait_milliseconds: 100
+    # message_wait_milliseconds: 100
 
     sensors:
       # HOLDING REGISTRERS
@@ -154,7 +154,7 @@ modbus:
       #   state_class: measurement
       #   unit_of_measurement: "%"
       #   data_type: uint16
-    
+
       - name: "Goodwe export power limit" # 0 to 100%
         scan_interval: 0
         address: 292
