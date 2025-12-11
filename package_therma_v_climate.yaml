@@ -155,88 +155,96 @@ climate:
                 entity_id: switch.therma_v_dhw_on_off
 
 
-input_select:
-  therma_v_control_mode:
-    name: "Therma V control mode"
-    options:
-      - "Water outlet temperature"  # 0
-      - "Water inlet temperature"   # 1
-      - "Room temperature"          # 2
+
+# # Same as on the RMC. 
+# # In case of Air+Water first set water control mode (0 or 1) then set to Air+Water (2)
+# #       - "Water outlet temperature"  # 0
+# #       - "Water inlet temperature"   # 1
+# #       - "Room temperature"          # 2
+# input_select:
+#   therma_v_temperature_control_mode:
+#     name: "Therma V temperature control mode"
+#     options:
+#       - "Water"
+#       - "Air + Water"
+#   therma_v_water_control_mode:
+#     name: "Therma V water control mode"
+#     options:
+#       - "Water Inlet"
+#       - "Water Outlet"
+#       - "Unknown"
+
+# automation:  ## STILL NEEDS A LOT OF WORKING ON
+#   - id: "therma_v_control_mode_update_auto"
+#     alias: "Therma V control mode update auto"
+#     description: "Updates the control mode based on input numbers and modbus"
+#     mode: single
+#     triggers:
+#       - trigger: state
+#         entity_id: input_select.therma_v_temperature_control_mode
+#         id: ctrl_select_trig1
+#       - trigger: state
+#         entity_id: input_select.therma_v_water_control_mode
+#         id: ctrl_select_trig2
+#       # - trigger: state
+#       #   entity_id: sensor.therma_v_control_mode
+#       #   id: ctrl_modbus_trig
+#       # # when inconsistent for x run default
+#       # - trigger: template
+#       #   value_template: "{{ ( (states('sensor.therma_v_control_mode') | round(0)) - (states('sensor.therma_v_target_temperature_circuit_1') | round(0)) ) | abs > 0 }}"
+#       #   for: "00:02:00"
+#       #   id: auto_catch_trig
+#     condition: []
+#     actions:
+#       - choose:
+#           - conditions:
+#           # Don't use this trigger for room control since inlet / outlet will be unknown, now the last state is kept
+#                 - condition: trigger
+#                   id: ctrl_modbus_trig1 
+#             sequence:
+#               - action: input_select.select_option
+#                 target:
+#                   entity_id: input_select.therma_v_water_control_mode
+#                 data:
+#                   option: >
+#                     {% set idx = trigger.to_state.state | int(0) %}
+#                     {% if idx < 2 %}
+#                       {{ state_attr("input_therma_v_water_control_mode", "options")[ idx ] }}
+#                     {% endif %}
+#               - action: input_select.select_option
+#                 target:
+#                   entity_id: input_select.therma_v_temperature_control_mode
+#                 data:
+#                   option: >
+#                     {% set idx = trigger.to_state.state | int(0) %}
+#                     {% if idx < 2 %}
+#                       {{ state_attr("input_select.therma_v_temperature_control_mode", "options")[ 0 ] }}
+#                     {% else %} {# some form of room control so inlet outlet unknown #}
+#                       {{ state_attr("input_select.therma_v_temperature_control_mode", "options")[ 1 ] }}
+#                     {% endif %}
+#         default:
+#           - variables:
+#               temp_ctrl_mode: "{{state_attr('input_select.therma_v_temperature_control_mode','options').index(input_select.therma_v_temperature_control_mode) | int(0)}}"
+#               watr_ctrl_mode: "{{state_attr('input_select.therma_v_water_control_mode','options').index(input_select.therma_v_water_control_mode) | int(0)}}" 
+#           - action: modbus.write_register
+#             data_template:
+#               address: 1
+#               slave: 1
+#               hub: modbus_gateway_therma_v
+#               value: "{{ watr_ctrl_mode }}"
+#           - choose:
 
 
-automation:
-  ### Input Select Control Mode ### --> NEEDS SOME WORKING ON, NO NEED FOR IT NOW
-  #-------------------------------------------------------------------------------
-  - id: "therma_v_control_mode_update_auto"
-    alias: "Therma V control mode update auto"
-    description: "Updates the control mode based on input number and modbus"
-    mode: restart
-    # max_exceeded: silent
-    triggers:
-      - trigger: state
-        entity_id: input_select.therma_v_control_mode
-        id: ctrl_select_trig
-      - trigger: state
-        entity_id: sensor.therma_v_control_mode
-        id: ctrl_modbus_trig
-      # # when inconsistent for x run default
-      # - trigger: template
-      #   value_template: "{{ ( (states('sensor.therma_v_control_mode') | round(0)) - (states('sensor.therma_v_target_temperature_circuit_1') | round(0)) ) | abs > 0 }}"
-      #   for: "00:02:00"
-      #   id: auto_catch_trig
-    condition: []
-    variables:
-      outlet: 0         # 0x0000 0000
-      inlet: 1          # 0x0000 0001 
-      room: 2           # 0x0000 0010
-      # room_inlet: 514   # 0x0010 0010
-    actions:
-      choose:
-        - conditions:
-            - condition: trigger
-              id: ctrl_modbus_trig
-          sequence:
-            - action: input_select.select_option
-              target:
-                entity_id: input_select.therma_v_control_mode
-              data:
-                option: >
-                  {% set idx = trigger.to_state.state | int(0) %}
-                  {% if idx < 3 %}
-                    {{ state_attr("input_select.therma_v_control_mode", "options")[ idx ] }}
-                  {% else %} {# default some form of room control #}
-                    {{ state_attr("input_select.therma_v_control_mode", "options")[ room ] }}
-                  {% endif %}
-        - conditions:
-            - condition: trigger
-              id: ctrl_select_trig
-          sequence:
-            - action: modbus.write_register
-              data_template:
-                address: 1
-                slave: 1
-                hub: modbus_gateway_therma_v
-                value: >
-                  {% set idx = state_attr('input_select.therma_v_control_mode','options').index(trigger.to_state.state) | int(0) %}
-                  {% if idx < 3 %}
-                    {{ idx }}
-                  {% else %}
-                    {{ room }}
-                  {% endif %}
-            # - delay: '00:00:01' # prevent retriggering on write event
-      default:
-        - action: modbus.write_register
-          data_template:
-            address: 1
-            slave: 1
-            hub: modbus_gateway_therma_v
-            value: >
-              {% set idx = state_attr('input_select.therma_v_control_mode','options').index(states('input_select.therma_v_control_mode')) %}
-              {% if idx < 3 %}
-                {{ idx }}
-              {% else %}
-                {{ room }}
-              {% endif %}
-            # - delay: '00:00:01' # prevent retriggering on write event
-
-
+#         # - action: modbus.write_register
+#         #   data_template:
+#         #     address: 1
+#         #     slave: 1
+#         #     hub: modbus_gateway_therma_v
+#         #     value: >
+#         #       {% set idx = state_attr('input_select.therma_v_control_mode','options').index(states('input_select.therma_v_control_mode')) %}
+#         #       {% if idx < 3 %}
+#         #         {{ idx }}
+#         #       {% else %}
+#         #         {{ room }}
+#         #       {% endif %}
+#         #     # - delay: '00:00:01' # prevent retriggering on write event
