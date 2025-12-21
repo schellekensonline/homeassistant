@@ -137,7 +137,7 @@ modbus:
   #    address: from Goodwe manual
   - name: "modbus_gateway_goodwe"
     type: rtuovertcp
-    host: 192.168.1.21
+    host: 10.43.110.10
     port: 502
     delay: 0
     timeout: 5

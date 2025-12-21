@@ -10,8 +10,9 @@ template:
         {% set Tin_lg    = states('sensor.therma_v_buffer_temperatures_return_to_heatpump_t4') | float("unknown") %}
         {{ Tout_lg|is_number and Tin_lg|is_number}}
       state: >
-        {% set active_p   = is_state('binary_sensor.therma_v_defrost_state','off') %}
-
+        {% set cooling_p  = is_state('sensor.therma_v_outdoor_unit_state','1') %} {#  0 off, 1 cooling, 2 heating #}
+        {% set heating_p  = is_state('sensor.therma_v_outdoor_unit_state','2') %} 
+        {% set dhw_p      = is_state('binary_sensor.therma_v_dhw_heating_state','on') %}
         {% set boost1_p   = is_state('binary_sensor.therma_v_dhw_booster_state','on') %}
         {% set boost2_p   = is_state('binary_sensor.therma_v_dhw_booster_2_state_s1','on') %}
 
@@ -27,8 +28,12 @@ template:
           {% set p_boost = 0.0 | float(0) %}
         {% endif %}
 
-        {% if active_p and (flow_lg > 8) %}
-          {{ min( (((rho_water*flow_lg/60*c_water*(Tout_lg-Tin_lg)) | abs ) + p_boost) , 20000) | round(0) }}
+        {% if (flow_lg > 8) %}
+          {% if dhw_p or heating_p %}
+            {{ ((rho_water*flow_lg/60*c_water*(Tout_lg-Tin_lg)) + p_boost) | round(0) }}
+          {% else %}
+            {{ ((rho_water*flow_lg/60*c_water*(Tin_lg-Tout_lg)) + p_boost) | round(0) }}
+          {% endif %}    
         {% else %}
           {{ ( (Tout_lg-Tin_lg) + p_boost ) | round(0) }}
         {% endif %}
@@ -120,30 +125,6 @@ template:
 
         {{ (Tout_buf-Tin_buf) | round(2) }}
 
-    # # Delta T of compressor
-    # - name: "Therma V refrigirant delta T"
-    #   state_class: measurement
-    #   device_class: temperature
-    #   unit_of_measurement: "°C"
-    #   availability: >
-    #     {% set Theat   = states('sensor.therma_v_refrigirant_temperature_heating') | float("unknown") %}
-    #     {% set Tcool   = states('sensor.therma_v_refrigirant_temperature_cooling') | float("unknown") %}
-    #     {% set Thex    = states('sensor.therma_v_heat_exchanger_temperature') | float("unknown") %}
-    #     {{ Theat|is_number and Tcool|is_number and Thex|is_number}}
-    #   state: >
-    #     {% set Theat   = states('sensor.therma_v_refrigirant_temperature_heating') | float("unknown") %}
-    #     {% set Tcool   = states('sensor.therma_v_refrigirant_temperature_cooling') | float("unknown") %}
-    #     {% set Thex    = states('sensor.therma_v_heat_exchanger_temperature') | float("unknown") %}
-
-    #     {% set cool    = is_state('climate.therma_v_heating_cooling','cool') %}
-    #     {% set not_dhw = is_state('binary_sensor.therma_v_dhw_heating_state','off') %}
-
-    #     {% if (cool and not_dhw) %}
-    #       {{ (Tcool-Thex) | round(2) }}
-    #     {% else %}
-    #       {{ (Theat-Thex) | round(2) }}
-    #     {% endif %}  
-
     # Delta P of compressor
     - name: "Therma V compression ratio"
       state_class: measurement
@@ -198,7 +179,7 @@ modbus:
   #    address: Therma V manual-1!
   - name: "modbus_gateway_therma_v"
     type: rtuovertcp
-    host: 192.168.1.22
+    host: 10.43.110.20
     port: 502
     delay: 0
     # message_wait_milliseconds: 150 # was 200ms
