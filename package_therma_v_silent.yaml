@@ -10,8 +10,7 @@ input_datetime:
     has_time: true
 
 template:
-  # Switch which acts as state memory for the automations
-  # So the automation knows the previous silent mode setting
+  # Switch which acts as state memory for the automations to enable silent mode
   - switch:
 #      - state: "{{ is_state('switch.therma_v_silent_mode', 'on') }}"
 #        availability: "{{ has_value('switch.therma_v_silent_mode') }}" 
@@ -31,8 +30,8 @@ input_boolean:
     name: "Silent Mode at Startup" 
 
 automation:
-  - id: therma_v_silent_on_based_on_temp_time_auto
-    alias: "Therma V Silent ON based on temp and time auto"
+  - id: therma_v_silent_on_time_based_auto
+    alias: "Therma V Silent ON time based auto"
     description: Turns on silent mode at set time
     mode: single
     max_exceeded: silent
@@ -48,23 +47,19 @@ automation:
           state: 'on' # Allow only when heating is on! otherwise RMC may crash
         - or:
           - condition: time 
-            after: input_datetime.silent_stop_time
-            before: input_datetime.silent_start_time        
-          - and:
-            - condition: numeric_state
-              entity_id: "sensor.therma_v_outside_temperature"
-              above: 8 # Silent mode on above 6 degrees for better defrosts
-            - condition: state
-              entity_id: switch.silent_mode_state
-              state: 'on' # Allow only when silent mode state is on
+            after: input_datetime.silent_start_time
+            before: input_datetime.silent_stop_time        
+          - condition: state
+            entity_id: switch.silent_mode_state
+            state: 'on' # Allow only when silent mode state is on
     actions:
       - action: switch.turn_on
         target:
           entity_id: switch.therma_v_silent_mode
 
-  - id: therma_v_silent_off_based_on_temp_time_auto
-    alias: "Therma V Silent OFF based on temperature and time auto"
-    description: Turns off silent mode when outside temp is too low respecting silent time window
+  - id: therma_v_silent_off_time_based_auto
+    alias: "Therma V Silent OFF time based auto"
+    description: "Turns off silent mode respecting silent time window"
     mode: single
     max_exceeded: silent
     triggers: # Time trigger to ensure that silent mode recovers to a safe state
@@ -79,18 +74,58 @@ automation:
           attribute: current  # Attribute is number of active instances of automation                  
           below: 1            # Below 1 means no active startup_auto instances
         - or:
-          - condition: numeric_state
-            entity_id: "sensor.therma_v_outside_temperature"
-            below: 6 # Silent mode of below 6 degrees for higher power
-          - and:
-            - condition: state
-              entity_id: switch.silent_mode_state
-              state: 'off' # Allow only when silent mode state is off
-            - condition: time 
-              after: input_datetime.silent_stop_time
-              before: input_datetime.silent_start_time
+          - condition: state
+            entity_id: switch.silent_mode_state
+            state: 'off'
+          - condition: time 
+            after: input_datetime.silent_stop_time
+            before: input_datetime.silent_start_time
     actions:
       - action: switch.turn_off
+        target:
+          entity_id: switch.therma_v_silent_mode
+
+  - id: therma_v_silent_off_refrigirant_temp_based_auto
+    alias: "Therma V Silent OFF refrigirant temperature based auto"
+    description: "Turns off silent mode when refrigirant temp is below freezing"
+    mode: single
+    max_exceeded: silent
+    triggers: # Time trigger to ensure that silent mode recovers to a safe state
+      - trigger: numeric_state
+        entity_id: sensor.therma_v_refrigirant_temperature_suction
+        below: 0
+        for: "00:05:00"
+    conditions: [] # Do always
+    actions:
+      - action: switch.turn_off
+        target:
+          entity_id: switch.therma_v_silent_mode
+
+  - id: therma_v_silent_on_refrigirant_temp_based_auto
+    alias: "Therma V Silent ON refrigirant temperature based auto"
+    description: "Turns on silent mode when outside temp is above freezing"
+    mode: single
+    max_exceeded: silent
+    triggers: # Time trigger to ensure that silent mode recovers to a safe state
+      - trigger: numeric_state
+        entity_id: sensor.therma_v_refrigirant_temperature_suction
+        above: 0
+        for: "00:15:00"
+    conditions:
+      - or: # Allow when startup_auto is active
+        - condition: numeric_state 
+          entity_id: "automation.therma_v_silent_on_at_startup_auto"  
+          attribute: current  # Attribute is number of active instances of automation                  
+          above: 0            # above 0 means active startup_auto instances
+        - or: # When time is within window or silent mode is on
+          - condition: time 
+            after: input_datetime.silent_stop_time
+            before: input_datetime.silent_start_time
+          - condition: state
+            entity_id: switch.silent_mode_state
+            state: 'on' # Allow only when silent mode state is on
+    actions:
+      - action: switch.turn_on
         target:
           entity_id: switch.therma_v_silent_mode
 
@@ -163,17 +198,17 @@ automation:
                   minutes: "{{ wait_minutes }}" # Wait for X minutes      
       - choose: # Restore previous silent mode state
           - conditions:
+            - or:
               - condition: state
                 entity_id: switch.silent_mode_state
-                state: "on"
+                state: 'off'
+              - condition: time 
+                after: input_datetime.silent_stop_time
+                before: input_datetime.silent_start_time
             sequence:
-              - action: switch.turn_on # If on leave silent mode on
+              - action: switch.turn_off # If off switch off silent mode
                 target:
                   entity_id: switch.therma_v_silent_mode
-        default:
-          - action: switch.turn_off # else turn it off
-            target:
-              entity_id: switch.therma_v_silent_mode
 
   - id: therma_v_silent_mode_off_auto
     alias: "Therma V Silent Mode OFF auto"
