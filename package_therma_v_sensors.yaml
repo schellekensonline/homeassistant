@@ -31,8 +31,10 @@ template:
         {% if (flow_lg > 8) %}
           {% if dhw_p or heating_p %}
             {{ ((rho_water*flow_lg/60*c_water*(Tout_lg-Tin_lg)) + p_boost) | round(0) }}
-          {% else %}
+          {% elif cooling_p %}
             {{ ((rho_water*flow_lg/60*c_water*(Tin_lg-Tout_lg)) + p_boost) | round(0) }}
+          {% else %}
+            {{ ( (Tout_lg-Tin_lg) + p_boost ) | round(0) }}  
           {% endif %}    
         {% else %}
           {{ ( (Tout_lg-Tin_lg) + p_boost ) | round(0) }}
