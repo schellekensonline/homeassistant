@@ -9,6 +9,18 @@ input_datetime:
     has_date: false
     has_time: true
 
+# Extra input which acts as state memory for silent mode at start-up
+input_boolean:
+  silent_mode_startup:
+    name: "Silent Mode at Startup" 
+
+input_number:
+  silent_power_threshold:
+    name: "Silent Mode Power Threshold"
+    min: 0
+    max: 6000
+    mode: box
+
 template:
   # Switch which acts as state memory for the automations to enable silent mode
   - switch:
@@ -24,14 +36,9 @@ template:
           target:
             entity_id: switch.therma_v_silent_mode
 
-# Extra input which acts as state memory for silent mode at start-up
-input_boolean:
-  silent_mode_startup:
-    name: "Silent Mode at Startup" 
-
 automation:
-  - id: therma_v_silent_on_refrigirant_temp_time_based_auto
-    alias: "Therma V Silent ON refrigirant temp time based auto"
+  - id: therma_v_silent_on_power_temp_time_based_auto
+    alias: "Therma V Silent ON power temp time based auto"
     description: "Turns on silent mode when outside temp is above freezing and within silent window"
     mode: single
     max_exceeded: silent
@@ -39,9 +46,14 @@ automation:
       - trigger: time
         at: input_datetime.silent_start_time
       - trigger: numeric_state
-        entity_id: sensor.therma_v_refrigirant_temperature_suction
-        above: 0
+        id: power_trig
+        entity_id: sensor.therma_v_electric_power
+        below: input_number.silent_power_threshold
         for: "00:15:00"
+      # - trigger: numeric_state
+      #   entity_id: sensor.therma_v_refrigirant_temperature_suction
+      #   above: 0
+      #   for: "00:15:00"
     conditions:
       - and:
         - condition: state
@@ -54,13 +66,15 @@ automation:
           - condition: state
             entity_id: switch.silent_mode_state
             state: 'on' # Allow only when silent mode state is on
+          - condition: trigger
+            id: power_trig
     actions:
       - action: switch.turn_on
         target:
           entity_id: switch.therma_v_silent_mode
 
-  - id: therma_v_silent_off_temp_time_based_auto
-    alias: "Therma V Silent OFF temp time based auto"
+  - id: therma_v_silent_off_power_temp_time_based_auto
+    alias: "Therma V Silent OFF power temp time based auto"
     description: "Turns off silent mode respecting silent time window and temperature"
     mode: single
     max_exceeded: silent
@@ -71,6 +85,11 @@ automation:
         id: temp_trig
         entity_id: sensor.therma_v_refrigirant_temperature_suction
         below: 0
+        for: "00:05:00"
+      - trigger: numeric_state
+        id: power_trig
+        entity_id: sensor.therma_v_electric_power
+        above: input_number.silent_power_threshold
         for: "00:05:00"
     conditions:
       - and:
@@ -86,6 +105,9 @@ automation:
             - condition: time 
               after: input_datetime.silent_stop_time
               before: input_datetime.silent_start_time
+            - condition: numeric_state
+              entity_id: sensor.therma_v_electric_power
+              above: input_number.silent_power_threshold
           - condition: trigger
             id: temp_trig
     actions:
@@ -119,7 +141,7 @@ automation:
         state: "on" # And silent mode startup is ON
     actions:
       - variables:
-          heat_target_temp: 29.5 # minimum temperature heating curve
+          heat_target_temp: 25 # minimum temperature heating curve
           cool_target_temp: 17 # minimum temperature cooling curve
           timeout_minutes: 45 # time out after which wait for target is stopped
           wait_minutes: 20 # extra wait added after target reached for heating and timeout for DHW
