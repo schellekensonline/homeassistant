@@ -124,16 +124,16 @@ automation:
                   entity_id: input_select.therma_v_ess_select
                 data:
                   option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 7 ] }}' # Low power state
-          - conditions:
-              - condition: numeric_state
-                entity_id: sensor.current_percentage_of_electricity_price
-                below: 25
-            sequence:
-              - action: input_select.select_option
-                target:
-                  entity_id: input_select.therma_v_ess_select
-                data:
-                  option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 6 ] }}' # High power state
+          # - conditions: ## DISABLED TO PREVENT TOO MANY DHW RUNS
+          #     - condition: numeric_state
+          #       entity_id: sensor.current_percentage_of_electricity_price
+          #       below: 25
+          #   sequence:
+          #     - action: input_select.select_option
+          #       target:
+          #         entity_id: input_select.therma_v_ess_select
+          #       data:
+          #         option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 2 ] }}' # High power state
         default:
           sequence:
             - action: input_select.select_option
@@ -195,16 +195,16 @@ automation:
                   entity_id: input_select.therma_v_ess_select
                 data:
                   option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 8 ] }}' # Very low power state
-          - conditions:
-              - condition: numeric_state
-                entity_id: sensor.current_percentage_of_electricity_price
-                below: 25
-            sequence:
-              - action: input_select.select_option
-                target:
-                  entity_id: input_select.therma_v_ess_select
-                data:
-                  option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 6 ] }}' # High power state
+          # - conditions: ## DISABLED TO PREVENT TOO MANY DHW RUNS
+          #     - condition: numeric_state
+          #       entity_id: sensor.current_percentage_of_electricity_price
+          #       below: 25
+          #   sequence:
+          #     - action: input_select.select_option
+          #       target:
+          #         entity_id: input_select.therma_v_ess_select
+          #       data:
+          #         option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 6 ] }}' # High power state
         default:
           - action: input_select.select_option
             target:
