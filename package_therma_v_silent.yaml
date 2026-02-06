@@ -141,10 +141,10 @@ automation:
         state: "on" # And silent mode startup is ON
     actions:
       - variables:
-          heat_target_temp: 25 # minimum temperature heating curve
+          heat_target_temp: 24 # minimum temperature heating curve
           cool_target_temp: 17 # minimum temperature cooling curve
           timeout_minutes: 45 # time out after which wait for target is stopped
-          wait_minutes: 20 # extra wait added after target reached for heating and timeout for DHW
+          wait_minutes: 16 # extra wait added after target reached for heating and timeout for DHW
       - action: switch.turn_on # Turn on silent mode
         target:
           entity_id: switch.therma_v_silent_mode
