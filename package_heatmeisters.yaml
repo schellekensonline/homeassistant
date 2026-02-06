@@ -52,7 +52,7 @@ automation:
   - id: heatmeisters_on_at_startup_auto
     alias: "Heatmeisters ON at Startup auto"
     description: "Turns on the heatmeisters for some minutes after start-up"
-    mode: restart
+    mode: single
     max_exceeded: silent
     triggers:
       - trigger: state
@@ -169,7 +169,7 @@ automation:
   - id: heatmeisters_on_when_cooling_auto
     alias: "Heatmeisters ON when cooling auto"
     description: "Turns ON the heatmeisters when cooling"
-    mode: restart
+    mode: single
     max_exceeded: silent
     triggers:
       - trigger: state
@@ -273,7 +273,7 @@ automation:
   - id: heatmeisters_off_when_cooling_stops_auto
     alias: "Heatmeisters OFF when cooling stops auto"
     description: "Turns OFF the heatmeisters when cooling stops"
-    mode: restart
+    mode: single
     max_exceeded: silent
     triggers:
       - trigger: state
