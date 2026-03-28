@@ -1,0 +1,43 @@
+input_boolean:
+  no_birds_on_lawn_mode:
+    name: "No birds on the lawn mode"
+
+template:
+ - binary_sensor:
+      # is a zone active?
+    - name: "B Hyve zone active"
+      state: >
+        {% set bloembak_muur_z = is_state('switch.bloembak_muur_zone','on') %} 
+        {% set border_achter_z = is_state('switch.border_achter_zone','on') %} 
+        {% set gazon_lr_z      = is_state('switch.gazon_links_rechts_zone','on') %}
+        {% set gazon_m_z       = is_state('switch.gazon_midden_zone','on') %}
+        {% set voortuin_z      = is_state('switch.voor_zijtuin_zone','on') %}
+
+        {{bloembak_muur_z or border_achter_z or gazon_lr_z or gazon_m_z or voortuin_z}}
+        
+automation:
+  - id: b_hyve_no_birds_on_lawn_auto
+    alias: "B Hyve no birds on lawn auto"
+    description: enables pop up sprinklers when bird is detected on the lawn
+    mode: single
+    max_exceeded: silent 
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.lawn_zone_bird_occupancy
+        to: "on"
+        for: "00:00:10"
+    conditions: 
+      - condition: state
+        entity_id: binary_sensor.b_hyve_zone_active
+        state: "off"
+      - condition: state
+        entity_id: input_boolean.no_birds_on_lawn_mode
+        state: "on"
+    actions:
+      - action: switch.turn_on
+        target:
+          entity_id: switch.gazon_links_rechts_zone
+      - delay: "00:00:40"
+      - action: switch.turn_off
+        target:
+          entity_id: switch.gazon_links_rechts_zone
