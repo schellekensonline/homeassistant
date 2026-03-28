@@ -3,6 +3,10 @@ input_datetime:
     name: Start time electricity lowest hours
     has_date: false
     has_time: true
+  start_time_electricity_highest_hour:
+    name: Start time electricity highest hour
+    has_date: false
+    has_time: true
 
 automation:
   # Plan low and high hours
@@ -11,23 +15,30 @@ automation:
     description: "Plan start moment of higest and lowest electricity price hours"
     mode: single
     triggers:
-      - trigger: time
-        at: "00:01" # every day just after midnight 
+    - trigger: time_pattern
+      # Run every one hour on the whole day to prevent missing days
+      hours: "/1"
     actions:
-          # start_highest_hours: >
-          #   {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
-          #   {{ as_timestamp(cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices', time_key='time', value_key='price', use_hourly_avg=true, hours=(24-number_of_highest_hours), look_ahead=false, include_today=true, include_tomorrow=false, start='00:00', end='23:59')) }}
       - variables:
           number_of_lowest_hours: 1  # Peak and low hours
           start_lowest_hours: >
             {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
-            {{ cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices', time_key='time', value_key='price', use_hourly_avg=true, hours=number_of_lowest_hours,  look_ahead=false, include_today=true, include_tomorrow=false, start='00:00', end='23:59') }}
+            {{ cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices', time_key='time', value_key='price', use_hourly_avg=true, hours=number_of_lowest_hours, look_ahead=false, include_today=true, include_tomorrow=false) }}
+          start_highest_hour: >
+            {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
+            {{ cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices', time_key='time', value_key='price', use_hourly_avg=true, mode='time_max', hours='all', look_ahead=false, include_today=true, include_tomorrow=false) }}
       # plan start lowest hours
       - action: input_datetime.set_datetime
         target:
           entity_id: input_datetime.start_time_electricity_lowest_hours
         data:
           datetime: "{{start_lowest_hours}}" 
+      # plan start highest hours
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.start_time_electricity_highest_hour
+        data:
+          datetime: "{{start_highest_hour}}" 
 
 template:
   - sensor:
