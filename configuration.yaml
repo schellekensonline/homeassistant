@@ -31,7 +31,7 @@ template:   !include templates.yaml
 recorder:
   db_url: !secret database_url
   auto_purge: true
-  purge_keep_days: 100
+  purge_keep_days: 30
   commit_interval: 30
 
 # Added by JSch
@@ -74,3 +74,5 @@ homeassistant:
     energy_cost_pack:           !include package_energy_cost.yaml
     unavailable_entities_pack:  !include package_unavailable_entities.yaml
     holiday_mode_pack:          !include package_holiday_mode.yaml
+    garden_irrigation_pack:     !include package_garden_irrigation.yaml
+    
