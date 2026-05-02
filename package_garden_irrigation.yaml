@@ -25,7 +25,7 @@ automation:
       - trigger: state
         entity_id: binary_sensor.lawn_zone_bird_occupancy
         to: "on"
-        for: "00:00:10"
+        for: "00:00:05"
     conditions: 
       - condition: state
         entity_id: binary_sensor.b_hyve_zone_active
@@ -37,7 +37,7 @@ automation:
       - action: switch.turn_on
         target:
           entity_id: switch.gazon_links_rechts_zone
-      - delay: "00:00:40"
+      - delay: "00:00:15"
       - action: switch.turn_off
         target:
           entity_id: switch.gazon_links_rechts_zone
