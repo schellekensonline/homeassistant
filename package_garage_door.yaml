@@ -1,0 +1,54 @@
+template:
+  - binary_sensor:
+    # Garage door sensor
+    - name: "Garage door open sensor"
+      state: "{{ is_state('binary_sensor.garage_door_controller_input_1','on') }}"
+      icon: > 
+        {% if is_state('binary_sensor.garage_door_controller_input_1','on') %} 
+          {{'mdi:garage-alert'}} 
+        {% elif is_state('switch.garage_door_controller_relay_2', 'on') %}
+          {{ 'mdi:garage-lock' }}
+        {% else %} 
+          {{'mdi:garage' }}
+        {% endif %}
+
+  - switch:
+    # Garage door open/close
+    - name: "Garage door open/close"
+      state: "{{ is_state('switch.garage_door_controller_relay_1','on') }}"
+      turn_on:
+        action: switch.turn_on
+        target:
+          entity_id: switch.garage_door_controller_relay_1
+      turn_off:
+        action: switch.turn_off
+        target:
+          entity_id: switch.garage_door_controller_relay_1
+      icon: > 
+        {% if is_state('binary_sensor.garage_door_controller_input_1','on') %} 
+          {{'mdi:garage-alert'}} 
+        {% elif is_state('switch.garage_door_controller_relay_2', 'on') %}
+          {{ 'mdi:garage-lock' }}
+        {% else %} 
+          {{'mdi:garage' }}
+        {% endif %}
+
+
+    # Garage door locked
+    - name: "Garage door locked"
+      turn_on:
+        action: switch.toggle
+        target:
+          entity_id: switch.garage_door_controller_relay_2
+      turn_off:
+        action: switch.toggle
+        target:
+          entity_id: switch.garage_door_controller_relay_2
+      icon: > 
+        {% if is_state('binary_sensor.garage_door_controller_input_1','on') %} 
+          {{'mdi:garage-alert'}} 
+        {% elif is_state('switch.garage_door_controller_relay_2', 'on') %}
+          {{ 'mdi:garage-lock' }}
+        {% else %} 
+          {{'mdi:garage' }}
+        {% endif %}
