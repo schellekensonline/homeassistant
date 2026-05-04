@@ -14,6 +14,12 @@ template:
         {% set voortuin_z      = is_state('switch.voor_zijtuin_zone','on') %}
 
         {{bloembak_muur_z or border_achter_z or gazon_lr_z or gazon_m_z or voortuin_z}}
+      icon: >
+        {% if is_state('binary_sensor.b_hyve_zone_active','on') %} 
+          {{'mdi:sprinkler'}} 
+        {% else %} 
+          {{'mdi:water-off-outline' }}
+        {% endif %}     
         
 automation:
   - id: b_hyve_no_birds_on_lawn_auto
