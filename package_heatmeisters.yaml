@@ -73,6 +73,8 @@ automation:
       - condition: state 
         entity_id: binary_sensor.therma_v_dhw_heating_state
         state: "off" # And no DHW is active
+      - condition: template # not cooling
+        value_template: "{{ not is_state('climate.therma_v_heating_cooling', 'cool') }}"
     actions:
       # Safe current state
       - sequence:
@@ -180,10 +182,6 @@ automation:
         entity_id: "binary_sensor.therma_v_defrost_state"
         from: "on"
         to: "off" # Catch missed compressor restart
-      - trigger: numeric_state
-        entity_id: "automation.heatmeisters_on_at_startup_auto"
-        attribute: current  # Attribute is number of active instances of automation 
-        below: 1  # Below 1 means no active startup_auto instances                    
     conditions:
       - condition: state 
         entity_id: switch.therma_v_heating_cooling_on_off
@@ -194,12 +192,8 @@ automation:
       - condition: state 
         entity_id: binary_sensor.therma_v_dhw_heating_state
         state: "off" # And no DHW is active
-      - condition: template 
-        value_template: "{{ is_state_attr('climate.therma_v_heating_cooling', 'hvac_modes', 'cool') }}"
-      - condition: numeric_state # Allow only when startup_auto not active
-        entity_id: "automation.heatmeisters_on_at_startup_auto"
-        attribute: current  # Attribute is number of active instances of automation                  
-        below: 1            # Below 1 means no active startup_auto instances
+      - condition: template  # And Cooling
+        value_template: "{{ is_state('climate.therma_v_heating_cooling', 'cool') }}"
     actions:
       # Safe current state
       -  sequence:
@@ -280,18 +274,26 @@ automation:
         entity_id: "binary_sensor.therma_v_compressor_state"
         from: "on"
         to: "off" # When compressor starts
+      - trigger: state
+        entity_id: "climate.therma_v_heating_cooling"
+        from: "cool"
+        id: trig_cool_off
     conditions:
-      - condition: state 
-        entity_id: switch.therma_v_heating_cooling_on_off
-        state: "on" # And heating_cooling is on! otherwise RMC may crash
-      - condition: state 
-        entity_id: binary_sensor.therma_v_defrost_state
-        state: "off" # And no defrost is active
-      - condition: state 
-        entity_id: binary_sensor.therma_v_dhw_heating_state
-        state: "off" # And no DHW is active
-      - condition: template 
-        value_template: "{{ is_state_attr('climate.therma_v_heating_cooling', 'hvac_modes', 'cool') }}"
+      - or:
+        - condition: trigger # And Cooling
+          id: trig_cool_off
+        - and:
+          - condition: state 
+            entity_id: switch.therma_v_heating_cooling_on_off
+            state: "on" 
+          - condition: state 
+            entity_id: binary_sensor.therma_v_defrost_state
+            state: "off" # And no defrost is active
+          - condition: state 
+            entity_id: binary_sensor.therma_v_dhw_heating_state
+            state: "off" # And no DHW is active
+          - condition: template  # And Cooling
+            value_template: "{{ is_state('climate.therma_v_heating_cooling', 'cool') }}"
     actions:
       # Restore state
       - action: number.set_value
