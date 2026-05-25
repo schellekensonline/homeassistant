@@ -16,7 +16,7 @@ input_datetime:
     name: "DHW disinfection window end"
     has_date: false
     has_time: true
-    initial: "10:00" # not adjustable in UI, comment when made adjustable
+    initial: "11:00" # not adjustable in UI, comment when made adjustable
 
 input_number:
   dhw_max_days_between_disinfections:
