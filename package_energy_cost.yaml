@@ -49,7 +49,7 @@ template:
       state_class: measurement
       state: >
         {% set cost = states('sensor.nord_pool_nl_current_price') | float(0) %}
-        {% set zonneplan = 0.020 | float(0) %}
+        {% set zonneplan = 0.022 | float(0) %}
         {% set energy_tax  = 0.1088 | float(0) %}
         {% set VAT         = 0.21 | float(0) %}
         {{ ( (cost + zonneplan + energy_tax) * (1+VAT) ) | round(2, default=0) }}
@@ -75,8 +75,9 @@ template:
       state: >
         {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
         {% set current = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='average', use_hourly_avg=true, hours='all', look_ahead=false, include_today=true, include_tomorrow=false, start=as_timestamp(now())|timestamp_custom('%H')+':00', end=as_timestamp(now())|timestamp_custom('%H')+':59') %}
-
-        {{ current | round(3, default=0) }}
+        {% set zonneplan = 0.022 | float(0) %}
+        {% set VAT         = 0.21 | float(0) %}
+        {{ (current+zonneplan)*VAT | round(3, default=0) }}
 
     - name: "Current hourly electricity price including tax"
       unit_of_measurement: "€"

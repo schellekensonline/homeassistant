@@ -27,11 +27,10 @@ input_number:
     step: 0.1 # 0.1 resolution leads to better integration accuracy of error
     mode: slider
     unit_of_measurement: "%"
-  # Not on UI just a convinent way to set the gross price that is considered for switching grid export
-  # e.g. zonneplan prices become negative when gross price drops below -0.0221 for next energy this is 0.0221
+  # Not on UI just a convinent way to set the gross price limit that is considered for switching grid export
   goodwe_grid_export_gross_negative: 
     name: "Goodwe grid export gross negative"
-    initial: -0.02 # a bit conservative for zonneplan
+    initial: -0.001 # a bit conservative, zonneplan tarrif included in gross
     unit_of_measurement: "€"
     min: -1
     max: 1 
