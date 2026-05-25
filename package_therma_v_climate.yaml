@@ -8,7 +8,11 @@ climate:
       {% if is_state('sensor.therma_v_operation_mode', '3') %}  {# auto mode #}
         {{ 5 }}
       {% elif states('sensor.therma_v_control_mode') < '2' %}   {# water temp. control, inlet or outlet #}
-        {{ 40 }}
+      {%   if is_state('sensor.therma_v_operation_mode', '4') %}  {# heat #}
+             {{ 40 }}
+      {%   else %}
+             {{ 30 }}
+      {%   endif %}
       {% else %}                                                {# probably room temp. control#}
         {{ 25 }}
       {% endif %}
@@ -16,9 +20,13 @@ climate:
       {% if is_state('sensor.therma_v_operation_mode', '3') %}  {# auto mode #}
         {{ -5 }}
       {% elif states('sensor.therma_v_control_mode') < '2' %}   {# water temp. control, inlet or outlet #}
-        {{ 22 }}
+      {%   if is_state('sensor.therma_v_operation_mode', '4') %}  {# heat #}
+             {{ 10 }}
+      {%   else %}
+             {{ 10 }}
+      {%   endif %}
       {% else %}                                                {# probably room temp. control #}
-        {{ 16 }}
+        {{ 15 }}
       {% endif %}
     current_temperature_template: > 
       {# if is_state('sensor.therma_v_control_mode', '0') #}    {# outlet water temperature control #}
