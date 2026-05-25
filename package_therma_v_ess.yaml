@@ -34,7 +34,7 @@ automation:
   - id: ess_based_on_e_price_negative_auto
     alias: "ESS based on e-price negative auto"
     description: Set the ESS state of the Therma V based on negative e-price
-    mode: single
+    mode: queued
     triggers:
       - trigger: time
         at: input_datetime.start_time_electricity_lowest_hours
@@ -87,7 +87,7 @@ automation:
   - id: ess_based_on_e_price_positive_normal_auto
     alias: "ESS based on e-price positive normal auto"
     description: Set the ESS state of the Therma V based on positive e-price low price difference
-    mode: single
+    mode: queued
     triggers:
       - trigger: time
         at: input_datetime.start_time_electricity_lowest_hours
@@ -148,7 +148,7 @@ automation:
   - id: ess_based_on_e_price_positive_high_auto
     alias: "ESS based on e-price positive high auto"
     description: Set the ESS state of the Therma V based on positive e-price high price difference
-    mode: single
+    mode: queued
     triggers:
       - trigger: time
         at: input_datetime.start_time_electricity_lowest_hours
