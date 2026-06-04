@@ -1,0 +1,56 @@
+input_select:
+  # Input select to switch between heatpump power saving regimes
+  music_assistant_radio_select:
+    name: "Music Assistant Radio selector"
+    options:
+      - "Geen zenders gevonden"
+
+
+automation:
+  - id: 'music_assistant_get_radiostations_auto'
+    alias: "Music Assistant get radiostations"
+    description: "Haalt radiozenders op en zet ze direct in het ESP32 menu"
+    trigger:
+      - platform: homeassistant
+        event: start
+      - platform: time
+        at: "04:00:00"  # Dagelijkse synchronisatie
+    action:
+    # 1. Haal de live bibliotheek op van Music Assistant
+    - action: music_assistant.get_library
+      data:
+        media_type: radio
+        favorite: true
+        config_entry_id: 01KRK5PNB04Z9WV4PESRKCGJ9X
+      response_variable: mass_radio
+      # 2. Vul de Home Assistant input_select helper met de zenders
+    - action: input_select.set_options
+      target:
+        entity_id: input_select.music_assistant_radio_select
+      data:
+        options: >
+          {% if mass_radio is defined and 'items' in mass_radio %}
+            {{ mass_radio['items'] | map(attribute='name') | list }}
+          {% else %}
+            {{ ['Geen favorieten gevonden'] | list }}
+          {% endif %}
+    mode: restart
+
+  - id: 'music_assistant_play_selected_station_auto'
+    alias: "Music Assistant Play Selected Station auto"
+    description: "Start direct de zender zodra de input_select helper wijzigt"
+    trigger:
+      - platform: state
+        entity_id: input_select.music_assistant_radio_select
+    condition:
+      # Voorkom dat hij probeert af te spelen als de lijst leeg is of laadt
+      - condition: template
+        value_template: "{{ trigger.to_state.state not in ['Laden...', 'Geen favorieten gevonden', 'unknown', 'unavailable'] }}"
+    action:
+      - action: music_assistant.play_media
+        target:
+          entity_id: media_player.esp32_s3_box_player  # <--- Vervang dit door de media_player van je S3 Box (of je andere speaker)
+        data:
+          media_id: "{{ trigger.to_state.state }}"
+          media_type: radio_station
+    mode: restart
