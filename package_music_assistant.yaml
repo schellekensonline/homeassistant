@@ -11,8 +11,8 @@ input_select:
 
 automation:
   - id: 'music_assistant_get_radiostations_auto'
-    alias: "Music Assistant get radiostations"
-    description: "Haalt radiozenders op en zet ze direct in het ESP32 menu"
+    alias: "Music Assistant get radiostations auto"
+    description: "Haalt radiozenders op en zet ze in een input_select"
     trigger:
       - platform: homeassistant
         event: start
@@ -48,12 +48,60 @@ automation:
     condition:
       # Voorkom dat hij probeert af te spelen als de lijst leeg is of laadt
       - condition: template
-        value_template: "{{ trigger.to_state.state not in ['Laden...', 'Geen favorieten gevonden', 'unknown', 'unavailable'] }}"
+        value_template: "{{ trigger.to_state.state not in ['Laden...', 'Geen favorieten gevonden', 'Geen zenders gevonden', 'unknown', 'unavailable'] }}"
     action:
       - action: music_assistant.play_media
         target:
           entity_id: media_player.esp32_s3_box_player  # <--- Vervang dit door de media_player van je S3 Box (of je andere speaker)
         data:
           media_id: "{{ trigger.to_state.state }}"
-          media_type: radio_station
+          media_type: radio
+    mode: restart
+
+  - id: 'music_assistant_get_albums_auto'
+    alias: "Music Assistant get Albums auto"
+    description: "Haalt Albums op en zet ze in een input_select"
+    trigger:
+      - platform: homeassistant
+        event: start
+      - platform: time
+        at: "04:00:00"  # Dagelijkse synchronisatie
+    action:
+    # 1. Haal de live bibliotheek op van Music Assistant
+    - action: music_assistant.get_library
+      data:
+        media_type: album
+        favorite: true
+        config_entry_id: 01KRK5PNB04Z9WV4PESRKCGJ9X
+      response_variable: mass_album
+      # 2. Vul de Home Assistant input_select helper met de zenders
+    - action: input_select.set_options
+      target:
+        entity_id: input_select.music_assistant_album_select
+      data:
+        options: >
+          {% if mass_album is defined and 'items' in mass_album %}
+            {{ mass_album['items'] | map(attribute='name') | list }}
+          {% else %}
+            {{ ['Geen favorieten gevonden'] | list }}
+          {% endif %}
+    mode: restart
+
+  - id: 'music_assistant_play_selected_album_auto'
+    alias: "Music Assistant Play Selected Album auto"
+    description: "Start direct de zender zodra de input_select helper wijzigt"
+    trigger:
+      - platform: state
+        entity_id: input_select.music_assistant_album_select
+    condition:
+      # Voorkom dat hij probeert af te spelen als de lijst leeg is of laadt
+      - condition: template
+        value_template: "{{ trigger.to_state.state not in ['Laden...', 'Geen favorieten gevonden', 'Geen albums gevonden', 'unknown', 'unavailable'] }}"
+    action:
+      - action: music_assistant.play_media
+        target:
+          entity_id: media_player.esp32_s3_box_player  # <--- Vervang dit door de media_player van je S3 Box (of je andere speaker)
+        data:
+          media_id: "{{ trigger.to_state.state }}"
+          media_type: album
     mode: restart
