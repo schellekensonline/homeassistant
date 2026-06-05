@@ -77,5 +77,5 @@ homeassistant:
     unavailable_entities_pack:  !include package_unavailable_entities.yaml
     garden_irrigation_pack:     !include package_garden_irrigation.yaml
     garage_door_pack:           !include package_garage_door.yaml
-    music_assistant_pack:       !include package_music_assistnat.yaml
+    music_assistant_pack:       !include package_music_assistant.yaml
     

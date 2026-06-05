@@ -4,7 +4,10 @@ input_select:
     name: "Music Assistant Radio selector"
     options:
       - "Geen zenders gevonden"
-
+  music_assistant_album_select:
+    name: "Music Assistant Album selector"
+    options:
+      - "Geen albums gevonden"
 
 automation:
   - id: 'music_assistant_get_radiostations_auto'
