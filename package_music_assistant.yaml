@@ -9,9 +9,22 @@ input_select:
     options:
       - "Geen favorieten gevonden"   # text should match with ESPhome text_sensor
 
+template:
+  - sensor:
+      - name: "Music Assistant Active Album Art"
+        unique_id: music_assistant_active_album_art
+        state: >
+          {% set player = 'media_player.' ~ 'esp32_s3_box_player' %}
+          {% if state_attr(player, 'entity_picture') %}
+            {{ state_attr(player, 'entity_picture') }}
+          {% else %}
+            none
+          {% endif %}
+
+
 automation:
   - id: 'music_assistant_get_radiostations_auto'
-    alias: "Music Assistant get radiostations auto"
+    alias: "Music Assistant get Radiostations auto"
     description: "Haalt radiozenders op en zet ze in een input_select"
     trigger:
       - platform: homeassistant
