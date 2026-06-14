@@ -17,9 +17,9 @@ frontend:
   extra_module_url:
   - /hacsfiles/lovelace-card-mod/card-mod.js?hacstag=190927524421
 
-# Text to speech
-tts:
-  - platform: google_translate
+# # Text to speech
+# tts:
+#   - platform: google_translate
 
 automation: !include automations.yaml
 script:     !include scripts.yaml
@@ -28,7 +28,6 @@ sensor:     !include sensors.yaml
 template:   !include templates.yaml
 
 
-# Added by JSch
 # Switch to mysql
 recorder:
   db_url: !secret database_url
@@ -36,20 +35,20 @@ recorder:
   purge_keep_days: 30
   commit_interval: 30
 
-# Added by JSch
 # Allow traefik etc.
 http:
   use_x_forwarded_for: true
   trusted_proxies:
     - 10.43.10.0/24   # internal
+    - 10.43.110.0/24  # IOT
     - 192.168.1.0/24  # no use
     - 192.168.2.0/24  # docker proxy-net
     - 192.168.3.0/24  # docker internal-net
     - 192.168.4.0/24  # docker tools-net
     - 192.168.5.0/24  # docker cloud-net
     - 192.168.6.0/24  # docker torrent-net
-    - 192.168.7.0/24  # docker on media-net
-    - 192.168.8.0/24  # docker on nvr-net
+    - 192.168.7.0/24  # docker media-net
+    - 192.168.8.0/24  # docker nvr-net
     - 172.17.0.0/16   # docker default networks
   ip_ban_enabled: true
   login_attempts_threshold: 5
