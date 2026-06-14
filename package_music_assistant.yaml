@@ -118,3 +118,57 @@ automation:
           media_id: "{{ trigger.to_state.state }}"
           media_type: album
     mode: restart
+
+  - id: 'listen_radio_harmony_auto'
+    alias: "Listen to radio started from harmony hub"
+    triggers:
+      - trigger: state
+        entity_id: remote.living_room
+    conditions:
+      - condition: template
+        value_template: '{{ trigger.to_state.attributes.current_activity == "Listen to Radio" }}'
+    actions:
+      - action: light.turn_on
+        target:
+          entity_id: light.esp32_s3_box_player_backlight
+      - action: music_assistant.play_media
+        target:
+          entity_id: media_player.esp32_s3_box_player  # <--- Vervang dit door de media_player van je S3 Box (of je andere speaker)
+        data:
+          media_id: "{{ states('input_select.music_assistant_radio_select') }}"
+          media_type: radio
+
+  - id: 'listen_albums_harmony_auto'
+    alias: "Listen to albums started from harmony hub"
+    triggers:
+      - trigger: state
+        entity_id: remote.living_room
+    conditions:
+      - condition: template
+        value_template: '{{ trigger.to_state.attributes.current_activity == "Listen to Albums" }}'
+    actions:
+      - action: light.turn_on
+        target:
+          entity_id: light.esp32_s3_box_player_backlight
+      - action: music_assistant.play_media
+        target:
+          entity_id: media_player.esp32_s3_box_player  # <--- Vervang dit door de media_player van je S3 Box (of je andere speaker)
+        data:
+          media_id: "{{ states('input_select.music_assistant_album_select') }}"
+          media_type: album
+
+  - id: 'stop_player_harmony_auto'
+    alias: "Pause player started from harmony hub"
+    triggers:
+      - trigger: state
+        entity_id: remote.living_room
+    conditions:
+      - condition: template
+        value_template: '{{ trigger.to_state.attributes.current_activity == "PowerOff" }}'
+    actions:
+      - action: light.turn_off
+        target:
+          entity_id: light.esp32_s3_box_player_backlight
+      - action: media_player.media_pause
+        target:
+          entity_id: media_player.esp32_s3_box_player
