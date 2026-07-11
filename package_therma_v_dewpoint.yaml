@@ -57,9 +57,6 @@ automation:
       - trigger: state
         entity_id:
           - sensor.shelly_plus_ht1_dewpoint
-      - trigger: state
-        entity_id:
-          - sensor.openweathermap_dewpoint
     conditions:
       - condition: state
         entity_id: climate.therma_v_heating_cooling
@@ -70,6 +67,9 @@ automation:
         value_template: "{{ ( states('sensor.shelly_plus_ht1_dewpoint') | float(0) ) > (states('sensor.therma_v_buffer_temperatures_return_to_heatpump_t4') | float(0) ) }}"
     actions:
       - action: switch.turn_off
-        entity_id: switch.therma_v_silent_mode
-      - action: switch.turn_off
-        entity_id: switch.therma_v_heating_cooling_on_off
+        entity_id: switch.silent_mode_state
+      - action: climate.set_hvac_mode
+        target:
+          entity_id: climate.therma_v_heating_cooling
+        data:
+          hvac_mode: off
