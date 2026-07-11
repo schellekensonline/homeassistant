@@ -182,6 +182,9 @@ automation:
         entity_id: "binary_sensor.therma_v_defrost_state"
         from: "on"
         to: "off" # Catch missed compressor restart
+      - trigger: state
+        entity_id: "climate.therma_v_heating_cooling"
+        to: "cool" 
     conditions:
       - condition: state 
         entity_id: switch.therma_v_heating_cooling_on_off
@@ -273,27 +276,17 @@ automation:
       - trigger: state
         entity_id: "binary_sensor.therma_v_compressor_state"
         from: "on"
-        to: "off" # When compressor starts
+        to: "off" # When compressor stops
       - trigger: state
         entity_id: "climate.therma_v_heating_cooling"
         from: "cool"
         id: trig_cool_off
     conditions:
       - or:
-        - condition: trigger # And Cooling
+        - condition: trigger # And Off
           id: trig_cool_off
-        - and:
-          - condition: state 
-            entity_id: switch.therma_v_heating_cooling_on_off
-            state: "on" 
-          - condition: state 
-            entity_id: binary_sensor.therma_v_defrost_state
-            state: "off" # And no defrost is active
-          - condition: state 
-            entity_id: binary_sensor.therma_v_dhw_heating_state
-            state: "off" # And no DHW is active
-          - condition: template  # And Cooling
-            value_template: "{{ is_state('climate.therma_v_heating_cooling', 'cool') }}"
+        - condition: template  # And NOT Cooling
+          value_template: "{{ not is_state('climate.therma_v_heating_cooling', 'cool') }}"
     actions:
       # Restore state
       - action: number.set_value
