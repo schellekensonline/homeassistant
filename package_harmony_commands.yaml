@@ -1,0 +1,102 @@
+# interessante link voor een harmony package
+# https://pcgsm.nl/ohh/2026/02/16/home-assistant-logitech-harmony-de-ultieme-integratie-volledige-handleiding/
+
+
+input_select:
+  harmony_commands_ms_media_pc: # HASS standin
+    name: "Harmony commands MS media PC"
+    options:
+      - "Select command from list"
+  harmony_commands_samsung_dvd:
+    name: "Harmony commands Samsung DVD"
+    options:
+      - "Select command from list"
+  harmony_commands_samsung_tv:
+    name: "Harmony commands Samsung TV"
+    options:
+      - "Select command from list"
+  harmony_commands_yamaha_av_receiver:
+    name: "Harmony commands Yamaha AV Receiver"
+    options:
+      - "Select command from list"
+
+
+automation:
+  - id: harmony_fill_commands_per_device_auto
+    alias: Harmony Fill Commands Per Device Auto
+    triggers:
+      - trigger: homeassistant
+        event: start
+      - trigger: time_pattern
+        minutes: /10
+    actions:
+      - action: file.read_file
+        data:
+          file_name: harmony_6229454.conf
+          file_encoding: JSON
+        response_variable: harmony_data
+      - variables:
+          harmony: "{{ harmony_data.data }}"
+      - action: input_select.set_options
+        target:
+          entity_id: input_select.harmony_commands_ms_media_pc
+        data:
+          options: |
+            {{ [''] + harmony.Devices['Microsoft Media PC SE'].commands }}
+      - action: input_select.set_options
+        target:      
+          entity_id: input_select.harmony_commands_samsung_dvd
+        data:
+          options: |
+            {{ [''] + harmony.Devices['Samsung DVD'].commands }}
+      - action: input_select.set_options
+        target:
+          entity_id: input_select.harmony_commands_samsung_tv
+        data:
+          options: |
+            {{ [''] + harmony.Devices['Samsung TV'].commands }}
+      - action: input_select.set_options
+        target:
+          entity_id: input_select.harmony_commands_yamaha_av_receiver
+        data:
+          options: |
+            {{ [''] + harmony.Devices['Yamaha AV Receiver'].commands }}
+
+  - id: hrmony_send_command_from_device_auto
+    alias: Harmony Send Command From Device Auto
+    triggers:
+      - trigger: state
+        entity_id:
+          - input_select.harmony_commands_ms_media_pc
+          - input_select.harmony_commands_samsung_dvd
+          - input_select.harmony_commands_samsung_tv
+          - input_select.harmony_commands_av_receiver
+    actions:
+      - action: file.read_file
+        data:
+          file_name: harmony_6229454.conf
+          file_encoding: JSON
+        response_variable: harmony_data
+      - variables:
+          harmony: "{{ harmony_data.data }}"
+          device_name: |
+            {% set map = {
+              'input_select.harmony_commands_ms_media_pc': 'Microsoft Media PC SE',
+              'input_select.harmony_commands_samsung_dvd': 'Samsung DVD',
+              'input_select.harmony_commands_samsung_tv': 'Samsung TV',
+              'input_select.harmony_commands_av_receiver': 'Yamaha AV Receiver',
+            } %} {{ map[changed_helper] }}
+          device_id: "{{ harmony.Devices[device_name].id }}"
+          changed_helper: "{{ trigger.entity_id }}"
+          command: "{{ states(changed_helper) }}"
+      - action: remote.send_command
+        target:
+          entity_id: remote.living_room
+        data:
+          device: "{{ device_id }}"
+          command: "{{ command }}"
+      - action: input_select.select_option
+        target:
+          entity_id: "{{ changed_helper }}"
+        data:
+          option: "Select command from list"

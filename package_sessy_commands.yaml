@@ -1,0 +1,14 @@
+rest_command:
+  sessy_get_power_strategy:
+    url: "http://{{host}}/api/v1/power/active_strategy"
+    method: GET
+    headers:
+      authorization: "Basic {{auth}}"
+
+  sessy_set_power_strategy:
+    url: "http://{{host}}/api/v1/power/active_strategy"
+    method: POST
+    headers:
+      authorization: "Basic {{auth}}"
+    content_type: "application/json"
+    payload: '{"strategy":"{{power_strategy}}"}'
