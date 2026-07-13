@@ -1,3 +1,8 @@
+# Extra input which acts as state memory for heatmeisters
+input_boolean:
+  heatmeisters_cool_active:
+    name: "Heatmeisters cool active" 
+
 input_number:
   heatmeisters_master_fan_state:
     name: "Heatmeister Master fan state"
@@ -76,7 +81,6 @@ automation:
       - condition: template # not cooling
         value_template: "{{ not is_state('climate.therma_v_heating_cooling', 'cool') }}"
     actions:
-      # Safe current state
       - sequence:
           - action: input_number.set_value
             target:
@@ -197,6 +201,9 @@ automation:
         state: "off" # And no DHW is active
       - condition: template  # And Cooling
         value_template: "{{ is_state('climate.therma_v_heating_cooling', 'cool') }}"
+      - condition: state
+        entity_id: input_boolean.heatmeisters_cool_active
+        state: "off"
     actions:
       # Safe current state
       -  sequence:
@@ -220,6 +227,9 @@ automation:
               entity_id: input_number.heatmeisters_computer_fan_state
             data:
               value: "{{ states('number.heatbooster_computer_room_fan_speed') }}"
+          - action: input_boolean.turn_on
+            target:
+              entity_id: input_boolean.heatmeisters_cool_active
       # Set cooling speed
       - choose:
           - conditions:
@@ -282,6 +292,9 @@ automation:
         from: "cool"
         id: trig_cool_off
     conditions:
+      - condition: state
+        entity_id: input_boolean.heatmeisters_cool_active
+        state: "on"
       - or:
         - condition: trigger # And Off
           id: trig_cool_off
@@ -309,3 +322,6 @@ automation:
           entity_id: number.heatbooster_computer_room_fan_speed
         data:
           value: "{{ states('input_number.heatmeisters_computer_fan_state') }}"
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.heatmeisters_cool_active
