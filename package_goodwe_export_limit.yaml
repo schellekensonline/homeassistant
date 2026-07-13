@@ -55,7 +55,7 @@ automation:
     max_exceeded: silent 
     triggers:
       - trigger: time_pattern
-        seconds: "/21" # response time of DT to setpoint changes is a bit over 10s so don't update too fast
+        seconds: "/50" # a bit slower icw sessy "/21" # response time of DT to setpoint changes is a bit over 10s so don't update too fast
     conditions: 
       - condition: state  # 'day' condition: from sunrise until sunset
         entity_id: sun.sun
