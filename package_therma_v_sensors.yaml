@@ -148,7 +148,7 @@ sensor:
     method: left
     unit_prefix: k
     unit_time: h
-    round: 1
+    round: 2
 
   - platform: integration
     source: sensor.therma_v_electric_power
@@ -156,7 +156,7 @@ sensor:
     method: left
     unit_prefix: k
     unit_time: h
-    round: 1
+    round: 2
 
   - platform: integration
     source: sensor.therma_v_thermal_power
@@ -164,7 +164,7 @@ sensor:
     method: left
     unit_prefix: k
     unit_time: h
-    round: 1
+    round: 2
 
 
 modbus:
