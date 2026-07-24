@@ -4,12 +4,6 @@
 # STRATEGY [ POWER_STRATEGY_NOM, POWER_STRATEGY_ROI, POWER_STRATEGY_API, POWER_STRATEGY_IDLE, POWER_STRATEGY_SESSY_CONNECT, POWER_STRATEGY_ECO ]
 
 rest_command:
-  # sessy_get_active_strategy:
-  #   url: "http://{{host}}/api/v1/power/active_strategy"
-  #   method: GET
-  #   headers:
-  #     authorization: "Basic {{auth | base64_encode }}"
-
   sessy_set_active_strategy:
     url: "http://{{host}}/api/v1/power/active_strategy"
     method: POST
@@ -38,13 +32,6 @@ rest_command:
             "stop_override": stop_override | bool
           } | to_json }}
 
-  # sessy_get_ns:
-  #   url: "http://{{host}}/api/v1/eol/ns"
-  #   method: GET
-  #   headers:
-  #     authorization: "Basic {{auth | base64_encode }}"
-
-
 script:
   sessy_set_strategy:
     sequence:
@@ -54,42 +41,15 @@ script:
           auth: !secret sessy_auth
           strategy: '{{strategy}}'
 
-  # sessy_get_strategy:
-  #   sequence:
-  #     - action: rest_command.sessy_get_active_strategy
-  #       data:
-  #         host: !secret sessy_url
-  #         auth: !secret sessy_auth
-  #       response_variable: strategy
-
-  # sessy_get_ns:
-  #   sequence:
-  #     - action: rest_command.sessy_get_active_strategy
-  #       data:
-  #         host: !secret sessy_url
-  #         auth: !secret sessy_auth
-  #       response_variable: ns
-
   sessy_set_power:
     sequence:
-      # - action: rest_command.sessy_set_active_strategy
-      #   data:
-      #     host: !secret sessy_url
-      #     auth: !secret sessy_auth
-      #     strategy: "POWER_STRATEGY_API"
       - action: rest_command.sessy_set_ns
         data:
           host: !secret sessy_url
           auth: !secret sessy_auth
-          stop_override: >
-                {% if setpoint | int == 0 %}
-                  {{ true }}
-                {% else %}
-                  {{ false }}
-                {% endif %}
+          stop_override: '{{stop_override}}'
           inverter: '{{inverter}}'
           setpoint: '{{setpoint}}'
-
 
 input_select:
   sessy_strategy:
@@ -107,24 +67,24 @@ input_number:
   sessy_power_setpoint_inv1:
     name: "Sessy power setpoint L1"
     icon: mdi:transmission-tower
-    min: -2500  # Maximaal leveren/ontladen (afhankelijk van je Sessy model, pas aan indien nodig)
-    max: 2500   # Maximaal laden
+    min: -2000  # Maximaal leveren/ontladen (afhankelijk van je Sessy model, pas aan indien nodig)
+    max: 2000   # Maximaal laden
     step: 100
     unit_of_measurement: W
     mode: box
   sessy_power_setpoint_inv2:
     name: "Sessy power setpoint L2"
     icon: mdi:transmission-tower
-    min: -2500  # Maximaal leveren/ontladen (afhankelijk van je Sessy model, pas aan indien nodig)
-    max: 2500   # Maximaal laden
+    min: -2000  # Maximaal leveren/ontladen (afhankelijk van je Sessy model, pas aan indien nodig)
+    max: 2000   # Maximaal laden
     step: 100
     unit_of_measurement: W
     mode: box
   sessy_power_setpoint_inv3:
     name: "Sessy power setpoint L3"
     icon: mdi:transmission-tower
-    min: -2500  # Maximaal leveren/ontladen (afhankelijk van je Sessy model, pas aan indien nodig)
-    max: 2500   # Maximaal laden
+    min: -2000  # Maximaal leveren/ontladen (afhankelijk van je Sessy model, pas aan indien nodig)
+    max: 2000   # Maximaal laden
     step: 100
     unit_of_measurement: W
     mode: box
@@ -133,6 +93,7 @@ automation:
   - id: sessy_set_power_inv1_auto
     alias: "Sessy set power inv1 auto"
     description: "Set power on inverter 1"
+    mode: restart
     trigger:
       - platform: state
         entity_id: input_number.sessy_power_setpoint_inv1
@@ -144,11 +105,18 @@ automation:
         data:
           inverter: 1 
           setpoint: "{{ trigger.to_state.state | int }}"
-    mode: single
+          stop_override: >
+            {% if (trigger.to_state.state|int==0) and (states('input_number.sessy_power_setpoint_inv2')|int==0)  and (states('input_number.sessy_power_setpoint_inv3')|int==0) %} 
+                {{ true }}
+            {% else %}
+                {{ false }}
+            {% endif %}            
+
 
   - id: sessy_set_power_inv2_auto
     alias: "Sessy set power inv2 auto"
     description: "Set power on inverter 2"
+    mode: restart
     trigger:
       - platform: state
         entity_id: input_number.sessy_power_setpoint_inv2
@@ -160,11 +128,18 @@ automation:
         data:
           inverter: 2 
           setpoint: "{{ trigger.to_state.state | int }}"
-    mode: single
+          stop_override: >
+            {% if (states('input_number.sessy_power_setpoint_inv1')|int==0) and (trigger.to_state.state|int==0) and (states('input_number.sessy_power_setpoint_inv3')|int==0)  %} 
+                {{ true }}
+            {% else %}
+                {{ false }}
+            {% endif %}  
+    
 
   - id: sessy_set_power_inv3_auto
     alias: "Sessy set power inv3 auto"
     description: "Set power on inverter 3"
+    mode: restart
     trigger:
       - platform: state
         entity_id: input_number.sessy_power_setpoint_inv3
@@ -176,12 +151,17 @@ automation:
         data:
           inverter: 3 
           setpoint: "{{ trigger.to_state.state | int }}"
-    mode: single
-
-
+          stop_override: >
+            {% if (states('input_number.sessy_power_setpoint_inv1')|int==0) and (states('input_number.sessy_power_setpoint_inv2')|int==0) and (trigger.to_state.state|int==0) %} 
+                {{ true }}
+            {% else %}
+                {{ false }}
+            {% endif %}  
+    
   - id: sessy_synchronise_active_strategy_auto
     alias: "Sessy synchronise active strategy auto"
     description: "Synchronizes input select with sessy"
+    mode: restart
     trigger:
       - platform: state
         entity_id: sensor.sessy_active_strategy
@@ -198,12 +178,11 @@ automation:
           entity_id: input_select.sessy_strategy
         data:
           option: "{{ trigger.to_state.state }}"
-    mode: single
-
-
+ 
   - id: sessy_set_active_strategy_auto
     alias: "Sessy set active strategy auto"
     description: "Sets Sessy active strategy when input select changes"
+    mode: restart
     trigger:
       - platform: state
         entity_id: input_select.sessy_strategy
@@ -215,4 +194,4 @@ automation:
       - action: script.sessy_set_strategy
         data:
           strategy: "{{ trigger.to_state.state }}"
-    mode: single
+    

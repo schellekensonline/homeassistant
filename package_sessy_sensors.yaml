@@ -43,40 +43,44 @@ sensor:
       - inverters
     scan_interval: 15
 
+  # REST SENSOR 3: Haalt de /api/v2/power/status JSON op (om attributen uit te splitsen)
+  - platform: rest
+    name: "Sessy power status data"
+    unique_id: sessy_pover_status_data
+    method: GET
+    resource_template: "http://{{ states('input_text.sessy_url') }}/api/v2/power/status"
+    headers:
+      Authorization: "Basic {{ states('input_text.sessy_auth') | base64_encode }}"
+    value_template: "{{ value_json.status }}"
+    json_attributes:
+      - sessy
+      - grid
+      - solar
+    scan_interval: 15
+
+# Energy
+  - platform: integration
+    source: sensor.sessy_grid_total_discharging_power 
+    name: "Sessy Total Discharged Energy"
+    method: left
+    unit_prefix: k
+    unit_time: h
+    round: 2
+
+  - platform: integration
+    source: sensor.sessy_grid_total_charging_power
+    name: "Sessy Total Charged Energy"
+    method: left
+    unit_prefix: k
+    unit_time: h
+    round: 2
 
 
 template:
   - sensor:
       # ========================================================================
-      # NETWORK SWITCH (NETWERK EN APPARAAT DATA)
+      # NETWORK SWITCH 
       # ========================================================================
-      - name: "Sessy grid frequentie"
-        unique_id: sessy_grid_frequency
-        state: "{{ (state_attr('sensor.sessy_eol_ns_data', 'network_switch')['frequency'] / 1000) | round(2) }}"
-        unit_of_measurement: "Hz"
-        device_class: frequency
-        state_class: measurement
-
-      - name: "Sessy grid voltage L1"
-        unique_id: sessy_grid_voltage_l1
-        state: "{{ (state_attr('sensor.sessy_eol_ns_data', 'network_switch')['phase_1'] / 1000) | round(1) }}"
-        unit_of_measurement: "V"
-        device_class: voltage
-        state_class: measurement
-
-      - name: "Sessy grid voltage L2"
-        unique_id: sessy_grid_voltage_l2
-        state: "{{ (state_attr('sensor.sessy_eol_ns_data', 'network_switch')['phase_2'] / 1000) | round(1) }}"
-        unit_of_measurement: "V"
-        device_class: voltage
-        state_class: measurement
-
-      - name: "Sessy grid voltage L3"
-        unique_id: sessy_grid_voltage_l3
-        state: "{{ (state_attr('sensor.sessy_eol_ns_data', 'network_switch')['phase_3'] / 1000) | round(1) }}"
-        unit_of_measurement: "V"
-        device_class: voltage
-        state_class: measurement
 
       - name: "Sessy NS errors"
         unique_id: sessy_network_switch_errors
@@ -87,6 +91,35 @@ template:
         unique_id: sessy_network_switch_warnings
         state: "{{ state_attr('sensor.sessy_eol_ns_data', 'network_switch')['warnings'] | int(0) }}"
         state_class: measurement
+
+      ## ALSO IN /api/v2/power/status
+      # - name: "Sessy grid frequency"
+      #   unique_id: sessy_grid_frequency
+      #   state: "{{ (state_attr('sensor.sessy_eol_ns_data', 'network_switch')['frequency'] / 1000) | round(2) }}"
+      #   unit_of_measurement: "Hz"
+      #   device_class: frequency
+      #   state_class: measurement
+
+      # - name: "Sessy grid voltage L1"
+      #   unique_id: sessy_grid_voltage_l1
+      #   state: "{{ (state_attr('sensor.sessy_eol_ns_data', 'network_switch')['phase_1'] / 1000) | round(1) }}"
+      #   unit_of_measurement: "V"
+      #   device_class: voltage
+      #   state_class: measurement
+
+      # - name: "Sessy grid voltage L2"
+      #   unique_id: sessy_grid_voltage_l2
+      #   state: "{{ (state_attr('sensor.sessy_eol_ns_data', 'network_switch')['phase_2'] / 1000) | round(1) }}"
+      #   unit_of_measurement: "V"
+      #   device_class: voltage
+      #   state_class: measurement
+
+      # - name: "Sessy grid voltage L3"
+      #   unique_id: sessy_grid_voltage_l3
+      #   state: "{{ (state_attr('sensor.sessy_eol_ns_data', 'network_switch')['phase_3'] / 1000) | round(1) }}"
+      #   unit_of_measurement: "V"
+      #   device_class: voltage
+      #   state_class: measurement
 
 
       # ========================================================================
@@ -102,7 +135,7 @@ template:
       - name: "Sessy INV L1 apparent power"
         unique_id: sessy_l1_apparent_power
         state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[0]['apparent_power'] | int(0) }}"
-        unit_of_measurement: "var"
+        unit_of_measurement: "VA"
         device_class: apparent_power
         state_class: measurement
 
@@ -157,7 +190,7 @@ template:
       - name: "Sessy INV L2 apparent power"
         unique_id: sessy_l2_apparent_power
         state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[1]['apparent_power'] | int(0) }}"
-        unit_of_measurement: "var"
+        unit_of_measurement: "VA"
         device_class: apparent_power
         state_class: measurement
 
@@ -212,7 +245,7 @@ template:
       - name: "Sessy INV L3 apparent power"
         unique_id: sessy_l3_apparent_power
         state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[2]['apparent_power'] | int(0) }}"
-        unit_of_measurement: "var"
+        unit_of_measurement: "VA"
         device_class: apparent_power
         state_class: measurement
 
@@ -256,30 +289,116 @@ template:
 
 
       # ========================================================================
-      # GECOMBINEERDE TOTALEN
+      # POWER STATUS
       # ========================================================================
-      - name: "Sessy total active power"
-        unique_id: sessy_total_active_power
-        state: >-
-          {% set p1 = state_attr('sensor.sessy_eol_ns_data', 'inverters')[0]['active_power'] | int(0) %}
-          {% set p2 = state_attr('sensor.sessy_eol_ns_data', 'inverters')[1]['active_power'] | int(0) %}
-          {% set p3 = state_attr('sensor.sessy_eol_ns_data', 'inverters')[2]['active_power'] | int(0) %}
-          {{ p1 + p2 + p3 }}
+      - name: "Sessy Battery State of Charge"
+        unique_id: sessy_battery_state_of_charge
+        state: "{{ state_attr('sensor.sessy_power_status_data', 'sessy').state_of_charge }}"
+        unit_of_measurement: "%"
+        device_class: battery
+        state_class: measurement
+
+      - name: "Sessy Battery Pack Voltage"
+        unique_id: sessy_battery_pack_voltage
+        state: "{{ (state_attr('sensor.sessy_power_status_data', 'sessy').pack_voltage / 1000) | round(2) }}"
+        unit_of_measurement: "V"
+        device_class: voltage
+        state_class: measurement
+
+      # 0. Total power
+      - name: "Sessy Grid Total Power"
+        unique_id: sessy_grid_total_power
+        state: "{{ state_attr('sensor.sessy_power_status_data', 'sessy').total_power }}"
         unit_of_measurement: "W"
         device_class: power
         state_class: measurement
 
-      - name: "Sessy total apparent power"
-        unique_id: sessy_total_apparent_power
-        state: >-
-          {% set q1 = state_attr('sensor.sessy_eol_ns_data', 'inverters')[0]['apparent_power'] | int(0) %}
-          {% set q2 = state_attr('sensor.sessy_eol_ns_data', 'inverters')[1]['apparent_power'] | int(0) %}
-          {% set q3 = state_attr('sensor.sessy_eol_ns_data', 'inverters')[2]['apparent_power'] | int(0) %}
-          {{ q1 + q2 + q3 }}
-        unit_of_measurement: "var"
-        device_class: apparent_power
+      # 1. Only discharging power, for Riemann integral
+      - name: "Sessy Grid Total Discharging Power"
+        unit_of_measurement: "W"
+        device_class: power
+        state: >
+          {% set power = states('sensor.sessy_grid_total_power') | float(0) %}
+          {{ power if power > 0 else 0 }}
+
+      # 2. Only charging power, for Riemann integral
+      - name: "Sessy Grid Total Charging Power"
+        unit_of_measurement: "W"
+        device_class: power
+        state: >
+          {% set power = states('sensor.sessy_grid_total_power') | float(0) %}
+          {{ (power | abs) if power < 0 else 0 }}
+
+      # Grid frequency
+      - name: "Sessy Grid Frequency"
+        unique_id: sessy_grid_frequency
+        state: "{{ (state_attr('sensor.sessy_power_status_data', 'grid').frequency / 1000) | round(2) }}"
+        unit_of_measurement: "Hz"
+        device_class: frequency
         state_class: measurement
 
+      # Grid voltage per phase
+      - name: "Sessy Grid Voltage L1"
+        unique_id: sessy_grid_voltage_l1
+        state: "{{ (state_attr('sensor.sessy_power_status_data', 'grid').phase_voltage[0] / 1000) | round(1) }}"
+        unit_of_measurement: "V"
+        device_class: voltage
+        state_class: measurement
 
+      - name: "Sessy Grid Voltage L2"
+        unique_id: sessy_grid_voltage_l2
+        state: "{{ (state_attr('sensor.sessy_power_status_data', 'grid').phase_voltage[1] / 1000) | round(1) }}"
+        unit_of_measurement: "V"
+        device_class: voltage
+        state_class: measurement
 
+      - name: "Sessy Grid Voltage L3"
+        unique_id: sessy_grid_voltage_l3
+        state: "{{ (state_attr('sensor.sessy_power_status_data', 'grid').phase_voltage[2] / 1000) | round(1) }}"
+        unit_of_measurement: "V"
+        device_class: voltage
+        state_class: measurement
 
+      # Inverter power per phase
+      - name: "Sessy Inverter Power L1"
+        unique_id: sessy_inverter_power_l1
+        state: "{{ state_attr('sensor.sessy_power_status_data', 'sessy').inverters.power[0] }}"
+        unit_of_measurement: "W"
+        device_class: power
+        state_class: measurement
+
+      - name: "Sessy Inverter Power L2"
+        unique_id: sessy_inverter_power_l2
+        state: "{{ state_attr('sensor.sessy_power_status_data', 'sessy').inverters.power[1] }}"
+        unit_of_measurement: "W"
+        device_class: power
+        state_class: measurement
+
+      - name: "Sessy Inverter Power L3"
+        unique_id: sessy_inverter_power_l3
+        state: "{{ state_attr('sensor.sessy_power_status_data', 'sessy').inverters.power[2] }}"
+        unit_of_measurement: "W"
+        device_class: power
+        state_class: measurement
+
+      # Solar PV Power per phase
+      - name: "Sessy Solar PV Power L1"
+        unique_id: sessy_solar_pv_power_l1
+        state: "{{ state_attr('sensor.sessy_power_status_data', 'solar').pv_power[0] }}"
+        unit_of_measurement: "W"
+        device_class: power
+        state_class: measurement
+
+      - name: "Sessy Solar PV Power L2"
+        unique_id: sessy_solar_pv_power_l2
+        state: "{{ state_attr('sensor.sessy_power_status_data', 'solar').pv_power[1] }}"
+        unit_of_measurement: "W"
+        device_class: power
+        state_class: measurement
+
+      - name: "Sessy Solar PV Power L3"
+        unique_id: sessy_solar_pv_power_l3
+        state: "{{ state_attr('sensor.sessy_power_status_data', 'solar').pv_power[2] }}"
+        unit_of_measurement: "W"
+        device_class: power
+        state_class: measurement
