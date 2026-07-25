@@ -6,13 +6,15 @@ template:
   # equal heating during disinfection cycles and heating cycles
   - binary_sensor: 
       - name: "Therma V DHW circulation state (S3)"
+        unique_id: therma_v_dhw_circulation_state_S3
         state: >
           {{ is_state('switch.shelly_plug_s3', 'on') }}
 
   - switch:
       # Template switch to used by the automationsas as state memory
       # seperately from the real state of the relay which can be switched manually too
-      - name: dhw_circulation_switch
+      - name: "DHW Circulation Switch"
+        unique_id: dhw_circulation_switch
 #      - state: "{{ is_state('switch.shelly_plug_s3', 'on') }}"
 #        availability: "{{ has_value('switch.shelly_plug_s3') }}" 
         turn_on:

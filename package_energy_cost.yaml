@@ -8,37 +8,6 @@ input_datetime:
     has_date: false
     has_time: true
 
-automation:
-  # Plan low and high hours
-  - id: plan_electricity_lowest_hours_auto
-    alias: "Plan electricity highest and lowest hours auto"
-    description: "Plan start moment of higest and lowest electricity price hours"
-    mode: single
-    triggers:
-    - trigger: time_pattern
-      # Run every one hour on the whole day to prevent missing days
-      hours: "/1"
-    actions:
-      - variables:
-          number_of_lowest_hours: 1  # Peak and low hours
-          start_lowest_hours: >
-            {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
-            {{ cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices', time_key='time', value_key='price', use_hourly_avg=true, hours=number_of_lowest_hours, look_ahead=false, include_today=true, include_tomorrow=false) }}
-          start_highest_hour: >
-            {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
-            {{ cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices', time_key='time', value_key='price', use_hourly_avg=true, mode='time_max', hours='all', look_ahead=false, include_today=true, include_tomorrow=false) }}
-      # plan start lowest hours
-      - action: input_datetime.set_datetime
-        target:
-          entity_id: input_datetime.start_time_electricity_lowest_hours
-        data:
-          datetime: "{{start_lowest_hours}}" 
-      # plan start highest hours
-      - action: input_datetime.set_datetime
-        target:
-          entity_id: input_datetime.start_time_electricity_highest_hour
-        data:
-          datetime: "{{start_highest_hour}}" 
 
 template:
   - sensor:
@@ -67,6 +36,7 @@ template:
 
     # Template sensors for current hourly price
     - name: "Current hourly electricity price excluding tax"
+      unique_id: current_hourly_electricity_price_excluding_tax
       unit_of_measurement: "€"
       state_class: measurement
       availability: >
@@ -80,6 +50,7 @@ template:
         {{ ((current+zonneplan)*VAT) | round(3, default=0) }}
 
     - name: "Current hourly electricity price including tax"
+      unique_id: current_hourly_electricity_price_including_tax
       unit_of_measurement: "€"
       state_class: measurement
       availability: >
@@ -93,6 +64,7 @@ template:
         
     # Template sensors for current percentage of energy price
     - name: "Current percentage of electricity price"
+      unique_id: current_percentage_of_electricity_price
       unit_of_measurement: "%"
       state_class: measurement
       availability: >
@@ -100,9 +72,9 @@ template:
         {{ current|is_number }}
       state: >
         {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
-        {% set high = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='max', use_hourly_avg=true, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) %}
-        {% set low = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='min', use_hourly_avg=true, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) %}
-        {% set current = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='average', use_hourly_avg=true, hours='all', look_ahead=false, include_today=true, include_tomorrow=false, start=as_timestamp(now())|timestamp_custom('%H')+':00', end=as_timestamp(now())|timestamp_custom('%H')+':59') %}
+        {% set high = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='max', use_hourly_avg=false, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) %}
+        {% set low = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='min', use_hourly_avg=false, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) %}
+        {% set current = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='average', use_hourly_avg=false, hours='all', look_ahead=false, include_today=true, include_tomorrow=false, start=as_timestamp(now())|timestamp_custom('%H')+':00', end=as_timestamp(now())|timestamp_custom('%H')+':59') %}
         {# set current_old = states('sensor.nord_pool_nl_current_price') | float(0) #}
         {# set high_old    = states('sensor.nord_pool_nl_highest_price') | float(0) #}
         {# set low_old     = states('sensor.nord_pool_nl_lowest_price') | float(0) #}
@@ -111,6 +83,7 @@ template:
 
     # sensor that determines the e-price difference today
     - name: "Difference in electricity price today"
+      unique_id: difference_in_electricity_price_today
       state_class: measurement
       unit_of_measurement: '€'
       availability: >
@@ -118,25 +91,22 @@ template:
         {{ current|is_number }}
       state: >
         {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
-        {% set high = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='max', use_hourly_avg=true, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) %}
-        {% set low = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='min', use_hourly_avg=true, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) %}
+        {% set high = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='max', use_hourly_avg=false, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) %}
+        {% set low = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='min', use_hourly_avg=false, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) %}
         
         {{ ( (high-low) )  | round(3) }}
 
-    # sensor that determines the e-price difference today
-    - name: "Start peak hours electricity price today"
-      availability: >
-        {% set current = states('sensor.nord_pool_nl_current_prices_including_tax') | float("unknown") %}
-        {{ current|is_number }}
-      state: >
-        {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
-        {% set high = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='max', use_hourly_avg=true, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) %}
-        {% set low = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='min', use_hourly_avg=true, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) %}
-        
-        {{ ( (high-low) )  | round(3) }}
+    # # sensor that determines ?
+    # - name: "Start peak hours electricity price today"
+    #   unique_id: start_peak_hours_electricity_price_today
+    #   availability: >
+    #     {% set current = states('sensor.nord_pool_nl_current_prices_including_tax') | float("unknown") %}
+    #     {{ current|is_number }}
+    #   state: >
 
     # Template sensors to determine the electricity cost per hour EURO/hr excl. tax
     - name: "Electric power cost per hour including tax"
+      unique_id: electric_power_cost_per_hour_including_tax
       state_class: measurement
       unit_of_measurement: "€/h"
       availability: >
@@ -149,6 +119,7 @@ template:
           {{ power/1000*cost }}
     # Template sensors to determine the electricity cost per hour EURO/hr incl. tax
     - name: "Electric power cost per hour excluding tax"
+      unique_id: electric_power_cost_per_hour_excluding_tax
       state_class: measurement
       unit_of_measurement: "€/h"
       availability: >
@@ -197,6 +168,7 @@ template:
       minutes: 0
     sensor:
       - name: "Energy cost per day including tax"
+        unique_id: energy_cost_per_day_including_tax
         state_class: measurement
         unit_of_measurement: "€"
         state: "{{ states('sensor.energy_cost_over_one_day_including_tax')|float(0) }}"
@@ -206,6 +178,7 @@ template:
       minutes: 0
     sensor:
       - name: "Energy cost per day excluding tax"
+        unique_id: energy_cost_per_day_excluding_tax
         state_class: measurement
         unit_of_measurement: "€"
         state: "{{ states('sensor.energy_cost_over_one_day_excluding_tax')|float(0) }}"
@@ -213,14 +186,16 @@ template:
 sensor:
   # integration of Euro/hr result is Euros
   - platform: integration
-    source: sensor.electric_power_cost_per_hour_including_tax
     name: "Energy cost including tax"
+    unique_id: energy_cost_including_tax
+    source: sensor.electric_power_cost_per_hour_including_tax
     method: left
     unit_time: h
     round: 2
   - platform: integration
-    source: sensor.electric_power_cost_per_hour_excluding_tax
     name: "Energy cost excluding tax"
+    unique_id: energy_cost_excluding_tax
+    source: sensor.electric_power_cost_per_hour_excluding_tax
     method: left
     unit_time: h
     round: 2
@@ -228,21 +203,21 @@ sensor:
   # utility meters cycle and cannot be used reliably with the triggers in the template sensors
   - platform: statistics
     name: Energy cost over one day including tax
+    unique_id: energy_cost_over_one_day_including_tax
     entity_id: sensor.energy_cost_including_tax
     state_characteristic: change
     max_age:
       hours: 24
     precision: 2
-    unique_id: energy_cost_over_one_day_including_tax
-
   - platform: statistics
     name: Energy cost over one day excluding tax
+    unique_id: energy_cost_over_one_day_excluding_tax
     entity_id: sensor.energy_cost_excluding_tax
     state_characteristic: change
     max_age:
       hours: 24
     precision: 2
-    unique_id: energy_cost_over_one_day_excluding_tax
+
 
 # The utility meters cycle daily automatically 
 utility_meter:
@@ -258,3 +233,37 @@ utility_meter:
     cycle: daily
 #    delta_values: true # input is delta energy
     net_consumption: true #allows negative power
+
+
+automation:
+  # Plan low and high hours
+  - id: plan_electricity_lowest_hours_auto
+    alias: "Plan electricity highest and lowest hours auto"
+    description: "Plan start moment of higest and lowest electricity price hours"
+    mode: single
+    triggers:
+    - trigger: time_pattern
+      # Run every one hour on the whole day to prevent missing days
+      hours: "/1"
+    actions:
+      - variables:
+          number_of_lowest_hours: 1  # Peak and low hours
+          start_lowest_hours: >
+            {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
+            {{ cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices', time_key='time', value_key='price', use_hourly_avg=true, hours=number_of_lowest_hours, look_ahead=false, include_today=true, include_tomorrow=false) }}
+          start_highest_hour: >
+            {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
+            {{ cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices', time_key='time', value_key='price', use_hourly_avg=true, mode='time_max', hours='all', look_ahead=false, include_today=true, include_tomorrow=false) }}
+      # plan start lowest hours
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.start_time_electricity_lowest_hours
+        data:
+          datetime: "{{start_lowest_hours}}" 
+      # plan start highest hours
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.start_time_electricity_highest_hour
+        data:
+          datetime: "{{start_highest_hour}}" 
+

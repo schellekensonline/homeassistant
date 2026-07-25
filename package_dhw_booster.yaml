@@ -3,6 +3,7 @@ template:
   # which switches the DHW heater separately from the heatpump
   - binary_sensor: 
       - name: "Therma V DHW booster 2 state (S1)"
+        unique_id: therma_v_dhw_booster_2_state
         state: >
           {{ is_state('switch.shelly_plug_s1', 'on') }}
 
@@ -11,7 +12,8 @@ template:
   - switch:
 #      - state: "{{ is_state('switch.shelly_plug_s1', 'on') }}"
 #        availability: "{{ has_value('switch.shelly_plug_s1') }}" 
-      - name: dhw_booster_2_switch
+      - name: DHW Booster 2 Switch
+        unique_id: dhw_booster_2_switch
         turn_on:
           action: switch.turn_on
           target:

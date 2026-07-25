@@ -60,16 +60,18 @@ sensor:
 
 # Energy
   - platform: integration
-    source: sensor.sessy_grid_total_discharging_power 
     name: "Sessy Total Discharged Energy"
+    unique_id: sessy_total_discharged_energy
+    source: sensor.sessy_grid_total_discharging_power 
     method: left
     unit_prefix: k
     unit_time: h
     round: 2
 
   - platform: integration
-    source: sensor.sessy_grid_total_charging_power
     name: "Sessy Total Charged Energy"
+    unique_id: sessy_total_charged_energy
+    source: sensor.sessy_grid_total_charging_power
     method: left
     unit_prefix: k
     unit_time: h

@@ -23,7 +23,7 @@ template:
 
 
 automation:
-  - id: 'music_assistant_get_radiostations_auto'
+  - id: music_assistant_get_radiostations_auto
     alias: "Music Assistant get Radiostations auto"
     description: "Haalt radiozenders op en zet ze in een input_select"
     trigger:
@@ -52,7 +52,7 @@ automation:
           {% endif %}
     mode: restart
 
-  - id: 'music_assistant_play_selected_station_auto'
+  - id: music_assistant_play_selected_station_auto
     alias: "Music Assistant Play Selected Station auto"
     description: "Start direct de zender zodra de input_select helper wijzigt"
     trigger:
@@ -71,7 +71,7 @@ automation:
           media_type: radio
     mode: restart
 
-  - id: 'music_assistant_get_albums_auto'
+  - id: music_assistant_get_albums_auto
     alias: "Music Assistant get Albums auto"
     description: "Haalt Albums op en zet ze in een input_select"
     trigger:
@@ -100,7 +100,7 @@ automation:
           {% endif %}
     mode: restart
 
-  - id: 'music_assistant_play_selected_album_auto'
+  - id: music_assistant_play_selected_album_auto
     alias: "Music Assistant Play Selected Album auto"
     description: "Start direct de zender zodra de input_select helper wijzigt"
     trigger:
@@ -119,8 +119,8 @@ automation:
           media_type: album
     mode: restart
 
-  - id: 'listen_radio_harmony_auto'
-    alias: "Listen to radio started from harmony hub"
+  - id: listen_radio_harmony_auto
+    alias: "Listen to radio started from harmony hub auto"
     triggers:
       - trigger: state
         entity_id: remote.living_room
@@ -138,8 +138,8 @@ automation:
           media_id: "{{ states('input_select.music_assistant_radio_select') }}"
           media_type: radio
 
-  - id: 'listen_albums_harmony_auto'
-    alias: "Listen to albums started from harmony hub"
+  - id: listen_albums_harmony_auto
+    alias: "Listen to albums started from harmony hub auto"
     triggers:
       - trigger: state
         entity_id: remote.living_room
@@ -157,8 +157,8 @@ automation:
           media_id: "{{ states('input_select.music_assistant_album_select') }}"
           media_type: album
 
-  - id: 'stop_player_harmony_auto'
-    alias: "Pause player started from harmony hub"
+  - id: standby_player_from_harmony_auto
+    alias: "Standby player from harmony hub auto"
     triggers:
       - trigger: state
         entity_id: remote.living_room

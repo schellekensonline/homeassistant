@@ -189,18 +189,21 @@ modbus:
     sensors:
       # INPUT REGISTRERS
       - name: "Therma V error code"
+        unique_id: therma_v_error_code
         scan_interval: 30
         address: 0
         slave: 1
         input_type: input
 
       - name: "Therma V outdoor unit state" # 0 off, 1 cooling, 2 heating
+        unique_id: therma_v_outdoor_unit_state
         scan_interval: 10
         address: 1
         slave: 1
         input_type: input
 
       - name: "Therma V inlet temperature"
+        unique_id: therma_v_inlet_temperature
         scan_interval: 10
         address: 2
         slave: 1
@@ -212,6 +215,7 @@ modbus:
         unit_of_measurement: "°C"
 
       - name: "Therma V outlet temperature"
+        unique_id: therma_v_outlet_temperature
         scan_interval: 10
         address: 3
         slave: 1
@@ -223,6 +227,7 @@ modbus:
         unit_of_measurement: "°C"
 
       - name: "Therma V DHW temperature"
+        unique_id: therma_v_dhw_temperature
         scan_interval: 10
         address: 5
         slave: 1
@@ -233,6 +238,7 @@ modbus:
         unit_of_measurement: "°C"
 
       - name: "Therma V room temperature"
+        unique_id: therma_v_room_temperature
         scan_interval: 10
         address: 7
         slave: 1
@@ -243,6 +249,7 @@ modbus:
         unit_of_measurement: "°C"
 
       - name: "Therma V water flow rate"
+        unique_id: therma_v_water_flow_rate
         scan_interval: 10
         address: 8
         slave: 1
@@ -254,12 +261,14 @@ modbus:
         unit_of_measurement: "L/min"
 
       - name: "Therma V energy state"
+        unique_id: therma_v_energy_state
         scan_interval: 10
         address: 11
         slave: 1
         input_type: input
 
       - name: "Therma V outside temperature"
+        unique_id: therma_v_outside_temperature
         scan_interval: 30
         address: 12
         slave: 1
@@ -282,6 +291,7 @@ modbus:
       #   unit_of_measurement: "bar"
 
       - name: "Therma V refrigirant temperature liquid gas"
+        unique_id: therma_v_refrigirant_temperature_liquid_gas
         scan_interval: 30
         address: 16
         slave: 1
@@ -303,6 +313,7 @@ modbus:
       #   unit_of_measurement: "°C"
 
       - name: "Therma V refrigirant temperature suction"
+        unique_id: therma_v_refrigirant_temperature_suction
         scan_interval: 30
         address: 18
         slave: 1
@@ -314,6 +325,7 @@ modbus:
         unit_of_measurement: "°C"
 
       - name: "Therma V refrigirant temperature heat gas"
+        unique_id: therma_v_refrigirant_temperature_hot_gas
         scan_interval: 30
         address: 19
         slave: 1
@@ -324,6 +336,7 @@ modbus:
         unit_of_measurement: "°C"
 
       - name: "Therma V temperature before heat exchanger"
+        unique_id: therma_v_temperature_before_heat_exchanger
         scan_interval: 30
         address: 20
         slave: 1
@@ -335,6 +348,7 @@ modbus:
         unit_of_measurement: "°C"
 
       - name: "Therma V temperature after heat exchanger"
+        unique_id: therma_v_temperature_after_heat_exchanger 
         scan_interval: 30
         address: 21
         slave: 1
@@ -346,6 +360,7 @@ modbus:
         unit_of_measurement: "°C"
 
       - name: "Therma V compressor pressure high"
+        unique_id: therma_v_compressor_pressure_high
         scan_interval: 30
         address: 22
         slave: 1
@@ -356,6 +371,7 @@ modbus:
         unit_of_measurement: "mbar"
 
       - name: "Therma V compressor pressure low"
+        unique_id: therma_v_compressor_pressure_low
         scan_interval: 30
         address: 23
         slave: 1
@@ -366,6 +382,7 @@ modbus:
         unit_of_measurement: "mbar"
 
       - name: "Therma V compressor Hz"
+        unique_id: therma_v_compressor_frequency
         scan_interval: 10
         address: 24
         slave: 1
@@ -378,18 +395,21 @@ modbus:
   # HOLDING REGISTRERS
 
       - name: "Therma V operation mode" # 0 cooling 4 heating 3 auto
+        unique_id: therma_v_operation_mode
         scan_interval: 5
         address: 0
         slave: 1
         input_type: holding
 
       - name: "Therma V control mode" # 0 water outlet 1 water inlet 2 room
+        unique_id: therma_v_control_mode
         scan_interval: 5
         address: 1
         slave: 1
         input_type: holding
 
       - name: "Therma V target temperature circuit 1" # 0.1C  ENABLE IN CASE OF AUTOMODE
+        unique_id: therma_v_target_temperature_circuit_1
         scan_interval: 5
         address: 2
         slave: 1
@@ -400,6 +420,7 @@ modbus:
         unit_of_measurement: "°C"
 
       - name: "Therma V room air temperature circuit 1" # 0.1C
+        unique_id: therma_v_room_air_temperature_circuit_1
         scan_interval: 5
         address: 3
         slave: 1
@@ -410,6 +431,7 @@ modbus:
         unit_of_measurement: "°C"
 
       - name: "Therma V auto mode target temperature delta circuit 1" # 1C
+        unique_id: therma_v_auto_mode_target_temperature_delta_circuit_1
         scan_interval: 5
         address: 4
         slave: 1
@@ -450,6 +472,7 @@ modbus:
   #      unit_of_measurement: "°C"
 
       - name: "Therma V DHW target temperature" # 0.1C
+        unique_id: therma_v_dhw_target_temperature
         scan_interval: 5
         address: 8
         slave: 1
@@ -468,6 +491,7 @@ modbus:
   # COIL REGISTERS
     switches:
       - name: "Therma V Heating/Cooling on/off"
+        unique_id: therma_v_heating_Cooling_on_off
         slave: 1
         address: 0
         write_type: coil
@@ -480,6 +504,7 @@ modbus:
             state_off: 0
             
       - name: "Therma V DHW on/off"
+        unique_id: therma_v_dhw_on_off
         slave: 1
         address: 1
         write_type: coil
@@ -492,6 +517,7 @@ modbus:
             state_off: 0
             
       - name: "Therma V Silent Mode"
+        unique_id: therma_v_silent_mode
         slave: 1
         address: 2
         write_type: coil
@@ -504,6 +530,7 @@ modbus:
             state_off: 0
 
       - name: "Therma V Trigger DHW disinfection cycle"
+        unique_id: therma_v_trigger_dhw_disinfection_cycle
         slave: 1
         address: 3
         write_type: coil
@@ -518,48 +545,56 @@ modbus:
   # DISCRETE REGISTERS
     binary_sensors:
       - name: "Therma V Water flow state" # 0 OK, 1 LOW
+        unique_id: therma_v_water_flow_state
         slave: 1
         address: 0
         scan_interval: 30
         input_type: discrete_input
 
       - name: "Therma V water pump state" # 0 OFF, 1 ON
+        unique_id: therma_v_water_pump_state
         slave: 1
         address: 1
         scan_interval: 30
         input_type: discrete_input
       
       - name: "Therma V external water pump state" # 0 OFF, 1 ON
+        unique_id: therma_v_external_water_pump_state
         slave: 1
         address: 2
         scan_interval: 30
         input_type: discrete_input
 
       - name: "Therma V compressor state" # 0 OFF, 1 ON
+        unique_id: therma_v_compressor_state
         slave: 1
         address: 3
         scan_interval: 30
         input_type: discrete_input
 
       - name: "Therma V defrost state" # 0 OFF, 1 ON
+        unique_id: therma_v_defrost_state
         slave: 1
         address: 4
         scan_interval: 30
         input_type: discrete_input
 
       - name: "Therma V DHW heating state" # 0 OFF, 1 ON
+        unique_id: therma_v_dhw_heating_state
         slave: 1
         address: 5
         scan_interval: 30
         input_type: discrete_input
 
       - name: "Therma V DHW disinfection cycle state" # 0 OFF, 1 ON
+        unique_id: therma_v_dhw_disinfection_cycle_state
         slave: 1
         address: 6
         scan_interval: 30
         input_type: discrete_input
 
       - name: "Therma V silent mode state" # 0 OFF, 1 ON
+        unique_id: therma_v_silent_mode_state
         slave: 1
         address: 7
         scan_interval: 30
@@ -572,6 +607,7 @@ modbus:
     #    input_type: discrete_input
 
       - name: "Therma V DHW booster state" # 0 OFF, 1 ON
+        unique_id: therma_v_dhw_booster_state
         slave: 1
         address: 12
         scan_interval: 30
@@ -582,6 +618,5 @@ modbus:
     #   address: 13
     #   scan_interval: 30
     #   input_type: discrete_input
-
 
   

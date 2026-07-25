@@ -6,6 +6,7 @@ template:
           - sensor.shelly_plus_ht1_temperature
     sensor:
       - name: "Shelly plus HT1 dewpoint"
+        unique_id: shelly_plus_ht1_dewpoint
         state_class: measurement
         device_class: temperature
         unit_of_measurement: '°C'
@@ -22,6 +23,7 @@ template:
           - sensor.openweathermap_temperature
     sensor:
       - name: "Openweathermap dewpoint"
+        unique_id: openweathermap_dewpoint 
         state_class: measurement
         device_class: temperature
         unit_of_measurement: '°C'
@@ -38,6 +40,7 @@ template:
           - sensor.ewelink_snzb_02p_temperature
     sensor:
       - name: "eWeLink SNZB-02P dewpoint"
+        unique_id: ewelink_snzb_02p_dewpoint
         state_class: measurement
         device_class: temperature
         unit_of_measurement: '°C'
@@ -51,7 +54,7 @@ automation:
   # Switch off cooling when dewpoint becomes to high, to prevent condensation when cooling
   - id: cooling_off_based_on_dewpoint_auto
     alias: "Cooling off based on dewpoint auto"
-    description: Switch off cooling if livingroom dewpoint is above return temperatures
+    description: "Switch off cooling if livingroom dewpoint is above return temperatures"
     mode: restart
     triggers:
       - trigger: state

@@ -26,7 +26,8 @@ template:
   - switch:
 #      - state: "{{ is_state('switch.therma_v_silent_mode', 'on') }}"
 #        availability: "{{ has_value('switch.therma_v_silent_mode') }}" 
-      - name: silent_mode_state
+      - name: "Silent mode state"
+        unique_id: silent_mode_state
         turn_on:
           action: switch.turn_on
           target:

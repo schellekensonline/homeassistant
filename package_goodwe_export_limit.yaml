@@ -41,6 +41,7 @@ sensor:
   # zero on meter algorithm
   - platform: filter
     name: "P1 meter active power filtered"
+    unique_id: p1_meter_active_power_filtered
     entity_id: sensor.p1_meter_3c39e72e6af0_active_power
     filters:
       - filter: lowpass

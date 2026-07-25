@@ -2,6 +2,7 @@ template:
   - sensor:
     # Compatibility sensor Goodwe integration
     - name: "Goodwe PV1 input power"
+      unique_id: goodwe_pv1_input_power
       state_class: measurement
       device_class: power
       unit_of_measurement: "W"
@@ -16,6 +17,7 @@ template:
         {{ (Vpv1*Ipv1) | round(0) }}
     # Compatibility sensor Goodwe integration
     - name: "Goodwe PV2 input power"
+      unique_id: goodwe_pv2_input_power
       state_class: measurement
       device_class: power
       unit_of_measurement: "W"
@@ -28,7 +30,9 @@ template:
         {% set Ipv2 = states('sensor.goodwe_pv2_input_current') | float(0) %}
 
         {{ (Vpv2*Ipv2) | round(0) }}
+
     - name: "Goodwe total PV input power"
+      unique_id: goodwe_total_pv_input_power
       state_class: measurement
       device_class: power
       unit_of_measurement: "W"
@@ -47,6 +51,7 @@ template:
 
     # Compatibility sensor Goodwe integration
     - name: "Goodwe L1 phase power"
+      unique_id: goodwe_l1_phase_power
       state_class: measurement
       device_class: apparent_power
       unit_of_measurement: "VA"
@@ -61,6 +66,7 @@ template:
         {{ (VL1*IL1) | round(0) }}
     # Compatibility sensor Goodwe integration
     - name: "Goodwe L2 phase power"
+      unique_id: goodwe_l2_phase_power
       state_class: measurement
       device_class: apparent_power
       unit_of_measurement: "VA"
@@ -75,6 +81,7 @@ template:
         {{ (VL2*IL2) | round(0) }}
     # Compatibility sensor Goodwe integration
     - name: "Goodwe L3 phase power"
+      unique_id: goodwe_l3_phase_power
       state_class: measurement
       device_class: apparent_power
       unit_of_measurement: "VA"
@@ -156,6 +163,7 @@ modbus:
       #   data_type: uint16
 
       - name: "Goodwe export power limit" # 0 to 100%
+        unique_id: goodwe_export_power_limit
         scan_interval: 0
         address: 292
         slave: 1
@@ -215,6 +223,7 @@ modbus:
       # Bit1  0x00000002 AC HCT Check Fail (Hall sensor error)
       # Bit0  0x00000001 GFCI Check Fail
       - name: "Goodwe error code" 
+        unique_id: goodwe_error_code
         scan_interval: 0
         address: 544
         slave: 1
@@ -223,6 +232,7 @@ modbus:
         data_type: uint32
 
       - name: "Goodwe PV1 input voltage" # String 1 (west)
+        unique_id: goodwe_pv1_input_voltage
         scan_interval: 0
         address: 550
         slave: 1
@@ -235,6 +245,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe PV2 input voltage" # String 2 (east)
+        unique_id: goodwe_pv2_input_voltage
         scan_interval: 0
         address: 551
         slave: 1
@@ -247,6 +258,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe PV1 input current" # String 1 (west)
+        unique_id: goodwe_pv1_input_current
         scan_interval: 0
         address: 552
         slave: 1
@@ -259,6 +271,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe PV2 input current" # String 2 (east)
+        unique_id: goodwe_pv2_input_current
         scan_interval: 0
         address: 553
         slave: 1
@@ -271,6 +284,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe L1 phase voltage" # VAC1
+        unique_id: goodwe_l1_phase_voltage
         scan_interval: 0
         address: 554
         slave: 1
@@ -283,6 +297,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe L2 phase voltage" # VAC2
+        unique_id: goodwe_l2_phase_voltage
         scan_interval: 0
         address: 555
         slave: 1
@@ -295,6 +310,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe L3 phase voltage" # VAC3
+        unique_id: goodwe_l3_phase_voltage
         scan_interval: 0
         address: 556
         slave: 1
@@ -307,6 +323,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe L1 phase current" # IAC1
+        unique_id: goodwe_l1_phase_current
         scan_interval: 0
         address: 557
         slave: 1
@@ -319,6 +336,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe L2 phase current" # IAC2
+        unique_id: goodwe_l2_phase_current
         scan_interval: 0
         address: 558
         slave: 1
@@ -331,6 +349,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe L3 phase current" # IAC3
+        unique_id: goodwe_l3_phase_current
         scan_interval: 0
         address: 559
         slave: 1
@@ -343,6 +362,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe L1 phase frequency" # FAC1
+        unique_id: goodwe_l1_phase_frequency
         scan_interval: 0
         address: 560
         slave: 1
@@ -355,6 +375,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe L2 phase frequency" # FAC2
+        unique_id: goodwe_l2_phase_frequency
         scan_interval: 0
         address: 561
         slave: 1
@@ -367,6 +388,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe L3 phase frequency" # FAC3
+        unique_id: goodwe_l3_phase_frequency
         scan_interval: 0
         address: 562
         slave: 1
@@ -379,6 +401,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe internal temperature" # internal air temperature
+        unique_id: goodwe_internal_temperature
         scan_interval: 0
         address: 565
         slave: 1
@@ -392,6 +415,7 @@ modbus:
 
       # Name same as original integration to not lose energy data
       - name: "Today's PV Generation" # daily energy produced
+        unique_id: today_s_pv_generation
         scan_interval: 0
         address: 566
         slave: 1
@@ -407,6 +431,7 @@ modbus:
       # - name: "Goodwe total energy generation" # total energy produced
       # Name same as original integration to not lose energy dashboard data
       - name: "Total PV Generation" # total energy produced
+        unique_id: total_pv_generation
         scan_interval: 0
         address: 786
         slave: 1
@@ -423,6 +448,7 @@ modbus:
       # 1 Normal
       # 2 Fault  
       - name: "Goodwe work mode code" 
+        unique_id: goodwe_work_mode_code
         scan_interval: 0
         address: 782
         slave: 1
@@ -433,6 +459,7 @@ modbus:
       # Warning code
       # ?
       - name: "Goodwe warning code" 
+        unique_id: goodwe_warning_code
         scan_interval: 0
         address: 791
         slave: 1
@@ -441,6 +468,7 @@ modbus:
         data_type: uint16
         
       - name: "Goodwe DC link voltage" # BUS Voltage
+        unique_id: goodwe_dc_link_voltage
         scan_interval: 0
         address: 796
         slave: 1
@@ -453,6 +481,7 @@ modbus:
         data_type: uint16
 
       - name: "Goodwe DC link center tab voltage" # NBUS voltage
+        unique_id: goodwe_dc_link_center_tab_voltage
         scan_interval: 0
         address: 797
         slave: 1

@@ -3,6 +3,7 @@
 climate:
   - platform: climate_template
     name: "Therma V heating/cooling"
+    unique_id: therma_v_heating_cooling
     temp_step: 1
     max_temp_template: >
       {% if is_state('sensor.therma_v_operation_mode', '3') %}  {# auto mode #}
@@ -128,6 +129,7 @@ climate:
 
   - platform: climate_template
     name: "Therma V DHW"
+    unique_id: therma_v_dhw
     max_temp: 70
     min_temp: 40    
     temp_step: 1

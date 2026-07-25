@@ -2,6 +2,7 @@ template:
   - switch:
     # Garage door open/close
     - name: "Garage door open/close"
+      unique_id: garage_door_open_close_switch
       state: "{{ is_state('switch.garage_garage_door_controller_relay1_door_control','on') }}"
       turn_on:
         action: switch.turn_on
@@ -30,28 +31,3 @@ template:
           {% endif %}
         {% endif %}
 
-    # # Garage door locked
-    # - name: "Garage door locked"
-    #   state: "{{ is_state('switch.garage_garage_door_controller_relay2_door_locked','on') }}"
-    #   turn:
-    #     action: switch.toggle
-    #     target:
-    #       entity_id: switch.garage_garage_door_controller_relay2_door_locked
-    #   icon: >- 
-    #     {% if is_state('switch.garage_garage_door_controller_relay2_door_locked', 'off') %}
-    #       {% if is_state('binary_sensor.garage_garage_door_controller_input1_flashing','on') %} 
-    #           {{'mdi:garage-alert'}} 
-    #       {% elif is_state('binary_sensor.garage_garage_door_controller_input1_open','on') %}
-    #           {{'mdi:garage-open'}} 
-    #       {% else %}
-    #           {{'mdi:garage'}}
-    #       {% endif %}
-    #     {% else %} {# Relay 2 is on thus door locked #}
-    #       {% if is_state('binary_sensor.garage_garage_door_controller_input1_flashing','on') %} 
-    #           {{'mdi:garage-lock'}} 
-    #       {% elif is_state('binary_sensor.garage_garage_door_controller_input1_open','on') %}
-    #           {{'mdi:garage-open'}} 
-    #       {% else %}
-    #           {{'mdi:garage-lock'}}
-    #       {% endif %}
-    #     {% endif %}
