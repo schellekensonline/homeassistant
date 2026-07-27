@@ -15,22 +15,58 @@ rest_command:
             "strategy": strategy
           }  | to_json }}
 
-  sessy_set_ns:
-    url: "http://{{host}}/api/v1/eol/ns"
+  # sessy_set_ns:
+  #   url: "http://{{host}}/api/v1/eol/ns"
+  #   method: POST
+  #   headers:
+  #     authorization: "Basic {{auth | base64_encode }}"
+  #   content_type: "application/json"
+  #   payload: >-
+  #     {{  {
+  #           "inverters": [
+  #             {
+  #               "inverter": inverter | int,
+  #               "setpoint": setpoint | int 
+  #             }
+  #           ],
+  #           "stop_override": stop_override | bool
+  #         } | to_json }}
+
+  sessy_set_power_setpoint:
+    url: "http://{{host}}/api/v1/power/setpoint"
     method: POST
     headers:
       authorization: "Basic {{auth | base64_encode }}"
     content_type: "application/json"
     payload: >-
       {{  {
-            "inverters": [
-              {
-                "inverter": inverter | int,
-                "setpoint": setpoint | int 
-              }
-            ],
-            "stop_override": stop_override | bool
+            "setpoint": setpoint | int
           } | to_json }}
+
+
+  # sessy_set_power_setpoint_distributed:
+  #   url: "http://{{host}}/api/v1/power/setpoint"
+  #   method: POST
+  #   headers:
+  #     authorization: "Basic {{auth | base64_encode }}"
+  #   content_type: "application/json"
+  #   payload: >-
+  #     {{  {
+  #           "distributed": [
+  #             {
+  #               "inverter_index": 0,
+  #               "setpoint": setpoint_l1
+  #             },
+  #             {
+  #               "inverter_index": 1,
+  #               "setpoint": setpoint_l2
+  #             },
+  #             {
+  #               "inverter_index": 2,
+  #               "setpoint": setpoint_l3
+  #             }
+  #           ]
+  #         }  | to_json }}
 
 script:
   sessy_set_strategy:
@@ -43,14 +79,22 @@ script:
 
   sessy_set_power:
     sequence:
-      - action: rest_command.sessy_set_ns
+      - action: rest_command.sessy_set_power_setpoint
         data:
           host: !secret sessy_url
           auth: !secret sessy_auth
-          stop_override: '{{stop_override}}'
-          inverter: '{{inverter}}'
           setpoint: '{{setpoint}}'
 
+  # sessy_set_power_distributed:
+  #   sequence:
+  #     - action: rest_command.sessy_set_power_setpoint_distributed
+  #       data:
+  #         host: !secret sessy_url
+  #         auth: !secret sessy_auth
+  #         setpoint_l1: '{{setpoint_l1}}'
+  #         setpoint_l2: '{{setpoint_l2}}'
+  #         setpoint_l3: '{{setpoint_l3}}'
+ 
 input_select:
   sessy_strategy:
     name: "Sessy Strategy"
@@ -64,99 +108,55 @@ input_select:
       - "POWER_STRATEGY_ECO"
 
 input_number:
-  sessy_power_setpoint_inv1:
-    name: "Sessy power setpoint L1"
+  sessy_power_setpoint:
+    name: "Sessy power setpoint"
     icon: mdi:transmission-tower
-    min: -2000  # Maximaal leveren/ontladen (afhankelijk van je Sessy model, pas aan indien nodig)
-    max: 2000   # Maximaal laden
+    min: -6000  # Maximaal laden
+    max: 6000   # Maximaal ontladem
     step: 100
     unit_of_measurement: W
     mode: box
-  sessy_power_setpoint_inv2:
-    name: "Sessy power setpoint L2"
-    icon: mdi:transmission-tower
-    min: -2000  # Maximaal leveren/ontladen (afhankelijk van je Sessy model, pas aan indien nodig)
-    max: 2000   # Maximaal laden
-    step: 100
-    unit_of_measurement: W
-    mode: box
-  sessy_power_setpoint_inv3:
-    name: "Sessy power setpoint L3"
-    icon: mdi:transmission-tower
-    min: -2000  # Maximaal leveren/ontladen (afhankelijk van je Sessy model, pas aan indien nodig)
-    max: 2000   # Maximaal laden
-    step: 100
-    unit_of_measurement: W
-    mode: box
+  # sessy_power_setpoint_inv1:
+  #   name: "Sessy power setpoint L1"
+  #   icon: mdi:transmission-tower
+  #   min: -2000  # maximaal laden
+  #   max: 2000   # maximaal ontladen
+  #   step: 100
+  #   unit_of_measurement: W
+  #   mode: box
+  # sessy_power_setpoint_inv2:
+  #   name: "Sessy power setpoint L2"
+  #   icon: mdi:transmission-tower
+  #   min: -2000  # Maximaal laden
+  #   max: 2000   # Maximaal ontladen
+  #   step: 100
+  #   unit_of_measurement: W
+  #   mode: box
+  # sessy_power_setpoint_inv3:
+  #   name: "Sessy power setpoint L3"
+  #   icon: mdi:transmission-tower
+  #   min: -2000  # Maximaal laden
+  #   max: 2000   # Maximaal ontladen
+  #   step: 100
+  #   unit_of_measurement: W
+  #   mode: box
 
 automation:
-  - id: sessy_set_power_inv1_auto
-    alias: "Sessy set power inv1 auto"
-    description: "Set power on inverter 1"
+  - id: sessy_set_power_auto
+    alias: "Sessy set power auto"
+    description: "Set power on total system"
     mode: restart
     trigger:
       - platform: state
-        entity_id: input_number.sessy_power_setpoint_inv1
+        entity_id: input_number.sessy_power_setpoint
     condition:
       - condition: template
         value_template: "{{ trigger.to_state.state not in ['unknown', 'unavailable'] }}"
     action:
       - action: script.sessy_set_power
         data:
-          inverter: 1 
           setpoint: "{{ trigger.to_state.state | int }}"
-          stop_override: >
-            {% if (trigger.to_state.state|int==0) and (states('input_number.sessy_power_setpoint_inv2')|int==0)  and (states('input_number.sessy_power_setpoint_inv3')|int==0) %} 
-                {{ true }}
-            {% else %}
-                {{ false }}
-            {% endif %}            
 
-
-  - id: sessy_set_power_inv2_auto
-    alias: "Sessy set power inv2 auto"
-    description: "Set power on inverter 2"
-    mode: restart
-    trigger:
-      - platform: state
-        entity_id: input_number.sessy_power_setpoint_inv2
-    condition:
-      - condition: template
-        value_template: "{{ trigger.to_state.state not in ['unknown', 'unavailable'] }}"
-    action:
-      - action: script.sessy_set_power
-        data:
-          inverter: 2 
-          setpoint: "{{ trigger.to_state.state | int }}"
-          stop_override: >
-            {% if (states('input_number.sessy_power_setpoint_inv1')|int==0) and (trigger.to_state.state|int==0) and (states('input_number.sessy_power_setpoint_inv3')|int==0)  %} 
-                {{ true }}
-            {% else %}
-                {{ false }}
-            {% endif %}  
-    
-
-  - id: sessy_set_power_inv3_auto
-    alias: "Sessy set power inv3 auto"
-    description: "Set power on inverter 3"
-    mode: restart
-    trigger:
-      - platform: state
-        entity_id: input_number.sessy_power_setpoint_inv3
-    condition:
-      - condition: template
-        value_template: "{{ trigger.to_state.state not in ['unknown', 'unavailable'] }}"
-    action:
-      - action: script.sessy_set_power
-        data:
-          inverter: 3 
-          setpoint: "{{ trigger.to_state.state | int }}"
-          stop_override: >
-            {% if (states('input_number.sessy_power_setpoint_inv1')|int==0) and (states('input_number.sessy_power_setpoint_inv2')|int==0) and (trigger.to_state.state|int==0) %} 
-                {{ true }}
-            {% else %}
-                {{ false }}
-            {% endif %}  
     
   - id: sessy_synchronise_active_strategy_auto
     alias: "Sessy synchronise active strategy auto"
@@ -194,4 +194,83 @@ automation:
       - action: script.sessy_set_strategy
         data:
           strategy: "{{ trigger.to_state.state }}"
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.sessy_power_setpoint
+        data:
+          value: 0
+
     
+  # - id: sessy_set_power_inv1_auto
+  #   alias: "Sessy set power inv1 auto"
+  #   description: "Set power on inverter 1"
+  #   mode: restart
+  #   trigger:
+  #     - platform: state
+  #       entity_id: input_number.sessy_power_setpoint_inv1
+  #   condition:
+  #     - condition: template
+  #       value_template: "{{ trigger.to_state.state not in ['unknown', 'unavailable'] }}"
+  #   action:
+  #     - action: script.sessy_set_power_distributed
+  #       data:
+  #         # inverter: 1 
+  #         setpoint_l1: "{{ trigger.to_state.state | int }}"
+  #         setpoint_l2: "{{ states('input_number.sessy_power_setpoint_inv2') | int }}"
+  #         setpoint_l3: "{{ states('input_number.sessy_power_setpoint_inv3') | int }}"
+  #         # stop_override: >
+  #         #   {% if (trigger.to_state.state|int==0) and (states('input_number.sessy_power_setpoint_inv2')|int==0)  and (states('input_number.sessy_power_setpoint_inv3')|int==0) %} 
+  #         #       {{ true }}
+  #         #   {% else %}
+  #         #       {{ false }}
+  #         #   {% endif %}            
+
+
+  # - id: sessy_set_power_inv2_auto
+  #   alias: "Sessy set power inv2 auto"
+  #   description: "Set power on inverter 2"
+  #   mode: restart
+  #   trigger:
+  #     - platform: state
+  #       entity_id: input_number.sessy_power_setpoint_inv2
+  #   condition:
+  #     - condition: template
+  #       value_template: "{{ trigger.to_state.state not in ['unknown', 'unavailable'] }}"
+  #   action:
+  #     - action: script.sessy_set_power_distributed
+  #       data:
+  #         # inverter: 2 
+  #         setpoint_l1: "{{ states('input_number.sessy_power_setpoint_inv1') | int }}"
+  #         setpoint_l2: "{{ trigger.to_state.state | int }}"
+  #         setpoint_l3: "{{ states('input_number.sessy_power_setpoint_inv3') | int }}"
+  #         # stop_override: >
+  #         #   {% if (states('input_number.sessy_power_setpoint_inv1')|int==0) and (trigger.to_state.state|int==0) and (states('input_number.sessy_power_setpoint_inv3')|int==0)  %} 
+  #         #       {{ true }}
+  #         #   {% else %}
+  #         #       {{ false }}
+  #         #   {% endif %}  
+    
+
+  # - id: sessy_set_power_inv3_auto
+  #   alias: "Sessy set power inv3 auto"
+  #   description: "Set power on inverter 3"
+  #   mode: restart
+  #   trigger:
+  #     - platform: state
+  #       entity_id: input_number.sessy_power_setpoint_inv3
+  #   condition:
+  #     - condition: template
+  #       value_template: "{{ trigger.to_state.state not in ['unknown', 'unavailable'] }}"
+  #   action:
+  #     - action: script.sessy_set_power_distributed
+  #       data:
+  #         # inverter: 3 
+  #         setpoint_l1: "{{ states('input_number.sessy_power_setpoint_inv1') | int }}"
+  #         setpoint_l2: "{{ states('input_number.sessy_power_setpoint_inv2') | int }}"
+  #         setpoint_l3: "{{ trigger.to_state.state | int }}"
+  #         # stop_override: >
+  #         #   {% if (states('input_number.sessy_power_setpoint_inv1')|int==0) and (states('input_number.sessy_power_setpoint_inv2')|int==0) and (trigger.to_state.state|int==0) %} 
+  #         #       {{ true }}
+  #         #   {% else %}
+  #         #       {{ false }}
+  #         #   {% endif %}  
