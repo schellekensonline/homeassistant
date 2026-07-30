@@ -144,7 +144,7 @@ input_number:
 automation:
   - id: sessy_set_power_auto
     alias: "Sessy set power auto"
-    description: "Set power on total system"
+    description: "Set power on total system for strategy API"
     mode: restart
     trigger:
       - platform: state
@@ -153,6 +153,18 @@ automation:
       - condition: template
         value_template: "{{ trigger.to_state.state not in ['unknown', 'unavailable'] }}"
     action:
+      # auto set to api when slider is set to non zero
+      - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ (trigger.to_state.state | int | abs) > 0 }}"
+          sequence:
+            - action: input_select.select_option
+              target:
+                entity_id: input_select.sessy_strategy
+              data:
+                option: "POWER_STRATEGY_API"
+            - delay: '00:00:05'
       - action: script.sessy_set_power
         data:
           setpoint: "{{ trigger.to_state.state | int }}"
@@ -194,16 +206,22 @@ automation:
       - action: script.sessy_set_strategy
         data:
           strategy: "{{ trigger.to_state.state }}"
-      - action: input_number.set_value
-        target:
-          entity_id: input_number.sessy_power_setpoint
-        data:
-          value: 0
+      # auto set to slider to 0 when strategy is non api
+      - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ not is_state('input_select.sessy_strategy','POWER_STRATEGY_API') }}"
+          sequence:
+            - action: input_number.set_value
+              target:
+                entity_id: input_number.sessy_power_setpoint
+              data:
+                value: 0
 
     
   # - id: sessy_set_power_inv1_auto
   #   alias: "Sessy set power inv1 auto"
-  #   description: "Set power on inverter 1"
+  #   description: "Set power on inverter 1 for strategy API"
   #   mode: restart
   #   trigger:
   #     - platform: state
@@ -228,7 +246,7 @@ automation:
 
   # - id: sessy_set_power_inv2_auto
   #   alias: "Sessy set power inv2 auto"
-  #   description: "Set power on inverter 2"
+  #   description: "Set power on inverter 2 for strategy API"
   #   mode: restart
   #   trigger:
   #     - platform: state
@@ -253,7 +271,7 @@ automation:
 
   # - id: sessy_set_power_inv3_auto
   #   alias: "Sessy set power inv3 auto"
-  #   description: "Set power on inverter 3"
+  #   description: "Set power on inverter 3 for strategy API"
   #   mode: restart
   #   trigger:
   #     - platform: state
