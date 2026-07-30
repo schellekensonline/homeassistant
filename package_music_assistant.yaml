@@ -31,6 +31,16 @@ automation:
         event: start
       - platform: time
         at: "04:00:00"  # Dagelijkse synchronisatie
+      - platform: event
+        event_type: call_service
+        event_data:
+          domain: input_select
+          service: reload
+      - platform: event
+        event_type: call_service
+        event_data:
+          domain: homeassistant
+          service: reload_all
     action:
     # 1. Haal de live bibliotheek op van Music Assistant
     - action: music_assistant.get_library
@@ -79,6 +89,16 @@ automation:
         event: start
       - platform: time
         at: "04:00:00"  # Dagelijkse synchronisatie
+      - platform: event
+        event_type: call_service
+        event_data:
+          domain: input_select
+          service: reload
+      - platform: event
+        event_type: call_service
+        event_data:
+          domain: homeassistant
+          service: reload_all
     action:
     # 1. Haal de live bibliotheek op van Music Assistant
     - action: music_assistant.get_library
@@ -172,3 +192,173 @@ automation:
       - action: media_player.media_pause
         target:
           entity_id: media_player.esp32_s3_box_player
+
+  - id: music_assistant_execute_ir_command_auto
+    alias: "Music Assistant execute IR command auto"
+    description: "Stuurt media-opdrachten ontvangen door de ir receiver naar player"
+    mode: parallel
+    max: 10
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.livingroom_rf_ir_remote_media_player_play
+        from: "off"
+        to: "on"
+        id: play
+      - platform: state
+        entity_id: binary_sensor.livingroom_rf_ir_remote_media_player_pause
+        from: "off"
+        to: "on"
+        id: pause
+      - platform: state
+        entity_id: binary_sensor.livingroom_rf_ir_remote_media_player_stop
+        from: "off"
+        to: "on"
+        id: stop
+      - platform: state
+        entity_id: binary_sensor.livingroom_rf_ir_remote_media_player_rewind
+        from: "off"
+        to: "on"
+        id: rewind
+      - platform: state
+        entity_id: binary_sensor.livingroom_rf_ir_remote_media_player_fast_forward
+        from: "off"
+        to: "on"
+        id: fast_forward
+      - platform: state
+        entity_id: binary_sensor.livingroom_rf_ir_remote_media_player_previous
+        from: "off"
+        to: "on"
+        id: previous
+      - platform: state
+        entity_id: binary_sensor.livingroom_rf_ir_remote_media_player_next
+        from: "off"
+        to: "on"
+        id: next
+    conditions:
+      - or:
+        - condition: state
+          entity_id: remote.living_room
+          attribute: current_activity
+          state: "Listen to Radio"
+        - condition: state
+          entity_id: remote.living_room
+          attribute: current_activity
+          state: "Listen to Albums"
+    actions:
+      - choose:
+          # === PLAY ===
+          - conditions:
+              - condition: trigger
+                id: play
+            sequence:
+              - action: media_player.media_play
+                target:
+                  entity_id: media_player.esp32_s3_box_player
+
+          # === PAUSE ===
+          - conditions:
+              - condition: trigger
+                id: pause
+            sequence:
+              - action: media_player.media_pause
+                target:
+                  entity_id: media_player.esp32_s3_box_player
+
+          # === STOP ===
+          - conditions:
+              - condition: trigger
+                id: stop
+            sequence:
+              - action: media_player.media_stop
+                target:
+                  entity_id: media_player.esp32_s3_box_player
+
+          # === REWIND ===
+          - conditions:
+              - condition: trigger
+                id: rewind
+            sequence:
+              - action: media_player.media_previous_track
+                target:
+                  entity_id: media_player.esp32_s3_box_player
+
+          # === FAST FORWARD ===
+          - conditions:
+              - condition: trigger
+                id: fast_forward
+            sequence:
+              - action: media_player.media_next_track
+                target:
+                  entity_id: media_player.esp32_s3_box_player
+
+          # === PREVIOUS ===
+          - conditions:
+              - condition: trigger
+                id: previous
+            sequence:
+              - choose:
+                  # Als de activiteit 'Listen to Radio' is -> Radio input_select eentje omlaag
+                  - conditions:
+                      - condition: state
+                        entity_id: remote.living_room
+                        attribute: current_activity
+                        state: "Listen to Radio"
+                    sequence:
+                      - action: input_select.select_previous
+                        data:
+                          cycle: true
+                        target:
+                          entity_id: input_select.music_assistant_radio_select
+                  # Als de activiteit 'Listen to Albums' is -> Album input_select eentje omlaag
+                  - conditions:
+                      - condition: state
+                        entity_id: remote.living_room
+                        attribute: current_activity
+                        state: "Listen to Albums"
+                    sequence:
+                      - action: input_select.select_previous
+                        data:
+                          cycle: true
+                        target:
+                          entity_id: input_select.music_assistant_album_select
+                # Standaard actie als er GEEN radio of album activiteit actief is
+                default:
+                  - action: media_player.media_previous_track
+                    target:
+                      entity_id: media_player.esp32_s3_box_player
+
+          # === NEXT ===
+          - conditions:
+              - condition: trigger
+                id: next
+            sequence:
+              - choose:
+                  # Als de activiteit 'Listen to Radio' is -> Radio input_select eentje omhoog
+                  - conditions:
+                      - condition: state
+                        entity_id: remote.living_room
+                        attribute: current_activity
+                        state: "Listen to Radio"
+                    sequence:
+                      - action: input_select.select_next
+                        data:
+                          cycle: true
+                        target:
+                          entity_id: input_select.music_assistant_radio_select 
+                  # Als de activiteit 'Listen to Albums' is -> Album input_select eentje omhoog
+                  - conditions:
+                      - condition: state
+                        entity_id: remote.living_room
+                        attribute: current_activity
+                        state: "Listen to Albums"
+                    sequence:
+                      - action: input_select.select_next
+                        data:
+                          cycle: true
+                        target:
+                          entity_id: input_select.music_assistant_album_select 
+                # Standaard actie als er GEEN radio of album activiteit actief is
+                default:
+                  - action: media_player.media_next_track
+                    target:
+                      entity_id: media_player.esp32_s3_box_player
