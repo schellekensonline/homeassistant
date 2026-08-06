@@ -30,7 +30,7 @@ input_number:
   # Not on UI just a convinent way to set the gross price limit that is considered for switching grid export
   goodwe_grid_export_gross_negative: 
     name: "Goodwe grid export gross negative"
-    initial: -0.001 # a bit conservative, zonneplan tarrif included in gross
+    initial: -0.01 # a bit conservative, based on gross market price
     unit_of_measurement: "€"
     min: -1
     max: 1 
@@ -74,7 +74,7 @@ automation:
       - choose:
           - conditions: # ZERO EXPORT for inc. negative prices (always active)
               - condition: numeric_state
-                entity_id: sensor.current_hourly_electricity_price_including_tax
+                entity_id: sensor.nord_pool_nl_current_prices_including_tax
                 below: input_number.goodwe_grid_export_gross_negative
             sequence:
               - action: input_number.set_value
@@ -86,7 +86,7 @@ automation:
               - condition: template
                 value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 1 ] ) }}"
               - condition: numeric_state
-                entity_id: sensor.current_hourly_electricity_price_excluding_tax
+                entity_id: sensor.nord_pool_nl_current_prices_excluding_tax
                 below: input_number.goodwe_grid_export_gross_negative
             sequence:
               - action: input_number.set_value
@@ -98,7 +98,7 @@ automation:
               - condition: template
                 value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 2 ] ) }}"
               - condition: numeric_state
-                entity_id: sensor.current_hourly_electricity_price_excluding_tax
+                entity_id: sensor.nord_pool_nl_current_prices_excluding_tax
                 below: input_number.goodwe_grid_export_gross_negative
             sequence:
               - action: input_number.set_value
@@ -114,7 +114,7 @@ automation:
                       - condition: template
                         value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 3 ] ) }}"
                       - condition: numeric_state
-                        entity_id: sensor.current_hourly_electricity_price_excluding_tax
+                        entity_id: sensor.nord_pool_nl_current_prices_excluding_tax
                         below: input_number.goodwe_grid_export_gross_negative
                   - condition: template # NO EXPORT (net metering)
                     value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 4 ] ) }}"
