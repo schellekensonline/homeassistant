@@ -2,7 +2,6 @@
 # Loads default set of integrations. Do not remove.
 default_config:
 
-
 # Logging settings
 logger:
   default: warning
@@ -80,3 +79,4 @@ homeassistant:
     harmony_commands_pack:      !include package_harmony_commands.yaml
     sessy_sensors_pack:         !include package_sessy_sensors.yaml
     sessy_commands_pack:        !include package_sessy_commands.yaml
+    openai_conversation_pack:   !include package_openai_conversation.yaml
