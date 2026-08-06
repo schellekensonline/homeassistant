@@ -1,0 +1,59 @@
+# ─── HOME ASSISTANT PACKAGE: SEARXNG INTERNET TOOL VOOR LLM ───────
+
+# 1. Activeer Python scripts
+python_script:
+
+# 2. De API-koppeling met jouw SearXNG Docker-container
+rest_command:
+  searxng_search_api:
+    url: "http://{{ host }}/search?q={{ query }}&format=json"
+    method: GET
+    headers:
+      accept: "application/json"
+
+# 3. Het script dat de LLM als "Tool" herkent en kan uitvoeren
+script:
+  searxng_search:
+    alias: "Internet Zoekopdracht (SearXNG)"
+    description: "Gebruik deze functie om actuele informatie, het weer of nieuws op te zoeken op het internet."
+    fields:
+      query:
+        name: "Zoekopdracht"
+        description: "De specifieke zoekterm die op internet gezocht moet worden."
+        required: true
+        selector:
+          text:
+            multiline: false  
+
+    sequence:
+      # Stap 1: Voer de API-call uit naar SearXNG
+      - action: rest_command.searxng_search_api
+        data:
+          host: !secret searxng_url  # Jouw werkende host-variabele
+          query: "{{ query }}"
+        response_variable: raw_search_result
+
+      # Stap 2: Data direct verwerken en verpakken in een dictionary
+      - variables:
+          output_data:
+            results: >
+              {% if raw_search_result is defined and raw_search_result.content is defined %}
+                {% set data = raw_search_result.content %}
+                {% if data.results is defined and data.results | length > 0 %}
+                  {% set ns = namespace(items=[]) %}
+                  {% for item in data.results[:3] %}
+                    {% set ns.items = ns.items + [ item.title ~ " -> " ~ item.content ] %}
+                  {% endfor %}
+                  {{ ns.items }}
+                {% else %}
+                  "Geen internetresultaten gevonden voor deze zoekopdracht."
+                {% endif %}
+              {% else %}
+                "Fout bij het verbinden met de zoekmachine."
+              {% endif %}
+
+      # Stap 3: Stuur de dictionary terug naar de OpenAI integratie
+      - stop: "Zoekopdracht voltooid"
+        response_variable: output_data
+  
+
