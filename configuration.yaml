@@ -34,23 +34,23 @@ recorder:
   purge_keep_days: 30
   commit_interval: 30
 
-# Allow traefik etc.
-http:
-  use_x_forwarded_for: true
-  trusted_proxies:
-    - 10.43.10.0/24   # internal
-    - 10.43.110.0/24  # IOT
-    - 192.168.1.0/24  # no use
-    - 192.168.2.0/24  # docker proxy-net
-    - 192.168.3.0/24  # docker internal-net
-    - 192.168.4.0/24  # docker tools-net
-    - 192.168.5.0/24  # docker cloud-net
-    - 192.168.6.0/24  # docker torrent-net
-    - 192.168.7.0/24  # docker media-net
-    - 192.168.8.0/24  # docker nvr-net
-    - 172.17.0.0/16   # docker default networks
-  ip_ban_enabled: true
-  login_attempts_threshold: 5
+# # Allow traefik etc.
+# http:
+#   use_x_forwarded_for: true
+#   trusted_proxies:
+#     - 10.43.10.0/24   # internal
+#     - 10.43.110.0/24  # IOT
+#     - 192.168.1.0/24  # no use
+#     - 192.168.2.0/24  # docker proxy-net
+#     - 192.168.3.0/24  # docker internal-net
+#     - 192.168.4.0/24  # docker tools-net
+#     - 192.168.5.0/24  # docker cloud-net
+#     - 192.168.6.0/24  # docker torrent-net
+#     - 192.168.7.0/24  # docker media-net
+#     - 192.168.8.0/24  # docker nvr-net
+#     - 172.17.0.0/16   # docker default networks
+#   ip_ban_enabled: true
+#   login_attempts_threshold: 5
 
 homeassistant:
 # Ensures slider switches instead of 2 button swiches
