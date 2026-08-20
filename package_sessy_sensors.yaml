@@ -27,7 +27,7 @@ sensor:
     headers:
       Authorization: "Basic {{ states('input_text.sessy_auth') | base64_encode }}"
     value_template: "{{ value_json.strategy }}"
-    scan_interval: 15
+    scan_interval: 10
 
   # REST SENSOR 2: Haalt de uitgebreide EOL/NS JSON op (om attributen uit te splitsen)
   - platform: rest
@@ -41,7 +41,7 @@ sensor:
     json_attributes:
       - network_switch
       - inverters
-    scan_interval: 15
+    scan_interval: 10
 
   # REST SENSOR 3: Haalt de /api/v2/power/status JSON op (om attributen uit te splitsen)
   - platform: rest
@@ -56,7 +56,7 @@ sensor:
       - sessy
       - grid
       - solar
-    scan_interval: 15
+    scan_interval: 10
 
 # Energy
   - platform: integration
