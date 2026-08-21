@@ -159,12 +159,14 @@ automation:
                 {% else %}
                   Zero on Meter Support
                 {% endif %}
+              
               {% elif price_pct < buy_pct %}
                 {% if forced_charging %}
                   Proportional Charge
                 {% else %}    
                   Zero on Meter
                 {% endif %}
+              
               {% else %}
                 Zero on Meter
               {% endif %}
@@ -177,6 +179,7 @@ automation:
                 {% else %}
                   Zero on Meter Support
                 {% endif %}
+              
               {% else %}
                 Zero on Meter
               {% endif %}
