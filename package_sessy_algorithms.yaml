@@ -100,6 +100,15 @@ input_number:
     # initial: 60
     mode: box
     unit_of_measurement: "%"
+  sessy_api_strategy_zom_state:
+    name: "Sessy API ZoM state"
+    min: -6000
+    max: 6000
+    step: 1
+    initial: 0
+    mode: box
+    unit_of_measurement: "W"
+
 
 automation:
   - id: sessy_automatic_api_strategy_auto
@@ -192,21 +201,23 @@ automation:
     description: "Calculates applicable API setpoints and applies them when Sessy is set to POWER_STRATEGY_API"
     mode: restart
     trigger:
-      - platform: time_pattern
-        seconds: "/10"
+      - platform: state
+        entity_id: sensor.p1_meter_3c39e72e6af0_active_power
     condition:
       - condition: template
         value_template: "{{ not is_state('input_select.sessy_api_strategy','Manual') }}"
       - condition: template
         value_template: "{{ is_state('input_select.sessy_strategy','POWER_STRATEGY_API') }}"
     action:
-      - action: script.sessy_set_power
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.sessy_api_strategy_zom_state
         data:
-          setpoint: >-
+          value: >-
             {# 1. Get relevant input data  #}
             {% set strategy     = states('input_select.sessy_api_strategy') %}
-            {% set p1_power     = states('sensor.p1_meter_active_power_filtered') | float(0) %}
-            {% set sessy_power  = states('sensor.sessy_grid_total_power') | float(0) %}
+            {% set p1_power     = states('sensor.p1_meter_3c39e72e6af0_active_power') | float(0) %}
+            {% set zom_state    = states('input_number.sessy_api_strategy_zom_state') | float(0) %}
             {% set soc          = states('sensor.sessy_battery_state_of_charge') | float(0) %}
             {# 2. Get relevant settings #}
             {% set max_charge_power    = states('input_number.sessy_api_strategy_max_charge_power') | float(0) %}
@@ -215,8 +226,8 @@ automation:
             {% set min_prop_soc   = states('input_number.sessy_api_strategy_min_prop_soc') | float(0) %}
             
             {# 3. Zero on Meter (ZOM) algorithm #}
-            {% set zom_gain      = 0.75 %}
-            {% set zom           = min(max(sessy_power + (zom_gain*p1_power), -max_charge_power), max_discharge_power) %}
+            {% set zom_gain      = 0.5 %}
+            {% set zom           = min(max(zom_state + (zom_gain*p1_power), -max_charge_power), max_discharge_power) %}
             {% set zom_discharge = max(zom, 0) %}
             {% set zom_charge    = min(zom, 0) %}
             
@@ -251,4 +262,6 @@ automation:
             {% else %}
               {{ 0 | int }}
             {% endif %}
-
+      - action: script.sessy_set_power
+        data:
+          setpoint: "{{ states('input_number.sessy_api_strategy_zom_state') | int }}"
