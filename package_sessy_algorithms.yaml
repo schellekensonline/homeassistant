@@ -194,6 +194,29 @@ automation:
               {% endif %}
 
             {% endif %}
+      # # Adjust Goodwe ZoM algorithm. Goodwe ZoM is active when battery is ~full
+      # - choose:
+      #     - conditions: # if battery is full
+      #         - condition: numeric_state
+      #           entity_id: sensor.sessy_battery_state_of_charge
+      #           above: 98
+      #       sequence:   # enable Goodwe ZoM gross negative algorithm
+      #         - action: input_select.select_option
+      #           target:
+      #             entity_id: goodwe_export_strategy_select
+      #           data:
+      #             option: "3 - Minimum (zero om meter with gross negative prices)"
+      #   default:        # else Goodwe is set to manual 100%
+      #     - action: input_select.select_option
+      #       target:
+      #         entity_id: goodwe_export_strategy_select
+      #       data:
+      #         option: "0 - Manual"
+      #     - action: input_number.set_value
+      #       target:
+      #         entity_id: input_number.goodwe_grid_export_limit
+      #       data:
+      #         value: 100
 
 
   - id: sessy_api_strategy_auto
@@ -245,7 +268,7 @@ automation:
               {% set prop_power = -1 * (prop_gain * max_prop_power) %}              
               {# Selects the highest charging request (most negative value) #}
 
-              {{ max(min(prop_power, zom_charge), -max_charge_power) | int }}
+              {{ min(prop_power, zom_charge) | int }}
               
             {% elif strategy == 'Proportional Discharge' %}
             {# Sels energy or supports house: enforces the strongest discharging signal #}
@@ -256,7 +279,7 @@ automation:
                 {% set prop_gain = soc / 100.0 %}
                 {% set prop_power = prop_gain * max_prop_power %}
                 {# Selects the highest discharging request (highest positive value) #}
-                {{ min(max(prop_power, zom_discharge), max_discharge_power) | int }}
+                {{ max(prop_power, zom_discharge) | int }}
               {% endif %}
               
             {% else %}
