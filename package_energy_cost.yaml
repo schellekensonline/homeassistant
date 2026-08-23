@@ -34,33 +34,6 @@ template:
           {% endfor %}
           {{ ns.list }}
 
-    # # Template sensors for current hourly price
-    # - name: "Current hourly electricity price excluding tax"
-    #   unique_id: current_hourly_electricity_price_excluding_tax
-    #   unit_of_measurement: "€"
-    #   state_class: measurement
-    #   availability: >
-    #     {% set current = states('sensor.nord_pool_nl_current_prices_excluding_tax') | float("unknown") %}
-    #     {{ current|is_number }}
-    #   state: >
-    #     {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
-    #     {% set current = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='average', use_hourly_avg=true, hours='all', look_ahead=false, include_today=true, include_tomorrow=false, start=as_timestamp(now())|timestamp_custom('%H')+':00', end=as_timestamp(now())|timestamp_custom('%H')+':59') %}
-    #     {% set zonneplan = 0.022 | float(0) %}
-    #     {% set VAT       = 0.21  | float(0) %}
-    #     {{ ((current+zonneplan)*VAT) | round(3, default=0) }}
-
-    # - name: "Current hourly electricity price including tax"
-    #   unique_id: current_hourly_electricity_price_including_tax
-    #   unit_of_measurement: "€"
-    #   state_class: measurement
-    #   availability: >
-    #     {% set current = states('sensor.nord_pool_nl_current_prices_including_tax') | float("unknown") %}
-    #     {{ current|is_number }}
-    #   state: >
-    #     {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
-    #     {% set current = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_including_tax', attr_all='prices',time_key='time', value_key='price', mode='average', use_hourly_avg=true, hours='all', look_ahead=false, include_today=true, include_tomorrow=false, start=as_timestamp(now())|timestamp_custom('%H')+':00', end=as_timestamp(now())|timestamp_custom('%H')+':59') %}
-
-    #     {{ current  | round(3, default=0) }}
         
     # Template sensors for current percentage of energy price
     - name: "Current percentage of electricity price"
@@ -96,28 +69,22 @@ template:
         
         {{ ( (high-low) )  | round(3) }}
 
-    # # sensor that determines ?
-    # - name: "Start peak hours electricity price today"
-    #   unique_id: start_peak_hours_electricity_price_today
-    #   availability: >
-    #     {% set current = states('sensor.nord_pool_nl_current_prices_including_tax') | float("unknown") %}
-    #     {{ current|is_number }}
-    #   state: >
-
-    # Template sensors to determine the electricity cost per hour EURO/hr excl. tax
+    # Template sensors to determine the electricity cost per hour EURO/hr incl. tax, includes use of ex price when power is negative 
     - name: "Electric power cost per hour including tax"
       unique_id: electric_power_cost_per_hour_including_tax
       state_class: measurement
       unit_of_measurement: "€/h"
       availability: >
-        {% set power   = states('sensor.p1_meter_3c39e72e6af0_active_power') | float("unknown") %}
-        {% set cost    = states('sensor.nord_pool_nl_current_prices_including_tax') | float("unknown") %}
-        {{ power|is_number and cost|is_number}}
+        {% set power      = states('sensor.p1_meter_3c39e72e6af0_active_power') | float("unknown") %}
+        {% set cost_in    = states('sensor.nord_pool_nl_current_prices_including_tax') | float("unknown") %}
+        {% set cost_ex    = states('sensor.nord_pool_nl_current_prices_excluding_tax') | float("unknown") %}
+        {{ power|is_number and cost_in|is_number and cost_ex|is_number}}
       state: >
           {% set power   = states('sensor.p1_meter_3c39e72e6af0_active_power') | float(0) %}
-          {% set cost    = states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) %}
-          {{ power/1000*cost }}
-    # Template sensors to determine the electricity cost per hour EURO/hr incl. tax
+          {% set cost_in = states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) %}
+          {% set cost_ex = states('sensor.nord_pool_nl_current_prices_excluding_tax') | float(0) %}
+          {{ power/1000*cost_in if power > 0 else power/1000*cost_ex }}
+    # Template sensors to determine the electricity cost per hour EURO/hr excl. tax
     - name: "Electric power cost per hour excluding tax"
       unique_id: electric_power_cost_per_hour_excluding_tax
       state_class: measurement
@@ -130,6 +97,36 @@ template:
           {% set power   = states('sensor.p1_meter_3c39e72e6af0_active_power') | float(0) %}
           {% set cost    = states('sensor.nord_pool_nl_current_price') | float(0) %}
           {{ power/1000*cost }}
+    # Total energy used in home.
+    # Is input for a utility meter that generates usefull daily data  
+    - name: "Electric energy used in home"
+      unique_id: electric_ene§rgy_used_in_home
+      device_class: energy
+      state_class: total
+      unit_of_measurement: "kWh"
+      state: >
+        {% set tot_import = states('sensor.p1_meter_3c39e72e6af0_total_power_import') | float(0) %}
+        {% set tot_export = states('sensor.p1_meter_3c39e72e6af0_total_power_export') | float(0) %}
+        {% set tot_solar = states('sensor.total_pv_generation_preserved') | float(0) %}
+        {% set tot_battery_charge = states('sensor.sessy_total_charged_energy') | float(0) %}
+        {% set tot_battery_discharge= states('sensor.sessy_total_discharged_energy') | float(0) %}
+        
+        {{ (tot_import - tot_export + tot_solar + tot_battery_discharge - tot_battery_charge) | round(2) }}
+
+  - trigger:
+      - platform: state
+        entity_id: sensor.total_pv_generation
+        not_to:
+          - unknown
+          - unavailable
+    sensor:
+      - name: "Total PV Generation Preserved"
+        unique_id: total_pv_generation_preserved
+        unit_of_measurement: "kWh"
+        device_class: energy
+        state_class: total_increasing
+        state: "{{ trigger.to_state.state }}"
+
 
   # Triggered Nord Pool price gathering in attributes excluding tax
   - trigger:
@@ -162,26 +159,36 @@ template:
 
 
   # triggered sensors for the total energy cost per day based on the statistics sensors
-  - trigger:
+  - trigger:  # triggers at mid night
     - trigger: time_pattern
       hours: 0
       minutes: 0
-    sensor:
+    sensor: # handy to get a grasp of the energy cost
       - name: "Energy cost per day including tax"
         unique_id: energy_cost_per_day_including_tax
         state_class: measurement
         unit_of_measurement: "€"
         state: "{{ states('sensor.energy_cost_over_one_day_including_tax')|float(0) }}"
-  - trigger:
+  - trigger:  # triggers at mid night
     - trigger: time_pattern
       hours: 0
       minutes: 0
-    sensor:
+    sensor: # handy to get a grasp of the energy cost
       - name: "Energy cost per day excluding tax"
         unique_id: energy_cost_per_day_excluding_tax
         state_class: measurement
         unit_of_measurement: "€"
         state: "{{ states('sensor.energy_cost_over_one_day_excluding_tax')|float(0) }}"
+  - trigger:  # triggers at mid night
+    - trigger: time_pattern
+      hours: 0
+      minutes: 0
+    sensor:   # Energy used per day in home for sessy API strategy automations
+      - name: "Daily Energy used in home"
+        unique_id: daily_energy_used_in_home
+        state_class: measurement
+        unit_of_measurement: "kWh"
+        state: "{{ states('sensor.todays_energy_used_in_home')|float(0) }}"
 
 sensor:
   # integration of Euro/hr result is Euros
@@ -222,14 +229,20 @@ sensor:
 # The utility meters cycle daily automatically 
 utility_meter:
   todays_energy_cost_including_tax:
-    source: sensor.energy_cost_including_tax
     name: "Today's energy cost including tax"
+    source: sensor.energy_cost_including_tax
     cycle: daily
 #    delta_values: true #input is delta energy
     net_consumption: true #allows negative power
   todays_energy_cost_excluding_tax:
-    source: sensor.energy_cost_excluding_tax
     name: "Today's energy cost excluding tax"
+    source: sensor.energy_cost_excluding_tax
+    cycle: daily
+#    delta_values: true # input is delta energy
+    net_consumption: true #allows negative power
+  todays_energy_used_in_home:
+    name: "Today's energy used in home"
+    source: sensor.electric_energy_used_in_home
     cycle: daily
 #    delta_values: true # input is delta energy
     net_consumption: true #allows negative power
