@@ -18,7 +18,41 @@ template:
             data:
               setpoint: "{{ 0 | int }}"
 
+  - number:
+      - name: "Sessy API strategy zom state"  # State of ZoM integration algorithm
+        unique_id: sessy_api_strategy_zom_state
+        min: -6000
+        max: 6000
+        step: 1
+        unit_of_measurement: "W"
+        set_value:
+          - action: script.sessy_set_power
+            data:
+              setpoint: "{{ states('number.sessy_api_strategy_zom_state') | int }}"
 
+  - sensor:
+      - name: "Sessy API strategy estimated solar surplus"
+        unique_id: sessy_api_strategy_estimated_solar_surplus
+        state_class: measurement
+        unit_of_measurement: "pu"
+        state: >
+          {% set soc          = states('sensor.sessy_battery_state_of_charge') | float(0) %}
+          {% set batt_cap     = states('input_number.sessy_auto_api_strategy_battery_capacity_wh') | float(15000) %}
+          {% set batt_free_wh = max(((100 - soc) / 100) * batt_cap * 0.9 , 1) %} {# clip to 1 min to prevent div 0#}
+
+          {% set solar_remain_wh_east = (states('sensor.energy_production_today_remaining_east') | float(1)) * 1000 %}
+          {% set solar_remain_wh_west = (states('sensor.energy_production_today_remaining_west') | float(1)) * 1000 %}
+          {% set solar_remain_wh      = (solar_remain_wh_west + solar_remain_wh_east) %}
+
+          {% set daily_use              = states('sensor.daily_energy_used_in_home') %}
+          {% set todays_use             = states('sensor.todays_energy_used_in_home') %}
+          {% set daily_energy_remain_wh = daily_use - todays_use %}
+
+          {{ ((solar_remain_wh-daily_energy_remain_wh)/batt_free_wh) }}
+
+# {# Time left for the day #}
+# {% set seconds_left   = ((now().replace(hour=0,minute=0,second=0,microsecond=0) + timedelta(days=1)) - now()).total_seconds() %}
+# {% set pu_day_left    = max(seconds_left/86400, 0.05) %}  
 
 
 input_select:
@@ -34,45 +68,93 @@ input_select:
 
 input_number:
   # FOR AUTO API STRATEGY 
-  sessy_auto_api_strategy_buy_pct:
+  sessy_auto_api_strategy_buy_pct: # e-price percent to start proportional charging (solar / buying)
     name: "Sessy API Buy threshold (Price %)"
     min: 0
     max: 100
-    step: 5
+    step: 1
     # initial: 25
     mode: box
     unit_of_measurement: "%"
-  sessy_auto_api_strategy_sell_pct:
+  sessy_auto_api_strategy_sell_pct: # e-price percent to start proportional discharging (selling)
     name: "Sessy API Sell threshold (Price %)"
     min: 0
     max: 100
-    step: 5
+    step: 1
     # initial: 75
     mode: box
     unit_of_measurement: "%"
-  sessy_auto_api_strategy_min_spread:
+  sessy_auto_api_strategy_min_spread: # price spread in EURO to start proportional trading, active buying
     name: "Sessy API Minimum Price Spread"
     min: 0.0
     max: 1.0
-    step: 0.01
+    step: 0.005
     # initial: 0.22
     mode: box
     unit_of_measurement: "€"
-  sessy_auto_api_strategy_battery_capacity_wh:
+  sessy_auto_api_strategy_min_forced_buy_price: # price spread in EURO to start proportional trading, active buying
+    name: "Sessy API Minimum forced buy price"
+    min: -1.0
+    max: 1.0
+    step: 0.005
+    # initial: -0.15
+    mode: box
+    unit_of_measurement: "€"
+  sessy_auto_api_strategy_battery_capacity_wh: # Installed capacity of the battery in Wh, used to calculate remaining capacity for proportional trading
     name: "Sessy Usable Capacity"
     min: 0
     max: 15000
-    step: 100
+    step: 1
     initial: 15000
     mode: box
     unit_of_measurement: "Wh"
-  
+  sessy_auto_api_strategy_expected_daily_energy_wh: # Installed capacity of the battery in Wh, used to calculate remaining capacity for proportional trading
+    name: "Sessy API Expected Daily Energy use"
+    min: 0
+    max: 60000
+    step: 1
+    # initial: 10000
+    mode: box
+    unit_of_measurement: "Wh"
+  sessy_api_strategy_min_prop_charge_soc: # minimum state of charge to start proportional charging, used to prevent overcharging the battery
+    name: "Sessy API min proportional charge SoC"
+    min: 0
+    max: 100 
+    step: 1
+    initial: 50
+    mode: box
+    unit_of_measurement: "%"
+  sessy_api_strategy_min_prop_discharge_soc: # minimum state of charge to start proportional discharging, used to prevent overdischarging the battery
+    name: "Sessy API min proportional discharge SoC"
+    min: 0
+    max: 100 
+    step: 1
+    initial: 50
+    mode: box
+  sessy_api_strategy_solar_surplus_margin_charge:
+    name: "Sessy API solar surplus margin charge"
+    min: 0
+    max: 100 
+    step: 0.1
+    initial: 1
+    mode: box
+    unit_of_measurement: "pu"
+  sessy_api_strategy_solar_surplus_margin_discharge:
+    name: "Sessy API solar surplus margin discharge"
+    min: 0
+    max: 100 
+    step: 0.1
+    initial: 1
+    mode: box
+    unit_of_measurement: "pu"
+
+  ## Consider changing everything with max / min power to template number with template max / min based on input number! 
   # FOR API STRATEGY
   sessy_api_strategy_max_charge_power:
     name: "Sessy API max charge power"
     min: 0
     max: 6000 
-    step: 10
+    step: 1
     mode: box
     # initial: 6000
     unit_of_measurement: "W"
@@ -80,35 +162,26 @@ input_number:
     name: "Sessy API max discharge power"
     min: 0
     max: 6000 
-    step: 10
+    step: 1
     # initial: 4500
     mode: box
     unit_of_measurement: "W"
-  sessy_api_strategy_max_prop_power:
-    name: "Sessy API max proportional power"
+  sessy_api_strategy_max_prop_charge_power:
+    name: "Sessy API max proportional charge power"
     min: 0
     max: 6000 
-    step: 10
+    step: 1
     # initial: 3000
     mode: box
     unit_of_measurement: "W"
-  sessy_api_strategy_min_prop_soc:
-    name: "Sessy API min proportional SoC"
+  sessy_api_strategy_max_prop_discharge_power:
+    name: "Sessy API max proportional discharge power"
     min: 0
-    max: 100 
+    max: 6000 
     step: 1
-    # initial: 60
-    mode: box
-    unit_of_measurement: "%"
-  sessy_api_strategy_zom_state:
-    name: "Sessy API ZoM state"
-    min: -6000
-    max: 6000
-    step: 1
-    initial: 0
+    # initial: 3000
     mode: box
     unit_of_measurement: "W"
-
 
 automation:
   - id: sessy_automatic_api_strategy_auto
@@ -116,8 +189,10 @@ automation:
     description: "Switches API strategy based on price, and remaining solar forecast"
     mode: restart
     trigger:
-      - platform: time_pattern
-        minutes: "/1" # Sufficient often for 15min price intervals
+      - platform: state
+        entity_id: sensor.nord_pool_nl_current_prices_excluding_tax
+      - platform: time_pattern # catch for static prices
+        minutes: "/30"
     condition:
       # Only run if Sessy is in API mode and the strategy is not set to Manual
       - condition: template
@@ -130,46 +205,46 @@ automation:
           entity_id: input_select.sessy_api_strategy
         data:
           option: >-
-            {# Constants #}
-            {% set energy_tax = 0.13*1.21 | float(0) %}
+            {# Get price data #}
+            {% set price             = states('sensor.nord_pool_nl_current_prices_excluding_tax') | float(0) %}
+            {% set price_pct         = states('sensor.current_percentage_of_electricity_price') | float(50) %}
+            {% set price_spread      = states('sensor.difference_in_electricity_price_today') | float(0) %}
+            {% set price_foreced_buy = states('input_number.sessy_auto_api_strategy_min_forced_buy_price') | float(0) %}
 
+            {# Price Settings #}
+            {% set buy_pct    = states('input_number.sessy_auto_api_strategy_buy_pct') | float(0) %}
+            {% set sell_pct   = states('input_number.sessy_auto_api_strategy_sell_pct') | float(100) %}
+            {% set min_price_spread = states('input_number.sessy_auto_api_strategy_min_spread') | float(1) %}
 
-            {# 1. Get live price and solar data #}
-            {% set price     = states('sensor.nord_pool_nl_current_prices_excluding_tax') | float(0) %}
-            {% set price_pct = states('sensor.current_percentage_of_electricity_price') | float(50) %}
-            {% set spread    = states('sensor.difference_in_electricity_price_today') | float(0) %}
-                        
-            {# Solar forecast: remaining kWh converted to Wh #}
-            {% set solar_remain_wh_east = (states('sensor.energy_production_today_remaining_east') | float(1)) * 1000 %}
-            {% set solar_remain_wh_west = (states('sensor.energy_production_today_remaining_west') | float(1)) * 1000 %}
-            {# typically 50% of PV usable by battery #}
-            {% set solar_remain_wh = 0.5*(solar_remain_wh_west + solar_remain_wh_east) %} 
+            {# Solar data #}
+            {% set solar_surplus = states('sensor.sessy_api_strategy_estimated_solar_surplus') | float(0) %}
 
             {# Battery data #}
             {% set soc = states('sensor.sessy_battery_state_of_charge') | float(0) %}
-            {% set min_prop_soc   = states('input_number.sessy_api_strategy_min_prop_soc') | float(0) %}
-            {% set batt_cap = states('input_number.sessy_auto_api_strategy_battery_capacity_wh') | float(15000) %}
-            {% set batt_free_wh = ((100 - soc) / 100) * batt_cap *0.9 %}
-            {% set pu_day_left = (((now().replace(hour=0,minute=0,second=0,microsecond=0) + timedelta(days=1)) - now()).total_seconds() / 86400) %}            
-            {# When charging is forced #}
-            {% set forced_charging = ( (solar_remain_wh < (batt_free_wh * pu_day_left)) and (soc < min_prop_soc) ) or price < -energy_tax %}
 
-            {# Settings from dashboard #}
-            {% set buy_pct    = states('input_number.sessy_auto_api_strategy_buy_pct') | float(0) %}
-            {% set sell_pct   = states('input_number.sessy_auto_api_strategy_sell_pct') | float(100) %}
-            {% set min_spread = states('input_number.sessy_auto_api_strategy_min_spread') | float(1) %}
-            
+            {# Settings #}
+            {% set solar_margin_charge    = states('input_number.sessy_api_strategy_solar_surplus_margin_charge') | float(0) %} 
+            {% set solar_margin_discharge = states('input_number.sessy_api_strategy_solar_surplus_margin_discharge') | float(0) %}
+            {% set min_prop_charge_soc    = states('input_number.sessy_api_strategy_min_prop_charge_soc') | float(0) %}
+            {% set min_prop_discharge_soc = states('input_number.sessy_api_strategy_min_prop_discharge_soc') | float(0) %}
+
+            {# Forced operation #}  
+            {# When charging is forced, buying energy #}
+            {% set forced_charging    = ( (solar_surplus < solar_margin_charge   ) and (soc < min_prop_charge_soc) ) or price <= price_foreced_buy %}
+            {# When discharging is forced, selling energy #}
+            {% set forced_discharging =   (solar_surplus > solar_margin_discharge) and (soc > min_prop_discharge_soc) %}
+
             {# 2. Decision Logic #}
-            {% if spread >= min_spread %}    {# Spread sufficient (e.g. >22ct) -> Execute proportional trading (sell surplus only) #}
+            {% if price_spread >= min_price_spread %}    {# Spread sufficient (e.g. >22ct) -> Execute proportional trading (sell surplus only) #}
 
               {% if price_pct > sell_pct %}  {# Price is high: Sell if expected solar will recharge the battery later, or if already full #}
-                {% if solar_remain_wh >= batt_free_wh*pu_day_left or soc > 80 %}
+                {% if forced_discharging %}
                   Proportional Discharge
                 {% else %}
                   Zero on Meter Support
                 {% endif %}
               
-              {% elif price_pct < buy_pct %}
+              {% elif price_pct <= buy_pct %}
                 {% if forced_charging %}
                   Proportional Charge
                 {% else %}    
@@ -182,8 +257,8 @@ automation:
               
             {% else %} {# Spread is too narrow (e.g. <22ct) -> buying makes no sense #}
 
-              {% if price_pct > sell_pct %} {# Price is high: Sell if expected solar will recharge the battery later, or if already full #}
-                {% if solar_remain_wh >= batt_free_wh*pu_day_left or soc > 80 %}
+              {% if price_pct >= sell_pct %} {# Price is high: Sell if expected solar will recharge the battery later, or if already full #}
+                {% if forced_discharging %}
                   Proportional Discharge
                 {% else %}
                   Zero on Meter Support
@@ -194,29 +269,6 @@ automation:
               {% endif %}
 
             {% endif %}
-      # # Adjust Goodwe ZoM algorithm. Goodwe ZoM is active when battery is ~full
-      # - choose:
-      #     - conditions: # if battery is full
-      #         - condition: numeric_state
-      #           entity_id: sensor.sessy_battery_state_of_charge
-      #           above: 98
-      #       sequence:   # enable Goodwe ZoM gross negative algorithm
-      #         - action: input_select.select_option
-      #           target:
-      #             entity_id: goodwe_export_strategy_select
-      #           data:
-      #             option: "3 - Minimum (zero om meter with gross negative prices)"
-      #   default:        # else Goodwe is set to manual 100%
-      #     - action: input_select.select_option
-      #       target:
-      #         entity_id: goodwe_export_strategy_select
-      #       data:
-      #         option: "0 - Manual"
-      #     - action: input_number.set_value
-      #       target:
-      #         entity_id: input_number.goodwe_grid_export_limit
-      #       data:
-      #         value: 100
 
 
   - id: sessy_api_strategy_auto
@@ -232,20 +284,21 @@ automation:
       - condition: template
         value_template: "{{ is_state('input_select.sessy_strategy','POWER_STRATEGY_API') }}"
     action:
-      - action: input_number.set_value
+      - action: number.set_value
         target:
-          entity_id: input_number.sessy_api_strategy_zom_state
+          entity_id: number.sessy_api_strategy_zom_state
         data:
           value: >-
             {# 1. Get relevant input data  #}
             {% set strategy     = states('input_select.sessy_api_strategy') %}
             {% set p1_power     = states('sensor.p1_meter_3c39e72e6af0_active_power') | float(0) %}
-            {% set zom_state    = states('input_number.sessy_api_strategy_zom_state') | float(0) %}
+            {% set zom_state    = states('number.sessy_api_strategy_zom_state') | float(0) %}
             {% set soc          = states('sensor.sessy_battery_state_of_charge') | float(0) %}
             {# 2. Get relevant settings #}
             {% set max_charge_power    = states('input_number.sessy_api_strategy_max_charge_power') | float(0) %}
             {% set max_discharge_power = states('input_number.sessy_api_strategy_max_discharge_power') | float(0) %}
-            {% set max_prop_power = states('input_number.sessy_api_strategy_max_prop_power') | float(0) %}
+            {% set max_prop_charge_power = states('input_number.sessy_api_strategy_max_prop_charge_power') | float(0) %}
+            {% set max_prop_discharge_power = states('input_number.sessy_api_strategy_max_prop_discharge_power') | float(0) %}
             {% set min_prop_soc   = states('input_number.sessy_api_strategy_min_prop_soc') | float(0) %}
             
             {# 3. Zero on Meter (ZOM) algorithm #}
@@ -265,7 +318,7 @@ automation:
             {# Buys energy or absorbs PV: enforces the strongest charging signal #}
               {# No SoC limit for charging, stop at SoC=100% #}
               {% set prop_gain = 1.0 - (soc / 100.0) %}
-              {% set prop_power = -1 * (prop_gain * max_prop_power) %}              
+              {% set prop_power = -1 * (prop_gain * max_prop_charge_power) %}              
               {# Selects the highest charging request (most negative value) #}
 
               {{ min(prop_power, zom_charge) | int }}
@@ -277,7 +330,7 @@ automation:
                 {{ max(zom_discharge, 0) | int }}
               {% else %}
                 {% set prop_gain = soc / 100.0 %}
-                {% set prop_power = prop_gain * max_prop_power %}
+                {% set prop_power = prop_gain * max_prop_discharge_power %}
                 {# Selects the highest discharging request (highest positive value) #}
                 {{ max(prop_power, zom_discharge) | int }}
               {% endif %}
@@ -285,6 +338,3 @@ automation:
             {% else %}
               {{ 0 | int }}
             {% endif %}
-      - action: script.sessy_set_power
-        data:
-          setpoint: "{{ states('input_number.sessy_api_strategy_zom_state') | int }}"
