@@ -41,18 +41,15 @@ template:
       unit_of_measurement: "%"
       state_class: measurement
       availability: >
-        {% set current = states('sensor.nord_pool_nl_current_prices_including_tax') | float("unknown") %}
+        {% set current = states('sensor.nord_pool_nl_current_prices_excluding_tax') | float("unknown") %}
         {{ current|is_number }}
       state: >
         {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
-        {% set high = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='max', use_hourly_avg=false, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) %}
-        {% set low = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='min', use_hourly_avg=false, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) %}
-        {% set current = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='average', use_hourly_avg=false, hours='all', look_ahead=false, include_today=true, include_tomorrow=false, start=as_timestamp(now())|timestamp_custom('%H')+':00', end=as_timestamp(now())|timestamp_custom('%H')+':59') %}
-        {# set current_old = states('sensor.nord_pool_nl_current_price') | float(0) #}
-        {# set high_old    = states('sensor.nord_pool_nl_highest_price') | float(0) #}
-        {# set low_old     = states('sensor.nord_pool_nl_lowest_price') | float(0) #}
+        {% set high    = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='max', use_hourly_avg=false, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) | float(0) %}
+        {% set low     = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='min', use_hourly_avg=false, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) | float(0) %}
+        {% set current = states('sensor.nord_pool_nl_current_prices_excluding_tax') | float(0) %}
 
-        {{ ( (current-low)/(high-low) * 100 ) | round(1, default=0) }}
+        {{ ( (current-low) / max(high-low,0.0001) * 100 ) | round(1, default=0) }} {# max to prevent dix0 #}
 
     # sensor that determines the e-price difference today
     - name: "Difference in electricity price today"
@@ -100,7 +97,7 @@ template:
     # Total energy used in home.
     # Is input for a utility meter that generates usefull daily data  
     - name: "Electric energy used in home"
-      unique_id: electric_ene§rgy_used_in_home
+      unique_id: electric_energy_used_in_home
       device_class: energy
       state_class: total
       unit_of_measurement: "kWh"
