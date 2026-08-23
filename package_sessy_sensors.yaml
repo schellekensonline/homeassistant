@@ -364,21 +364,21 @@ template:
       # Inverter power per phase
       - name: "Sessy Inverter Power L1"
         unique_id: sessy_inverter_power_l1
-        state: "{{ state_attr('sensor.sessy_power_status_data', 'sessy').inverters.power[0] }}"
+        state: "{{ state_attr('sensor.sessy_power_status_data', 'inverters').power[0] }}"
         unit_of_measurement: "W"
         device_class: power
         state_class: measurement
 
       - name: "Sessy Inverter Power L2"
         unique_id: sessy_inverter_power_l2
-        state: "{{ state_attr('sensor.sessy_power_status_data', 'sessy').inverters.power[1] }}"
+        state: "{{ state_attr('sensor.sessy_power_status_data', 'inverters').power[1] }}"
         unit_of_measurement: "W"
         device_class: power
         state_class: measurement
 
       - name: "Sessy Inverter Power L3"
         unique_id: sessy_inverter_power_l3
-        state: "{{ state_attr('sensor.sessy_power_status_data', 'sessy').inverters.power[2] }}"
+        state: "{{ state_attr('sensor.sessy_power_status_data', 'inverters').power[2] }}"
         unit_of_measurement: "W"
         device_class: power
         state_class: measurement
