@@ -103,7 +103,7 @@ automation:
     mode: single
     triggers:
       - trigger: time
-        at: "00:01" # every day just after midnight 
+        at: "00:15" # every day just after midnight, with a margin to have updated energy prices 
     variables:
       # days passed since last disinfection
       days_passed_since: "{{ ( ( as_timestamp(now()) - state_attr('input_datetime.dhw_last_disinfection','timestamp') ) / (60*60*24) ) | round(0)}}"
