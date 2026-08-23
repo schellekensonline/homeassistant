@@ -66,11 +66,38 @@ automation:
       - condition: template
         value_template: "{{ not is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 0 ] ) }}"
     actions:
-      - variables: # Calulate grid export limit for zero-on-meter and balances method
+      - variables:
           rated_power: 8000 # rated power of inverter
-          update_ratio: 0.8 # set the convergence speed of the algorithm, should be within, 0 < update_ratio < 1, 0.9 is fast 0.1 is slow
-          zero_on_meter: "{{ max(min( (states('input_number.goodwe_grid_export_limit') | float(0)) + update_ratio*100/rated_power*(states('sensor.p1_meter_active_power_filtered') | float(0)) ,100),0) }}"
-          balanced_max:  "{{ max(min( 100.0 - 100.0*(states('sensor.nord_pool_nl_current_price') | float(0) | abs) / ((states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) | abs) + (states('sensor.nord_pool_nl_current_price') | float(0) | abs)) ,100),0)  }}" 
+          update_ratio: 0.8 # convergence speed (0 < update_ratio < 1). 0.9 = fast, 0.1 = slow
+          threshold_power: 100 # threshold power for battery ZoM algorithm, by leaving X Watt available the battery ZoM takes the lead
+
+          zero_on_meter: >-
+            {% set current_limit = states('input_number.goodwe_grid_export_limit') | float(0) %}
+            {% set p1_power      = states('sensor.p1_meter_active_power_filtered') | float(0) %}
+            {% set ctrl_power    = p1_power + threshold_power %} {# -threshold_power is the reference power #} 
+
+            {# Bereken de nieuwe limiet op basis van het P1-overschot/tekort #}
+            {% set adjustment    = (update_ratio * 100 / rated_power) * ctrl_power %}
+            {% set new_limit     = current_limit + adjustment %}
+            
+            {# Begrens de uitkomst strikt tussen 0% en 100% #}
+            {{ max(min(new_limit, 100), 0) }}
+            
+          balanced_max: >-
+            {% set base_price   = states('sensor.nord_pool_nl_current_price') | float(0) | abs %}
+            {% set taxed_price  = states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) | abs %}
+            
+            {# Voorkom delen door nul als beide prijzen exact 0 zijn #}
+            {% set total_price  = taxed_price + base_price %}
+            
+            {% if total_price > 0 %}
+              {# Bereken het procentuele aandeel van de basisprijs #}
+              {% set price_ratio   = (base_price / total_price) * 100.0 %}
+              {% set balanced_calc = 100.0 - price_ratio %}
+              {{ max(min(balanced_calc, 100), 0) }}
+            {% else %}
+              100
+            {% endif %}
       - choose:
           - conditions: # ZERO EXPORT for inc. negative prices (always active)
               - condition: numeric_state
