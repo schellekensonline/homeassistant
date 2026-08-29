@@ -299,6 +299,8 @@ template:
         unit_of_measurement: "%"
         device_class: battery
         state_class: measurement
+        availability: >
+          {{ state_attr('sensor.sessy_power_status_data', 'sessy').state_of_charge | is_number }}
 
       - name: "Sessy Battery Pack Voltage"
         unique_id: sessy_battery_pack_voltage
@@ -306,6 +308,8 @@ template:
         unit_of_measurement: "V"
         device_class: voltage
         state_class: measurement
+        availability: >
+          {{ state_attr('sensor.sessy_power_status_data', 'sessy').pack_voltage | is_number }}
 
       # 0. Total power
       - name: "Sessy Grid Total Power"
@@ -314,6 +318,8 @@ template:
         unit_of_measurement: "W"
         device_class: power
         state_class: measurement
+        availability: >
+          {{ state_attr('sensor.sessy_power_status_data', 'sessy').total_power | is_number }}
 
       # 1. Only discharging power, for Riemann integral
       - name: "Sessy Grid Total Discharging Power"
@@ -338,6 +344,8 @@ template:
         unit_of_measurement: "Hz"
         device_class: frequency
         state_class: measurement
+        availability: >
+          {{ state_attr('sensor.sessy_power_status_data', 'grid').frequency | is_number }}
 
       # Grid voltage per phase
       - name: "Sessy Grid Voltage L1"
@@ -346,6 +354,8 @@ template:
         unit_of_measurement: "V"
         device_class: voltage
         state_class: measurement
+        availability: >
+          {{ state_attr('sensor.sessy_power_status_data', 'grid').phase_voltage[0] | is_number }}
 
       - name: "Sessy Grid Voltage L2"
         unique_id: sessy_grid_voltage_l2
@@ -353,6 +363,8 @@ template:
         unit_of_measurement: "V"
         device_class: voltage
         state_class: measurement
+        availability: >
+          {{ state_attr('sensor.sessy_power_status_data', 'grid').phase_voltage[1] | is_number }}
 
       - name: "Sessy Grid Voltage L3"
         unique_id: sessy_grid_voltage_l3
@@ -360,28 +372,36 @@ template:
         unit_of_measurement: "V"
         device_class: voltage
         state_class: measurement
+        availability: >
+          {{ state_attr('sensor.sessy_power_status_data', 'grid').phase_voltage[2] | is_number }}
 
       # Inverter power per phase
       - name: "Sessy Inverter Power L1"
         unique_id: sessy_inverter_power_l1
-        state: "{{ state_attr('sensor.sessy_power_status_data', 'inverters').power[0] }}"
+        state: "{{ state_attr('sensor.sessy_power_status_data', 'sessy').inverters[0].power }}"
         unit_of_measurement: "W"
         device_class: power
         state_class: measurement
+        availability: >
+          {{ state_attr('sensor.sessy_power_status_data', 'sessy').inverters[0].power | is_number }}
 
       - name: "Sessy Inverter Power L2"
         unique_id: sessy_inverter_power_l2
-        state: "{{ state_attr('sensor.sessy_power_status_data', 'inverters').power[1] }}"
+        state: "{{ state_attr('sensor.sessy_power_status_data', 'sessy').inverters[1].power }}"
         unit_of_measurement: "W"
         device_class: power
         state_class: measurement
+        availability: >
+          {{ state_attr('sensor.sessy_power_status_data', 'sessy').inverters[1].power | is_number }} 
 
       - name: "Sessy Inverter Power L3"
         unique_id: sessy_inverter_power_l3
-        state: "{{ state_attr('sensor.sessy_power_status_data', 'inverters').power[2] }}"
+        state: "{{ state_attr('sensor.sessy_power_status_data', 'sessy').inverters[2].power }}"
         unit_of_measurement: "W"
         device_class: power
         state_class: measurement
+        availability: >
+          {{ state_attr('sensor.sessy_power_status_data', 'sessy').inverters[2].power | is_number }} 
 
       # Solar PV Power per phase
       - name: "Sessy Solar PV Power L1"
@@ -390,6 +410,8 @@ template:
         unit_of_measurement: "W"
         device_class: power
         state_class: measurement
+        availability: >
+          {{ state_attr('sensor.sessy_power_status_data', 'solar').pv_power[0] | is_number }}
 
       - name: "Sessy Solar PV Power L2"
         unique_id: sessy_solar_pv_power_l2
@@ -397,6 +419,8 @@ template:
         unit_of_measurement: "W"
         device_class: power
         state_class: measurement
+        availability: >
+          {{ state_attr('sensor.sessy_power_status_data', 'solar').pv_power[1] | is_number }} 
 
       - name: "Sessy Solar PV Power L3"
         unique_id: sessy_solar_pv_power_l3
@@ -404,3 +428,5 @@ template:
         unit_of_measurement: "W"
         device_class: power
         state_class: measurement
+        availability: >
+          {{ state_attr('sensor.sessy_power_status_data', 'solar').pv_power[2] | is_number }} 
