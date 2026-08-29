@@ -1,0 +1,205 @@
+# Home Assistant Package voor EMHASS
+
+template:
+  - sensor:
+      # Berekening van het huisverbruik MINUS de stuurbare belastingen (zoals vereist door EMHASS)
+      - name: "EMHASS House Power No Def Loads"
+        unit_of_measurement: "W"
+        device_class: power
+        state_class: measurement
+        state: >-
+          {% set tot_p1   = states('sensor.p1_meter_3c39e72e6af0_active_power') | float(0) %}  {# to from grid positive #}
+          {% set tot_pv   = states('sensor.goodwe_total_pv_input_power') | float(0) %}                {# to grid positive #}
+          {% set tot_batt = states('sensor.sessy_grid_total_power') | float(0) %}                     {# to grid positive #}
+          {% set tot_hp   = states('sensor.therma_v_electric_power') | float(0) %}                    {# from grid positive #}  
+
+          {{ (tot_p1  + tot_hp - tot_pv - tot_batt)  | round(2) }}
+
+      # Template sensoren om bestaande data te mappen naar de namen in jouw EMHASS config
+      - name: "EMHASS PV Power"
+        unit_of_measurement: "W"
+        device_class: power
+        state: "{{ states('sensor.goodwe_total_pv_input_power') | float(0) }}"
+
+      - name: "EMHASS Battery Power"
+        unit_of_measurement: "W"
+        device_class: power
+        state: "{{ states('sensor.sessy_grid_total_power') | float(0) }}"
+
+      - name: "EMHASS Battery SoC"
+        unit_of_measurement: "%"
+        device_class: battery
+        state: "{{ states('sensor.sessy_battery_state_of_charge') | int(0) }}"
+
+      # Optioneel: PV Forecast mapping als je Solcast of Forecast.Solar gebruikt
+      - name: "EMHASS PV Forecast"
+        unit_of_measurement: "W"
+        device_class: power
+        state: >-
+          {% set tot_east_w = states('sensor.power_production_now_east') | float(0) %}
+          {% set tot_west_w = states('sensor.power_production_now_west') | float(0) %}
+          {% set tot_pv = tot_east_w + tot_west_w %}
+          {# Als de berekening boven de 8000W uitkomt, kap het dan af op 8000W #}
+          {% if tot_pv > 8800 %}
+            8800
+          {% else %}
+            {{ tot_pv | round(0) }}
+          {% endif %}
+
+rest_command:
+  # Commando om het Machine Learning model te trainen op historische HA data
+  emhass_fit_load_model:
+    url: "http://localhost:5000/action/forecast-model-fit?model_type=load"
+    method: POST
+
+  # Optimalisatie op basis van de komende 24 uur (meest gebruikt voor dagelijkse planning)
+  emhass_dayahead_optim:
+    url: "http://localhost:5000/action/dayahead-optim"
+    method: POST
+    content_type: "application/json"
+    payload: >-
+      {% set incl = state_attr('sensor.nord_pool_nl_current_prices_including_tax', 'prices') | map(attribute='price') | list %}
+      {% set excl = state_attr('sensor.nord_pool_nl_current_prices_excluding_tax', 'prices') | map(attribute='price') | list %}
+      {
+        "load_cost_forecast": {{ incl | to_json }},
+        "prod_price_forecast": {{ excl | to_json }}
+      }
+# "prediction_horizon": 96,
+# "optimization_time_step": 15
+
+  # Korte termijn optimalisatie (bijvoorbeeld elk kwartier uitvoeren)
+  emhass_naive_mpc_optim:
+    url: "http://localhost:5000/action/naive-mpc-optim"
+    method: POST
+    content_type: "application/json"
+    payload: >-
+      {% set incl = state_attr('sensor.nord_pool_nl_current_prices_including_tax', 'prices') %}
+      {% set excl = state_attr('sensor.nord_pool_nl_current_prices_excluding_tax', 'prices') %}
+      
+      {# Bepaal de starttijd van het HUIDIGE kwartier om te filteren (bijv. 15:30 ipv 15:34) #}
+      {% set minute = now().minute %}
+      {% set kwarter_minute = minute - (minute % 15) %}
+      {% set kwarter_start = now().replace(minute=kwarter_minute, second=0, microsecond=0).isoformat() %}
+      
+      {# Filter de lijsten zodat het huidige kwartier en de toekomst overblijven #}
+      {% set incl_futur = incl | selectattr('time', '>=', kwarter_start) | map(attribute='price') | list %}
+      {% set excl_futur = excl | selectattr('time', '>=', kwarter_start) | map(attribute='price') | list %}
+
+      {# ROND HIER DE DIE DECIMALEN AF OP EXACT 4 CIJFERS ACHTER DE KOMMA #}
+      {% set incl_rounded = incl_futur | map('round', 4) | list %}
+      {% set excl_rounded = excl_futur | map('round', 4) | list %}
+
+      {
+        "load_cost_forecast":  {{ incl_rounded | to_json }},
+        "prod_price_forecast": {{ excl_rounded | to_json }}
+      }
+# "optimization_time_step": 15
+
+  # Data handmatig publiceren naar Home Assistant sensoren
+  emhass_publish:
+    url: "http://localhost:5000/action/publish-data"
+    method: POST
+
+automation:
+## even niet todat de house power sensor voldoende data heeft. Zet de Historic_days_to_retrieve: eerst op 2 dan 7, 14 tot 60
+#  om over 2 maanden te leren. Nu staat hij op naive verander terug naar ml_forcast.
+
+  # - id: emhass_weekly_machine_learning_training_auto
+  #   alias: "EMHASS weekly Machine Learning training auto"
+  #   description: "Traint het verbruiksmodel elke week opnieuw op basis van de Home Assistant historie."
+  #   mode: single
+  #   trigger:
+  #     - platform: time
+  #       at: "01:00:00"
+  #   condition:
+  #     # Draai dit alleen op zondagnacht
+  #     - condition: time
+  #       weekday:
+  #         - sun
+  #   action:
+  #     - action: rest_command.emhass_fit_load_model
+  #       data: {}
+  #     - delay:
+  #         seconds: 30
+
+
+  - id: emhass_execute_mpc_optimization_auto
+    alias: "EMHASS execute MPC optimization auto"
+    description: "Triggert EMHASS elke 15 minuten voor realtime bijsturing en haalt de planning op."
+    mode: single
+    trigger:
+      - platform: time_pattern
+        minutes: "/15"
+    condition: []
+    action:
+      - action: rest_command.emhass_naive_mpc_optim
+        data: {}
+      - delay:
+          seconds: 5
+      - action: rest_command.emhass_publish
+        data: {}
+  
+  - id: emhass_execute_day_ahead_optimization_auto    
+    alias: "EMHASS execute Day-Ahead optimization auto"
+    description: "Berekent een keer per dag de grote planning voor de komende 24 uur op basis van de nieuwe marktprijzen."
+    mode: single
+    trigger:
+      # Trigger 1: De prijzen voor morgen komen live binnen
+      - platform: state
+        entity_id: binary_sensor.uilities_nord_pool_nl_tomorrow_price_available
+        to: "on"
+        id: "prijzen_binnen"
+      # Trigger 2: Failsafe (mocht de sensor door een storing overdag niet hebben gewerkt)
+      - platform: time
+        at: "00:10:00"
+        id: "failsafe"
+    condition:
+      # Zorg dat de automatisering maximaal één keer per kalenderdag succesvol kan draaien
+      - condition: template
+        value_template: "{{ this.attributes.last_triggered is none or this.attributes.last_triggered.date() != now().date() }}"
+    action:
+      - action: rest_command.emhass_dayahead_optim
+        data: {}
+      - delay:
+          seconds: 15
+      - action: rest_command.emhass_publish
+        data: {}
+
+  # - id: emhass_battery_control_auto    
+  #   alias: "EMHASS battery control auto"
+  #   description: "Stuurt de betterij aan op basis van de actuele EMHASS setpoints."
+  #   trigger:
+  #     - platform: state
+  #       entity_id: sensor.p_batt_forecast
+  #   condition:
+  #     - condition: template
+  #       value_template: "{{ states('sensor.p_batt_forecast') not in ['unknown', 'unavailable'] }}"
+  #   action:
+  #     - choose:
+  #         # SCENARIO 1: EMHASS zegt LADEN (Waarde is negatief)
+  #         - conditions:
+  #             - condition: template
+  #               value_template: "{{ states('sensor.p_batt_forecast') | float(0)  0 }}"
+  #           sequence:
+  #             - name: "Zet Sessy op handmatig/direct gestuurd"
+  #               action: select.select_option
+  #               target:
+  #                 entity_id: select.sessy_control_strategy
+  #               data:
+  #                 option: "Manual"
+  #             - name: "Stuur het ontlaadvermogen"
+  #               action: number.set_value
+  #               target:
+  #                 entity_id: number.sessy_power_setpoint
+  #               data:
+  #                 # Als Sessy ontladen als negatief ziet, haal dan `| abs` hier weg en zet er een minteken voor.
+  #                 # De meeste integraties willen hier het pure positieve wattage zien.
+  #                 value: "{{ states('sensor.p_batt_forecast') | float(0) }}"
+  #       # SCENARIO 3: EMHASS zegt 0 (Niets doen / Standby)
+  #       default:
+  #         - name: "Zet Sessy terug op zijn eigen slimme Eco/Nul-op-de-meter modus"
+  #           action: select.select_option
+  #           target:
+  #             entity_id: select.sessy_control_strategy
+  #           data:
+  #             option: "Eco"  # Of "ROI" / "Nul-op-de-meter", afhankelijk van de Sessy opties

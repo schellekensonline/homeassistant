@@ -80,4 +80,5 @@ homeassistant:
     sessy_sensors_pack:         !include package_sessy_sensors.yaml
     sessy_commands_pack:        !include package_sessy_commands.yaml
     sessy_algorithms_pack:      !include package_sessy_algorithms.yaml
+    emhass_pack:                !include package_emhass.yaml
     openai_conversation_pack:   !include package_openai_conversation.yaml
