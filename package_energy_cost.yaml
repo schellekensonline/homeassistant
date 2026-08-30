@@ -8,6 +8,31 @@ input_datetime:
     has_date: false
     has_time: true
 
+input_number:
+  electric_energy_tax_ex:
+    name: "Electric energy tax ex. VAT"
+    min: 0
+    max: 100  # Redicilous large value
+    step: 0.00001
+    initial: 0.09161
+    mode: box
+    unit_of_measurement: "€"
+  electric_energy_purchasing_fee_ex: 
+    name: "Electric energy purchasing fee ex. VAT"
+    min: 0
+    max: 100  # Redicilous large value
+    step: 0.00001
+    initial: 0.0165
+    mode: box
+    unit_of_measurement: "€"
+  electric_energy_selling_fee_ex:
+    name: "Electric energy selling fee ex. VAT"
+    min: 0
+    max: 100  # Redicilous large value
+    step: 0.00001
+    initial: 0.0165
+    mode: box
+    unit_of_measurement: "€"
 
 template:
   - sensor:
@@ -30,7 +55,10 @@ template:
             {% set energy_prices = state_attr('sensor.nord_pool_nl_current_prices_excluding_tax', 'prices') | default([], true) %}
             {% set ns = namespace(list=[]) %}
             {% for i in range(energy_prices|length) %}
-            {%   set ns.list = ns.list + [{'time': energy_prices[i]['time'], 'price':(((energy_prices[i]['price'] | float) + zonneplan + energy_tax) * (1 + VAT))}] %}
+            {%   set time  = energy_prices[i]['time'] %}
+            {%   set price_ex = energy_prices[i]['price'] | float %} 
+            {%   set price_in = (price_ex + zonneplan + energy_tax) * (1 + VAT) %}
+            {%   set ns.list = ns.list + [{'time': time, 'price': price}] %}
             {% endfor %}
             {{ ns.list }}
 
@@ -137,14 +165,14 @@ template:
         response_variable: today_prices
         data:
           config_entry: !secret nord_pole_config_entry
-          date: "{{ (now() | as_local).strftime('%Y-%m-%d') }}"
+          date: "{{ now().strftime('%Y-%m-%d') }}"
           areas: NL
           currency: EUR
       - action: nordpool.get_prices_for_date
         response_variable: tomorrow_prices
         data:
           config_entry: !secret nord_pole_config_entry
-          date: "{{ ((now() + timedelta(days=1)) | as_local).strftime('%Y-%m-%d') }}"
+          date: "{{ (now() + timedelta(days=1)).strftime('%Y-%m-%d') }}"
           areas: NL
           currency: EUR
     sensor:
@@ -159,7 +187,8 @@ template:
           {% set ns = namespace(list=[]) %}
           {% for i in range(energy_prices|length) %}
           {%   set start = (energy_prices[i]['start'] | as_datetime) | as_local %}
-          {%   set ns.list = ns.list + [{'time': start, 'price':((energy_prices[i]['price']|float)/1000)}] %}
+          {%   set price = ((energy_prices[i]['price'] | float) / 1000) | round(4) %}
+          {%   set ns.list = ns.list + [{'time': start, 'price': price}] %}
           {% endfor %}
           {{ ns.list }}
 
