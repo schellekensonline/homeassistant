@@ -58,7 +58,7 @@ template:
             {%   set time  = energy_prices[i]['time'] %}
             {%   set price_ex = energy_prices[i]['price'] | float %} 
             {%   set price_in = (price_ex + zonneplan + energy_tax) * (1 + VAT) %}
-            {%   set ns.list = ns.list + [{'time': time, 'price': price}] %}
+            {%   set ns.list = ns.list + [{'time': time, 'price': price_in}] %}
             {% endfor %}
             {{ ns.list }}
 
@@ -186,7 +186,7 @@ template:
           {% set energy_prices = (today_prices['NL'] | default([], true) + tomorrow_prices['NL'] | default([], true)) %}
           {% set ns = namespace(list=[]) %}
           {% for i in range(energy_prices|length) %}
-          {%   set start = (energy_prices[i]['start'] | as_datetime) | as_local %}
+          {%   set start = ((energy_prices[i]['start'] | as_datetime) | as_local).isoformat() %}
           {%   set price = ((energy_prices[i]['price'] | float) / 1000) | round(4) %}
           {%   set ns.list = ns.list + [{'time': start, 'price': price}] %}
           {% endfor %}
