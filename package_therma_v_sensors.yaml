@@ -48,7 +48,7 @@ template:
       unit_of_measurement: "W"
       state: >
         {% set p_dhw_cir = states('sensor.shelly_plug_s3_power') | float(0) %}
-        {% set p_hp      = states('sensor.kwh_meter_3_phase_3c39e72df94a_active_power') | float(0) %}
+        {% set p_hp      = states('sensor.kwh_meter_heat_pump_active_power') | float(0) %}
 
         {{ (p_hp+p_dhw_cir) | round(0) }}
 
