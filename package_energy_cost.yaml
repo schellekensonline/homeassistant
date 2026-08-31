@@ -33,6 +33,13 @@ input_number:
     initial: 0.0165
     mode: box
     unit_of_measurement: "€"
+  electric_energy_vat:
+    name: "Electric energy VAT"
+    min: 0
+    max: 1
+    step: 0.01
+    initial: 0.21
+    mode: box
 
 template:
   - sensor:
@@ -43,15 +50,15 @@ template:
         state_class: measurement
         state: >
           {% set cost = states('sensor.nord_pool_nl_current_price') | float(0) %}
-          {% set zonneplan = 0.022 | float(0) %}
-          {% set energy_tax  = 0.1088 | float(0) %}
-          {% set VAT         = 0.21 | float(0) %}
+          {% set zonneplan  = states('input_number.electric_energy_purchasing_fee_ex') | float(0) %}
+          {% set energy_tax = states('input_number.electric_energy_tax_ex') | float(0) %}
+          {% set VAT        = states('input_number.electric_energy_vat') | float(0.21) %}
           {{ ( (cost + zonneplan + energy_tax) * (1+VAT) ) | round(2, default=0) }}
         attributes:
           prices: >
-            {% set zonneplan = 0.022 | float(0) %}
-            {% set energy_tax  = 0.1088 | float(0) %}
-            {% set VAT         = 0.21 | float(0) %}
+            {% set zonneplan  = states('input_number.electric_energy_purchasing_fee_ex') | float(0) %}
+            {% set energy_tax = states('input_number.electric_energy_tax_ex') | float(0) %}
+            {% set VAT        = states('input_number.electric_energy_vat') | float(0.21) %}
             {% set energy_prices = state_attr('sensor.nord_pool_nl_current_prices_excluding_tax', 'prices') | default([], true) %}
             {% set ns = namespace(list=[]) %}
             {% for i in range(energy_prices|length) %}
