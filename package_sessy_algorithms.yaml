@@ -56,14 +56,14 @@ template:
           {% set solar_remain_west = states('sensor.energy_production_today_remaining_west') | float(0) %}
           {% set solar_remain_wh      = (solar_remain_west + solar_remain_east)  * 1000 %}
 
-          {# set daily_use              = states('sensor.average_daily_energy_used_in_home')  | float(0) #}
-          {# set todays_use             = states('sensor.todays_energy_used_in_home') | float(0) #}
-          {# set daily_energy_remain_wh = (daily_use - todays_use) * 1000 #}
+          {% set daily_use              = states('sensor.average_daily_energy_used_in_home')  | float(0) %}
+          {% set todays_use             = states('sensor.todays_energy_used_in_home') | float(0) %}
+          {% set daily_energy_remain_wh = (daily_use - todays_use) * 1000 %}
 
           {# Time left for the day #}
-          {% set seconds_left   = ((now().replace(hour=0,minute=0,second=0,microsecond=0) + timedelta(days=1)) - now()).total_seconds() %}
-          {% set pu_day_left    = max(seconds_left/86400, 0.05) %}  
-          {% set daily_energy_remain_wh = 11000  * pu_day_left %}
+          {# set seconds_left   = ((now().replace(hour=0,minute=0,second=0,microsecond=0) + timedelta(days=1)) - now()).total_seconds() #}
+          {# set pu_day_left    = max(seconds_left/86400, 0.05) #}  
+          {# set daily_energy_remain_wh = 11000  * pu_day_left #}
 
           {{ ( (solar_remain_wh - daily_energy_remain_wh) / batt_free_wh ) | round(1)}}
 
