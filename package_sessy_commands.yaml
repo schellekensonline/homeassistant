@@ -44,29 +44,29 @@ rest_command:
           } | to_json }}
 
 
-  # sessy_set_power_setpoint_distributed:
-  #   url: "http://{{host}}/api/v1/power/setpoint"
-  #   method: POST
-  #   headers:
-  #     authorization: "Basic {{auth | base64_encode }}"
-  #   content_type: "application/json"
-  #   payload: >-
-  #     {{  {
-  #           "distributed": [
-  #             {
-  #               "inverter_index": 0,
-  #               "setpoint": setpoint_l1
-  #             },
-  #             {
-  #               "inverter_index": 1,
-  #               "setpoint": setpoint_l2
-  #             },
-  #             {
-  #               "inverter_index": 2,
-  #               "setpoint": setpoint_l3
-  #             }
-  #           ]
-  #         }  | to_json }}
+  sessy_set_power_setpoint_distributed:
+    url: "http://{{host}}/api/v1/power/setpoint"
+    method: POST
+    headers:
+      authorization: "Basic {{auth | base64_encode }}"
+    content_type: "application/json"
+    payload: >-
+      {{  {
+            "distributed": [
+              {
+                "inverter_index": 0,
+                "setpoint": setpoint_l1
+              },
+              {
+                "inverter_index": 1,
+                "setpoint": setpoint_l2
+              },
+              {
+                "inverter_index": 2,
+                "setpoint": setpoint_l3
+              }
+            ]
+          }  | to_json }}
 
 script:
   sessy_set_strategy:
@@ -85,15 +85,15 @@ script:
           auth: !secret sessy_auth
           setpoint: '{{setpoint}}'
 
-  # sessy_set_power_distributed:
-  #   sequence:
-  #     - action: rest_command.sessy_set_power_setpoint_distributed
-  #       data:
-  #         host: !secret sessy_url
-  #         auth: !secret sessy_auth
-  #         setpoint_l1: '{{setpoint_l1}}'
-  #         setpoint_l2: '{{setpoint_l2}}'
-  #         setpoint_l3: '{{setpoint_l3}}'
+  sessy_set_power_distributed:
+    sequence:
+      - action: rest_command.sessy_set_power_setpoint_distributed
+        data:
+          host: !secret sessy_url
+          auth: !secret sessy_auth
+          setpoint_l1: '{{setpoint_l1}}'
+          setpoint_l2: '{{setpoint_l2}}'
+          setpoint_l3: '{{setpoint_l3}}'
  
 input_select:
   sessy_strategy:
