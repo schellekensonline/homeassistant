@@ -127,6 +127,20 @@ template:
       # ========================================================================
       # OMVORMER 1 (INVERTER_L1) -> INDEX 0
       # ========================================================================
+      - name: "Sessy INV L1 imported_energy"
+        unique_id: sessy_l1_imported_energy
+        state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[0]['imported_energy'] / 1000| int(0) }}"
+        unit_of_measurement: "kWh"
+        device_class: energy
+        state_class: measurement
+
+      - name: "Sessy INV L1 exported_energy"
+        unique_id: sessy_l1_exported_energy
+        state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[0]['exported_energy'] / 1000| int(0) }}"
+        unit_of_measurement: "kWh"
+        device_class: energy
+        state_class: measurement
+
       - name: "Sessy INV L1 active power"
         unique_id: sessy_l1_active_power
         state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[0]['active_power'] }}"
@@ -182,6 +196,20 @@ template:
       # ========================================================================
       # OMVORMER 2 (INVERTER_L2) -> INDEX 1
       # ========================================================================
+      - name: "Sessy INV L2 imported_energy"
+        unique_id: sessy_l2_imported_energy
+        state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[1]['imported_energy'] / 1000| int(0) }}"
+        unit_of_measurement: "kWh"
+        device_class: energy
+        state_class: measurement
+
+      - name: "Sessy INV L2 exported_energy"
+        unique_id: sessy_l2_exported_energy
+        state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[1]['exported_energy'] / 1000| int(0) }}"
+        unit_of_measurement: "kWh"
+        device_class: energy
+        state_class: measurement
+
       - name: "Sessy INV L2 active power"
         unique_id: sessy_l2_active_power
         state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[1]['active_power'] }}"
@@ -237,6 +265,20 @@ template:
       # ========================================================================
       # OMVORMER 3 (INVERTER_L3) -> INDEX 2
       # ========================================================================
+      - name: "Sessy INV L3 imported_energy"
+        unique_id: sessy_l3_imported_energy
+        state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[2]['imported_energy'] / 1000| int(0) }}"
+        unit_of_measurement: "kWh"
+        device_class: energy
+        state_class: measurement
+
+      - name: "Sessy INV L3 exported_energy"
+        unique_id: sessy_l3_exported_energy
+        state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[2]['exported_energy'] / 1000| int(0) }}"
+        unit_of_measurement: "kWh"
+        device_class: energy
+        state_class: measurement
+
       - name: "Sessy INV L3 active power"
         unique_id: sessy_l3_active_power
         state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[2]['active_power'] }}"
