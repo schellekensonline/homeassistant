@@ -15,23 +15,6 @@ rest_command:
             "strategy": strategy
           }  | to_json }}
 
-  # sessy_set_ns:
-  #   url: "http://{{host}}/api/v1/eol/ns"
-  #   method: POST
-  #   headers:
-  #     authorization: "Basic {{auth | base64_encode }}"
-  #   content_type: "application/json"
-  #   payload: >-
-  #     {{  {
-  #           "inverters": [
-  #             {
-  #               "inverter": inverter | int,
-  #               "setpoint": setpoint | int 
-  #             }
-  #           ],
-  #           "stop_override": stop_override | bool
-  #         } | to_json }}
-
   sessy_set_power_setpoint:
     url: "http://{{host}}/api/v1/power/setpoint"
     method: POST
