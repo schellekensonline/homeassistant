@@ -26,18 +26,129 @@ template:
         max: "{{       states('input_number.sessy_api_strategy_max_discharge_power') | int  }}"
         step: 1
         set_value:
-          - action: script.sessy_set_power
-            data:
+          - variables:
+              decay:      "{{ 1-5/(30*60) }}" # 5s update, 30min decay --> b~1-Ts/tau
+              soc_state:  "{{states('sensor.sessy_battery_state_of_charge') | int(0) }}"
+              zom_state:  "{{states('number.sessy_api_strategy_zom_state')  | int(0) }}"
+              peak_state: "{{states('number.sessy_api_strategy_zom_peak_state') | int(0) }}"
+              nom_power:  "{{states('input_number.sessy_api_strategy_inverter_nominal_power') | int(0) }}"
+              num_active: "{{states('number.sessy_api_strategy_active_inverters')  | int(0) }}"
+              num_active_next: >-
+                {% if peak_state <= 0 or nom_power <= 0 %}
+                  0
+                {% else %}
+                  {{ min(3, 1 + ((peak_state / nom_power) | int(0))) }}
+                {% endif %}
               setpoint: >-
-                {% set zom_state = states('number.sessy_api_strategy_zom_state')  | int %}
-                {% set soc_state = states('sensor.sessy_battery_state_of_charge') | int %}
-                {% if ( soc_state >= 100 and zom_state < -10 ) %} {# -10W hysteresis, no charging with a full battery #}
+                {% if num_active_next == 0 %}
                   {{ 0 }}
-                {% elif ( soc_state <= 0 and zom_state >  10 ) %} {# 10W hysteresis, no discharging with a empty battery #}
+                {% elif ( soc_state >= 100 and zom_state < -10 ) %} {# -10W hysteresis, no charging with a full battery #}
+                  {{ 0 }}
+                {% elif ( soc_state <= 0 and zom_state > 10 ) %} {# 10W hysteresis, no discharging with an empty battery #}
                   {{ 0 }}
                 {% else %}
-                  {{ zom_state }} {# otherwise apply setpoint of algorithm #}
+                  {{ zom_state / num_active_next }} {# divide across the target active inverters #}
                 {% endif %}
+          # Update peak power detector
+          - action: number.set_value
+            target:
+              entity_id: number.sessy_api_strategy_zom_peak_state
+            data:
+              value: "{{ max(zom_state | abs, decay*peak_state) | round(0) }}"
+          # Update number of active inverters
+          - action: number.set_value
+            target:
+              entity_id: number.sessy_api_strategy_active_inverters
+            data:
+              value: "{{ num_active_next }}"
+          - variables:
+              desired_active_count: "{{ num_active_next | int(0) }}"
+          - variables:
+              active_inverter_event_data: >-
+                {% set tot_energy_l1 = states('sensor.sessy_l1_imported_energy') | float(0) + states('sensor.sessy_l1_exported_energy') | float(0) %}
+                {% set tot_energy_l2 = states('sensor.sessy_l2_imported_energy') | float(0) + states('sensor.sessy_l2_exported_energy') | float(0) %}
+                {% set tot_energy_l3 = states('sensor.sessy_l3_imported_energy') | float(0) + states('sensor.sessy_l3_exported_energy') | float(0) %}
+                {% set active_l1 = state_attr('number.sessy_api_strategy_active_inverters', 'l1_active') | bool(false) %}
+                {% set active_l2 = state_attr('number.sessy_api_strategy_active_inverters', 'l2_active') | bool(false) %}
+                {% set active_l3 = state_attr('number.sessy_api_strategy_active_inverters', 'l3_active') | bool(false) %}
+                {% set active_count = active_l1 | int + active_l2 | int + active_l3 | int %}
+
+                {# Keep the current phase assignment while the desired count is unchanged. #}
+                {% if desired_active_count | int(0) != active_count %}
+                  {% set active_l1 = false %}
+                  {% set active_l2 = false %}
+                  {% set active_l3 = false %}
+
+                {% if desired_active_count | int(0) == 1 %}
+                  {% if tot_energy_l1 <= tot_energy_l2 and tot_energy_l1 <= tot_energy_l3 %}
+                    {% set active_l1 = true %}
+                  {% elif tot_energy_l2 <= tot_energy_l3 %}
+                    {% set active_l2 = true %}
+                  {% else %}
+                    {% set active_l3 = true %}
+                  {% endif %}
+                {% elif desired_active_count | int(0) == 2 %}
+                  {# Deactivate the highest-energy inverter; ties prefer l3, then l2. #}
+                  {% if tot_energy_l3 >= tot_energy_l1 and tot_energy_l3 >= tot_energy_l2 %}
+                    {% set active_l1 = true %}
+                    {% set active_l2 = true %}
+                  {% elif tot_energy_l2 >= tot_energy_l1 and tot_energy_l2 >= tot_energy_l3 %}
+                    {% set active_l1 = true %}
+                    {% set active_l3 = true %}
+                  {% else %}
+                    {% set active_l2 = true %}
+                    {% set active_l3 = true %}
+                  {% endif %}
+                {% elif desired_active_count | int(0) >= 3 %}
+                  {% set active_l1 = true %}
+                  {% set active_l2 = true %}
+                  {% set active_l3 = true %}
+                {% endif %}
+                {% endif %}
+                {{ {
+                  "l1_active": active_l1,
+                  "l2_active": active_l2,
+                  "l3_active": active_l3
+                } | to_json }}
+          # Update active inverters
+          - event: update_active_inverters
+            event_data:
+              l1_active: "{{ (active_inverter_event_data | from_json).l1_active }}"
+              l2_active: "{{ (active_inverter_event_data | from_json).l2_active }}"
+              l3_active: "{{ (active_inverter_event_data | from_json).l3_active }}"
+          # Update number setpoints
+          - action: script.sessy_set_power_distributed
+            data:
+              setpoint_l1: "{{ setpoint if (active_inverter_event_data | from_json).l1_active else 0 }}"
+              setpoint_l2: "{{ setpoint if (active_inverter_event_data | from_json).l2_active else 0 }}"
+              setpoint_l3: "{{ setpoint if (active_inverter_event_data | from_json).l3_active else 0 }}"
+
+  - number:
+      - name: "Sessy API strategy zom peak state"  # State of ZoM integration algorithm
+        unique_id: sessy_api_strategy_zom_peak_state
+        unit_of_measurement: "W"
+        min: 0
+        max: "{{ max(states('input_number.sessy_api_strategy_max_discharge_power') | int, states('input_number.sessy_api_strategy_max_charge_power') | int) }}"
+        step: 1
+        set_value: []
+
+  - trigger:
+      - trigger: event
+        event_type: update_active_inverters
+    number:
+      - name: "Sessy API strategy active inverters"  # number of active inverters
+        unique_id: sessy_api_strategy_active_inverters
+        min: 0
+        max: 3
+        step: 1
+        set_value: []
+        attributes:
+          l1_active: >-
+            {{ trigger.event.data.l1_active | default(false) | bool }}
+          l2_active: >-
+            {{ trigger.event.data.l2_active | default(false) | bool }}
+          l3_active: >-
+            {{ trigger.event.data.l3_active | default(false) | bool }}
 
   - sensor:
       - name: "Sessy API strategy estimated solar surplus"
@@ -66,8 +177,6 @@ template:
           {# set daily_energy_remain_wh = 11000  * pu_day_left #}
 
           {{ ( (solar_remain_wh - daily_energy_remain_wh) / batt_free_wh ) | round(1)}}
-
-
 
 input_select:
   sessy_api_strategy:
@@ -165,6 +274,14 @@ input_number:
 
   ## Consider changing everything with max / min power to template number with template max / min based on input number! 
   # FOR API STRATEGY
+  sessy_api_strategy_inverter_nominal_power:
+    name: "Sessy API inverer nominal power"
+    min: 0
+    max: 1000000 # Redicilous large value
+    step: 1
+    initial: 1500
+    mode: box
+    unit_of_measurement: "W"
   sessy_api_strategy_max_charge_power:
     name: "Sessy API max charge power"
     min: 0
@@ -364,3 +481,52 @@ automation:
             {% else %}
               {{ 0 | int }}
             {% endif %}
+
+
+# template:
+#   - trigger:
+#       # We luisteren ALLEEN naar het event voor de attributen.
+#       # De 'state' regelt zichzelf optimistisch via number.set_value!
+#       - trigger: event
+#         event_type: update_number_attributen
+#     number:
+#       - name: "Mijn Optimistische Variabele"
+#         unique_id: mijn_optimistische_variabele
+#         min: 0
+#         max: 100
+#         step: 1
+        
+#         # Geen 'state:' gedefinieerd -> HA draait nu in optimistische modus!
+        
+#         # set_value MOET aanwezig zijn (mag leeg zijn met '[]' of een loze actie), 
+#         # anders accepteert de UI/actie geen wijzigingen.
+#         set_value: [] 
+
+#         attributes:
+#           # Als het event binnenkomt: pak de nieuwe berekende waarde.
+#           # Als de state verandert via set_value: behoud de huidige attribuutwaarde.
+#           berekende_waarde: >-
+#             {% if trigger is defined and trigger.platform == 'event' %}
+#               {{ trigger.event.data.berekening }}
+#             {% else %}
+#               {{ state_attr('number.mijn_optimistische_variabele', 'berekende_waarde') | float(0) }}
+#             {% endif %}
+            
+#           laatste_update: >-
+#             {% if trigger is defined and trigger.platform == 'event' %}
+#               {{ now().strftime('%H:%M:%S') }}
+#             {% else %}
+#               {{ state_attr('number.mijn_optimistische_variabele', 'laatste_update') | default('Nooit') }}
+#             {% endif %}
+
+# action: number.set_value
+# target:
+#   entity_id: number.mijn_optimistische_variabele
+# data:
+#   value: 42
+
+# action: homeassistant.fire_event
+# data:
+#   event_type: update_number_attributen
+#   event_data:
+#     berekening: 87.5  # Dit getal komt in het attribuut 'berekende_waarde'

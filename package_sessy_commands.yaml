@@ -69,6 +69,10 @@ script:
           setpoint: '{{setpoint}}'
 
   sessy_set_power_distributed:
+    fields:
+      setpoint_l1: {}
+      setpoint_l2: {}
+      setpoint_l3: {}
     sequence:
       - action: rest_command.sessy_set_power_setpoint_distributed
         data:
