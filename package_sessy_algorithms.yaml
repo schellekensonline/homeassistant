@@ -42,9 +42,9 @@ template:
               setpoint: >-
                 {% if num_active_next == 0 %}
                   {{ 0 }}
-                {% elif ( soc_state >= 100 and zom_state < -10 ) %} {# -10W hysteresis, no charging with a full battery #}
+                {% elif ( soc_state >= 98 and zom_state < -nom_power ) %} {# -xW hysteresis, no charging with a full battery #}
                   {{ 0 }}
-                {% elif ( soc_state <= 0 and zom_state > 10 ) %} {# 10W hysteresis, no discharging with an empty battery #}
+                {% elif ( soc_state <= 2 and zom_state > nom_power ) %} {# xW hysteresis, no discharging with an empty battery #}
                   {{ 0 }}
                 {% else %}
                   {{ zom_state / num_active_next }} {# divide across the target active inverters #}
