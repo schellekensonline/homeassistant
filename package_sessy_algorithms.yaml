@@ -28,16 +28,15 @@ template:
         set_value:
           - variables:
               decay:      "{{ 1-5/(30*60) }}" # 5s update, 30min decay --> b~1-Ts/tau
-              soc_state:  "{{states('sensor.sessy_battery_state_of_charge') | int(0) }}"
-              zom_state:  "{{states('number.sessy_api_strategy_zom_state')  | int(0) }}"
+              soc_state:  "{{states('sensor.sessy_battery_state_of_charge') | round(0) }}"
+              zom_state:  "{{states('number.sessy_api_strategy_zom_state')  | round(0) }}"
               peak_state: "{{states('number.sessy_api_strategy_zom_peak_state') | round(2) }}"
-              nom_power:  "{{states('input_number.sessy_api_strategy_inverter_nominal_power') | int(0) }}"
-              num_active: "{{states('number.sessy_api_strategy_active_inverters')  | int(0) }}"
+              nom_power:  "{{states('input_number.sessy_api_strategy_inverter_nominal_power') | round(0) }}"
               num_active_next: >-
                 {% if peak_state <= 0 or nom_power <= 0 %}
-                  0
+                  {{ 0 | int(0) }}  
                 {% else %}
-                  {{ min(3, 1 + ((peak_state / nom_power) | int(0))) }}
+                  {{ min( 3, 1 + ((peak_state/nom_power) | int(0)) ) | int(0) }}
                 {% endif %}
               setpoint: >-
                 {% if num_active_next == 0 %}
@@ -54,15 +53,18 @@ template:
             target:
               entity_id: number.sessy_api_strategy_zom_peak_state
             data:
-              value: "{{ max(zom_state | abs, decay*peak_state) | round(2) }}"
+              value: >- 
+                {% if setpoint == 0 %} {# reset peak detector when no power is requested #}
+                  {{ 0  | round(2) }}
+                {% else %}
+                  {{ max(zom_state | abs, decay*peak_state) | round(2) }}
+                {% endif %}
           # Update number of active inverters
           - action: number.set_value
             target:
               entity_id: number.sessy_api_strategy_active_inverters
             data:
               value: "{{ num_active_next }}"
-          - variables:
-              desired_active_count: "{{ num_active_next | int(0) }}"
           - variables:
               active_inverter_event_data: >-
                 {% set tot_energy_l1 = states('sensor.sessy_l1_imported_energy') | float(0) + states('sensor.sessy_l1_exported_energy') | float(0) %}
@@ -71,15 +73,15 @@ template:
                 {% set active_l1 = state_attr('number.sessy_api_strategy_active_inverters', 'l1_active') | bool(false) %}
                 {% set active_l2 = state_attr('number.sessy_api_strategy_active_inverters', 'l2_active') | bool(false) %}
                 {% set active_l3 = state_attr('number.sessy_api_strategy_active_inverters', 'l3_active') | bool(false) %}
-                {% set active_count = active_l1 | int + active_l2 | int + active_l3 | int %}
+                {% set active_count = active_l1 + active_l2 + active_l3 %}
 
                 {# Keep the current phase assignment while the desired count is unchanged. #}
-                {% if desired_active_count | int(0) != active_count %}
+                {% if num_active_next != active_count %}
                   {% set active_l1 = false %}
                   {% set active_l2 = false %}
                   {% set active_l3 = false %}
 
-                {% if desired_active_count | int(0) == 1 %}
+                {% if num_active_next == 1 %}
                   {% if tot_energy_l1 <= tot_energy_l2 and tot_energy_l1 <= tot_energy_l3 %}
                     {% set active_l1 = true %}
                   {% elif tot_energy_l2 <= tot_energy_l3 %}
@@ -87,7 +89,7 @@ template:
                   {% else %}
                     {% set active_l3 = true %}
                   {% endif %}
-                {% elif desired_active_count | int(0) == 2 %}
+                {% elif num_active_next == 2 %}
                   {# Deactivate the highest-energy inverter; ties prefer l3, then l2. #}
                   {% if tot_energy_l3 >= tot_energy_l1 and tot_energy_l3 >= tot_energy_l2 %}
                     {% set active_l1 = true %}
@@ -99,7 +101,7 @@ template:
                     {% set active_l2 = true %}
                     {% set active_l3 = true %}
                   {% endif %}
-                {% elif desired_active_count | int(0) >= 3 %}
+                {% elif num_active_next >= 3 %}
                   {% set active_l1 = true %}
                   {% set active_l2 = true %}
                   {% set active_l3 = true %}
