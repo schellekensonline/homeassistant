@@ -137,11 +137,11 @@ template:
         state_class: total
         unit_of_measurement: "kWh"
         availability: >
-          {% set tot_import = states('sensor.p1_meter_3c39e72e6af0_total_power_import') | float(0) %}
-          {% set tot_export = states('sensor.p1_meter_3c39e72e6af0_total_power_export') | float(0) %}
-          {% set tot_solar = states('sensor.total_pv_generation_preserved') | float(0) %}
-          {% set tot_battery_charge = states('sensor.sessy_total_charged_energy') | float(0) %}
-          {% set tot_battery_discharge= states('sensor.sessy_total_discharged_energy') | float(0) %}
+          {% set tot_import = states('sensor.p1_meter_3c39e72e6af0_total_power_import') | float("unknown") %}
+          {% set tot_export = states('sensor.p1_meter_3c39e72e6af0_total_power_export') | float("unknown") %}
+          {% set tot_solar = states('sensor.total_pv_generation_preserved') | float("unknown") %}
+          {% set tot_battery_charge = states('sensor.sessy_total_charged_energy') | float("unknown") %}
+          {% set tot_battery_discharge= states('sensor.sessy_total_discharged_energy') | float("unknown") %}
           {{ tot_import|is_number and tot_export|is_number and tot_solar|is_number and tot_battery_charge|is_number and tot_battery_discharge|is_number }}
         state: >
           {% set tot_import = states('sensor.p1_meter_3c39e72e6af0_total_power_import') | float(0) %}
