@@ -7,13 +7,18 @@ template:
         unit_of_measurement: "W"
         device_class: power
         state_class: measurement
+        availability: >
+          {% set tot_p1  = states('sensor.p1_meter_3c39e72e6af0_active_power') | float("unknown") %}  {# to from grid positive #}
+          {% set tot_pv  = states('sensor.goodwe_total_pv_input_power') | float("unknown") %}                {# to grid positive #}
+          {% set tot_bat = states('sensor.sessy_grid_total_power') | float("unknown") %}                     {# to grid positive #}
+          {{ tot_p1|is_number and tot_pv|is_number and tot_bat|is_number}}
         state: >-
           {% set tot_p1   = states('sensor.p1_meter_3c39e72e6af0_active_power') | float(0) %}  {# to from grid positive #}
           {% set tot_pv   = states('sensor.goodwe_total_pv_input_power') | float(0) %}                {# to grid positive #}
-          {% set tot_batt = states('sensor.sessy_grid_total_power') | float(0) %}                     {# to grid positive #}
+          {% set tot_bat = states('sensor.sessy_grid_total_power') | float(0) %}                     {# to grid positive #}
           {% set tot_hp   = states('sensor.therma_v_electric_power') | float(0) %}                    {# from grid positive #}  
 
-          {{ (tot_p1  + tot_hp - tot_pv - tot_batt)  | round(2) }}
+          {{ (tot_p1  + tot_hp - tot_pv - tot_bat)  | round(2) }}
 
       # Template sensoren om bestaande data te mappen naar de namen in jouw EMHASS config
       - name: "EMHASS PV Power"
