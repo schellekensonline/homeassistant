@@ -32,18 +32,15 @@ template:
               zom_state:  "{{states('number.sessy_api_strategy_zom_state')  | round(0) }}"
               peak_state: "{{states('number.sessy_api_strategy_zom_peak_state') | round(2) }}"
               nom_power:  "{{states('input_number.sessy_api_strategy_inverter_nominal_power') | round(0) }}"
+              zom_sat:    "{{ (soc_state >= 98 and zom_state < -0.5*nom_power) or (soc_state <= 2 and zom_state > 0.5*nom_power) }}" 
               num_active_next: >-
-                {% if peak_state <= 0 or nom_power <= 0 %}
+                {% if nom_power <= 0 %} {# prevent division by zero #}
                   {{ 0 | int(0) }}  
                 {% else %}
                   {{ min( 3, 1 + ((peak_state/nom_power) | int(0)) ) | int(0) }}
                 {% endif %}
               setpoint: >-
-                {% if num_active_next == 0 %}
-                  {{ 0 }}
-                {% elif ( soc_state >= 98 and zom_state < -nom_power ) %} {# -xW hysteresis, no charging with a full battery #}
-                  {{ 0 }}
-                {% elif ( soc_state <= 2 and zom_state > nom_power ) %} {# xW hysteresis, no discharging with an empty battery #}
+                {% if zom_sat %}
                   {{ 0 }}
                 {% else %}
                   {{ zom_state / num_active_next }} {# divide across the target active inverters #}
@@ -54,8 +51,8 @@ template:
               entity_id: number.sessy_api_strategy_zom_peak_state
             data:
               value: >- 
-                {% if setpoint == 0 %} {# reset peak detector when no power is requested #}
-                  {{ 0  | round(2) }}
+                {% if zom_sat %} {# reset peak detector when battery if full or empty #}
+                  {{ zom_state  | round(2) }}
                 {% else %}
                   {{ max(zom_state | abs, decay*peak_state) | round(2) }}
                 {% endif %}
