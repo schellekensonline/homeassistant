@@ -414,8 +414,8 @@ automation:
               {% elif price_pct < buy_pct %}
                 {% if forced_charge and charge %}
                   Proportional Charge
-                {% elif charge %}
-                  Zero on Meter Charge
+                {# elif charge #}
+                {#  Zero on Meter Charge #}
                 {% else %}
                   Zero on Meter
                 {% endif %}
