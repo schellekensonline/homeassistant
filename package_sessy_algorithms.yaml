@@ -32,12 +32,22 @@ template:
               zom_state:  "{{states('number.sessy_api_strategy_zom_state')  | round(0) }}"
               peak_state: "{{states('number.sessy_api_strategy_zom_peak_state') | round(2) }}"
               nom_power:  "{{states('input_number.sessy_api_strategy_inverter_nominal_power') | round(0) }}"
+              hyst_power:  "{{states('input_number.sessy_api_strategy_inverter_hysteresis_power') | round(0) }}"
+              num_active:  "{{states('number.sessy_api_strategy_active_inverters') | round(0) }}"
               zom_sat:    "{{ (soc_state >= 98 and zom_state < -0.5*nom_power) or (soc_state <= 2 and zom_state > 0.5*nom_power) }}" 
               num_active_next: >-
                 {% if nom_power <= 0 %} {# prevent division by zero #}
                   {{ 0 | int(0) }}  
                 {% else %}
-                  {{ min( 3, 1 + ((peak_state/nom_power) | int(0)) ) | int(0) }}
+                  {% set num_up   = min( 3, 1 + ((peak_state/(nom_power+hyst_power)) | int(0)) ) | int(0) %}
+                  {% set num_down = min( 3, 1 + ((peak_state/max(nom_power-hyst_power,0)) | int(0)) ) | int(0) %}
+                  {% if num_up > num_active %}
+                    {{ num_up }}
+                  {% elif num_down < num_active %}
+                    {{ num_down }}
+                  {% else %}
+                    {{ num_active }}  
+                  {% endif %}
                 {% endif %}
               setpoint: >-
                 {% if zom_sat %}
@@ -45,6 +55,12 @@ template:
                 {% else %}
                   {{ zom_state / num_active_next }} {# divide across the target active inverters #}
                 {% endif %}
+          # Update number of active inverters
+          - action: number.set_value
+            target:
+              entity_id: number.sessy_api_strategy_active_inverters
+            data:
+              value: "{{ num_active_next }}"
           # Update peak power detector
           - action: number.set_value
             target:
@@ -56,12 +72,6 @@ template:
                 {% else %}
                   {{ max(zom_state | abs, decay*peak_state) | round(2) }}
                 {% endif %}
-          # Update number of active inverters
-          - action: number.set_value
-            target:
-              entity_id: number.sessy_api_strategy_active_inverters
-            data:
-              value: "{{ num_active_next }}"
           - variables:
               active_inverter_event_data: >-
                 {% set tot_energy_l1 = states('sensor.sessy_l1_imported_energy') | float(0) + states('sensor.sessy_l1_exported_energy') | float(0) %}
@@ -238,22 +248,6 @@ input_number:
     # initial: 10000
     mode: box
     unit_of_measurement: "Wh"
-  sessy_api_strategy_min_prop_charge_soc: # minimum state of charge to start proportional charging, used to prevent overcharging the battery
-    name: "Sessy API min proportional charge SoC"
-    min: 0
-    max: 100 
-    step: 1
-    # initial: 50
-    mode: box
-    unit_of_measurement: "%"
-  sessy_api_strategy_min_prop_discharge_soc: # minimum state of charge to start proportional discharging, used to prevent overdischarging the battery
-    name: "Sessy API min proportional discharge SoC"
-    min: 0
-    max: 100 
-    step: 1
-    # initial: 50
-    mode: box
-    unit_of_measurement: "%"
   sessy_api_strategy_solar_surplus_margin_charge:
     name: "Sessy API solar surplus margin charge"
     min: 0
@@ -278,7 +272,15 @@ input_number:
     min: 0
     max: 1000000 # Redicilous large value
     step: 1
-    initial: 1500
+    initial: 1500 # 10% of nom_power for switching logic
+    mode: box
+    unit_of_measurement: "W"
+  sessy_api_strategy_inverter_hysteresis_power:
+    name: "Sessy API inverer hysteresis power"
+    min: 0
+    max: 1000000 # Redicilous large value
+    step: 1
+    initial: 250 # 10% of nom_power hysteresis in switching logic
     mode: box
     unit_of_measurement: "W"
   sessy_api_strategy_max_charge_power:
@@ -317,8 +319,7 @@ input_number:
 
 automation:
 # CONSIDER ADDING AN AUTOMATION WHICH SETS THE INPUT_NUMBERS DAILY AFTER MIDNIGHT BASED ON SOLAR SURPLUS
-# AND CHEAPEST ENERGY HOURS, LEAVE ACTUAL SOLAR SURPLUS IN AS SAFETY NET TO STOP SELLING IF SOLAR IS LESS
-# THAN EXPECTED, AND TO STOP BUYING IF SOLAR IS MORE THAN EXPECTED, SET BOTH SOLAR SURPLUS LEVELS CLOSE TO 1.
+# AND CHEAPEST ENERGY HOURS
 # TRY TO HAVE LESS THAN 4 CLEAR SETTINGS FOR THAT AUTOMATION
 # BETTER 1 OR 2 THAT SET HOW AGRESSIVE IT SELS/BUYS ENERGY
 #
@@ -370,27 +371,29 @@ automation:
 
             {# Forced operation
             {# When charging is forced, buying energy #}
-            {% set forced_charging = ( (solar_surplus < solar_margin_charge) and (soc < min_prop_charge_soc) ) or price <= price_foreced_buy %}
-            {% set solar_charging        = (solar_surplus < solar_margin_charge) %}
+            {% set forced_charge_soc = 100*max(min( (1-1/solar_surplus) ,1),0) %}
+            {% set forced_charge     = (soc < forced_charge_soc)  or (price <= price_foreced_buy) %}
+            {% set charge            = solar_surplus < solar_margin_charge %}
             {# When discharging is forced, selling energy #}
-            {% set forced_discharging =   (solar_surplus > solar_margin_discharge) and (soc > min_prop_discharge_soc) %}
-            {% set solar_discharging  =   (solar_surplus > solar_margin_discharge) %}
-            
+            {% set forced_discharge_soc = 100*max(min( (1/solar_surplus) ,1),0) %}
+            {% set forced_discharge     = (soc > forced_discharge_soc) %}
+            {% set discharge            = solar_surplus > solar_margin_discharge %}
+
             {# 2. Decision Logic #}
             {% if price_spread >= min_price_spread %}    {# Spread sufficient (e.g. >22ct) -> Execute proportional trading (sell surplus only) #}
 
               {% if price_pct > sell_pct %}  {# Price is high: Sell if expected solar will recharge the battery later, or if already full #}
-                {% if forced_discharging %}
+                {% if discharge or forced_discharge %}
                   Proportional Discharge
                 {% else %}
-                  Zero on Meter Support
+                  Zero on Meter
                 {% endif %}
               
-              {% elif price_pct <= buy_pct %}
-                {% if forced_charging %}
+              {% elif price_pct < buy_pct %}
+                {% if charge or forced_charge %}
                   Proportional Charge
                 {% else %}
-                  Zero on Meter {# CHANGE TO ZOM CHARGE LATER #}
+                  Zero on Meter
                 {% endif %}
               
               {% else %}
@@ -399,9 +402,20 @@ automation:
               
             {% else %} {# Spread is too narrow (e.g. <22ct) -> buying makes no sense #}
 
-              {% if price_pct >= sell_pct %} {# Price is high: Sell if expected solar will recharge the battery later, or if already full #}
-                {% if forced_discharging %}
+              {% if price_pct > sell_pct %}  {# Price is high: Sell if expected solar will recharge the battery later, or if already full #}
+                {% if forced_discharge and discharge %}
                   Proportional Discharge
+                {% elif discharge %}
+                  Zero on Meter Discharge
+                {% else %}
+                  Zero on Meter
+                {% endif %}
+              
+              {% elif price_pct < buy_pct %}
+                {% if forced_charge and charge %}
+                  Proportional Charge
+                {% elif charge %}
+                  Zero on Meter Charge
                 {% else %}
                   Zero on Meter
                 {% endif %}
@@ -480,52 +494,3 @@ automation:
             {% else %}
               {{ 0 | int }}
             {% endif %}
-
-
-# template:
-#   - trigger:
-#       # We luisteren ALLEEN naar het event voor de attributen.
-#       # De 'state' regelt zichzelf optimistisch via number.set_value!
-#       - trigger: event
-#         event_type: update_number_attributen
-#     number:
-#       - name: "Mijn Optimistische Variabele"
-#         unique_id: mijn_optimistische_variabele
-#         min: 0
-#         max: 100
-#         step: 1
-        
-#         # Geen 'state:' gedefinieerd -> HA draait nu in optimistische modus!
-        
-#         # set_value MOET aanwezig zijn (mag leeg zijn met '[]' of een loze actie), 
-#         # anders accepteert de UI/actie geen wijzigingen.
-#         set_value: [] 
-
-#         attributes:
-#           # Als het event binnenkomt: pak de nieuwe berekende waarde.
-#           # Als de state verandert via set_value: behoud de huidige attribuutwaarde.
-#           berekende_waarde: >-
-#             {% if trigger is defined and trigger.platform == 'event' %}
-#               {{ trigger.event.data.berekening }}
-#             {% else %}
-#               {{ state_attr('number.mijn_optimistische_variabele', 'berekende_waarde') | float(0) }}
-#             {% endif %}
-            
-#           laatste_update: >-
-#             {% if trigger is defined and trigger.platform == 'event' %}
-#               {{ now().strftime('%H:%M:%S') }}
-#             {% else %}
-#               {{ state_attr('number.mijn_optimistische_variabele', 'laatste_update') | default('Nooit') }}
-#             {% endif %}
-
-# action: number.set_value
-# target:
-#   entity_id: number.mijn_optimistische_variabele
-# data:
-#   value: 42
-
-# action: homeassistant.fire_event
-# data:
-#   event_type: update_number_attributen
-#   event_data:
-#     berekening: 87.5  # Dit getal komt in het attribuut 'berekende_waarde'
