@@ -369,15 +369,14 @@ automation:
             {% set min_prop_charge_soc    = states('input_number.sessy_api_strategy_min_prop_charge_soc') | float(0) %}
             {% set min_prop_discharge_soc = states('input_number.sessy_api_strategy_min_prop_discharge_soc') | float(0) %}
 
-            {# Forced operation
+            {# Forced operation #}
+            {% set forced_soc       = 100*max(min( (1/solar_surplus) ,1),0) %}
             {# When charging is forced, buying energy #}
-            {% set forced_charge_soc = 100*max(min( (1-1/solar_surplus) ,1),0) %}
-            {% set forced_charge     = (soc < forced_charge_soc)  or (price <= price_foreced_buy) %}
-            {% set charge            = solar_surplus < solar_margin_charge %}
+            {% set forced_charge    = (soc < forced_soc)  or (price <= price_foreced_buy) %}
+            {% set charge           = solar_surplus < solar_margin_charge %}
             {# When discharging is forced, selling energy #}
-            {% set forced_discharge_soc = 100*max(min( (1/solar_surplus) ,1),0) %}
-            {% set forced_discharge     = (soc > forced_discharge_soc) %}
-            {% set discharge            = solar_surplus > solar_margin_discharge %}
+            {% set forced_discharge = (soc > forced_soc) %}
+            {% set discharge        = solar_surplus > solar_margin_discharge %}
 
             {# 2. Decision Logic #}
             {% if price_spread >= min_price_spread %}    {# Spread sufficient (e.g. >22ct) -> Execute proportional trading (sell surplus only) #}
