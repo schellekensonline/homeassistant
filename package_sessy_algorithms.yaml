@@ -171,6 +171,11 @@ template:
         not_to:
           - unknown
           - unavailable
+      # Vangnet: herreken elk kwartier. Zonder dit blijft de sensor op zijn waarde
+      # staan als een trigger tijdens de startvolgorde gemist is (bijv. wanneer het
+      # 7-daags gemiddelde pas na deze sensor uit de database wordt opgebouwd).
+      - trigger: time_pattern
+        minutes: "/15"
     sensor:
       - name: "Sessy API strategy estimated energy surplus"
         unique_id: sessy_api_strategy_estimated_energy_surplus
