@@ -96,8 +96,9 @@ template:
           {{ current|is_number }}
         state: >
           {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
-          {% set high = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='max', use_hourly_avg=false, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) %}
-          {% set low = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='min', use_hourly_avg=false, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) %}
+          {# | float(0): als de macro geen getal teruggeeft (bijv. prijzen nog niet binnen) gaf (high-low) een TypeError #}
+          {% set high = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='max', use_hourly_avg=false, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) | float(0) %}
+          {% set low = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='min', use_hourly_avg=false, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) | float(0) %}
           
           {{ ( (high-low) )  | round(3) }}
 
