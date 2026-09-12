@@ -1,6 +1,8 @@
 template:
   - sensor:
-    # Compatibility sensor Goodwe integration
+    # The GoodWe Modbus entities at the bottom of this file expose only voltages and
+    # currents, so the power values are derived here: DC string power as V x I per string,
+    # AC phase power as V x I per phase (apparent power, in VA).
     - name: "Goodwe PV1 input power"
       unique_id: goodwe_pv1_input_power
       state_class: measurement
@@ -15,7 +17,6 @@ template:
         {% set Ipv1 = states('sensor.goodwe_pv1_input_current') | float(0) %}
 
         {{ (Vpv1*Ipv1) | round(0) }}
-    # Compatibility sensor Goodwe integration
     - name: "Goodwe PV2 input power"
       unique_id: goodwe_pv2_input_power
       state_class: measurement
@@ -49,7 +50,6 @@ template:
         {% set Ipv2 = states('sensor.goodwe_pv2_input_current') | float(0) %}
         {{ ((Vpv1*Ipv1)+(Vpv2*Ipv2)) | round(0) }}
 
-    # Compatibility sensor Goodwe integration
     - name: "Goodwe L1 phase power"
       unique_id: goodwe_l1_phase_power
       state_class: measurement
@@ -64,7 +64,6 @@ template:
         {% set IL1 = states('sensor.goodwe_l1_phase_current') | float(0) %}
 
         {{ (VL1*IL1) | round(0) }}
-    # Compatibility sensor Goodwe integration
     - name: "Goodwe L2 phase power"
       unique_id: goodwe_l2_phase_power
       state_class: measurement
@@ -79,7 +78,6 @@ template:
         {% set IL2 = states('sensor.goodwe_l2_phase_current') | float(0) %}
 
         {{ (VL2*IL2) | round(0) }}
-    # Compatibility sensor Goodwe integration
     - name: "Goodwe L3 phase power"
       unique_id: goodwe_l3_phase_power
       state_class: measurement
@@ -96,8 +94,9 @@ template:
         {{ (VL3*IL3) | round(0) }}
 
 automation:
-  # Manual pollig modbus to prevent polling over night when inverter is off
-  # Set scan_interval to 0 of all Goodwe modbus sensors
+  # Manual Modbus polling, so nothing is polled overnight while the inverter is off.
+  # Every GoodWe Modbus entity below has scan_interval: 0, which makes this automation
+  # the only reader; it runs every 20 s and only while the sun is above the horizon.
   - id: goodwe_scan_modbus_auto
     alias: "Goodwe scan modbus auto"
     description: "Polls all sensor entities for modbus_gateway_goodwe"
@@ -118,30 +117,23 @@ automation:
       - variables:
           # Find entities with sensor.goodwe_
           goodwe_list: "{{ states.sensor | selectattr('entity_id', 'search', 'sensor.goodwe_') | list | map(attribute='entity_id') | list }}"
-          # Remaining items with other naming
+          # Energy counters that don't follow the sensor.goodwe_ naming
           other_list:
             - sensor.today_s_pv_generation
             - sensor.total_pv_generation
       - action: homeassistant.update_entity
         target:
-          # Append lists
+          # Poll the goodwe entities and the two counters in one call
           entity_id: "{{goodwe_list+other_list}}"
 
 
 
 
 modbus:
-  # Custom modbus interface
-  #
-  # Goodwe
-  #    baudrate: 9600
-  #    bytesize: 8
-  #    method: rtu
-  #    parity: N
-  #    stopbits: 1
-  #
-  #    slave: 1 
-  #    address: from Goodwe manual
+  # Custom Modbus interface for the GoodWe inverter, reached through an RTU-over-TCP
+  # gateway. The gateway's serial side towards the inverter is configured as:
+  #   9600 baud, 8 data bits, no parity, 1 stop bit, RTU (slave id 1)
+  # Register addresses and scaling come from the GoodWe Modbus manual.
   - name: "modbus_gateway_goodwe"
     type: rtuovertcp
     host: 10.43.110.10
@@ -151,7 +143,7 @@ modbus:
     # message_wait_milliseconds: 100
 
     sensors:
-      # HOLDING REGISTRERS
+      # HOLDING REGISTERS
       # - name: "Goodwe active power adjust" # 0 to 100%
       #   scan_interval: 0
       #   address: 256
@@ -172,7 +164,8 @@ modbus:
         state_class: measurement
         unit_of_measurement: "%"
         data_type: uint16
-      # # Should be one for for use of grid export limit function! Can be set manually on inverter, or with modbus_write.
+      # The inverter's grid export limit function has to be enabled on the device itself
+      # (or written over Modbus) before register 292 has any effect.
       # - name: "Goodwe export power limit switch" #0 or 1 %
       #   scan_interval: 0
       #   address: 291
@@ -189,7 +182,7 @@ modbus:
       #   scale: 1 #0 or 1 %
       #   data_type: uint16
 
-      # Error message see table 8-2 modbus manual
+      # Error code bit field, see table 8-2 of the GoodWe Modbus manual.
       # Bit31 0x80000000 SPI Fail
       # Bit30 0x40000000 EEPROM R/W Fail
       # Bit29 0x20000000 Grid frequency overrun
@@ -413,7 +406,7 @@ modbus:
         unit_of_measurement: "°C"
         data_type: uint16
 
-      # Name same as original integration to not lose energy data
+      # Named after the original integration's entity, so existing energy statistics survive
       - name: "Today's PV Generation" # daily energy produced
         unique_id: today_s_pv_generation
         scan_interval: 0
@@ -456,8 +449,7 @@ modbus:
         scale: 1
         data_type: uint16
 
-      # Warning code
-      # ?
+      # Warning code; the meaning is not documented in the manual we have
       - name: "Goodwe warning code" 
         unique_id: goodwe_warning_code
         scan_interval: 0

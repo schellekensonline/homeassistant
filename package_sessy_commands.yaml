@@ -1,8 +1,14 @@
+# Sessy battery control over its REST API: set the active strategy and the power setpoint.
+# This is the low-level layer (scripts plus input helpers); the logic that decides which
+# strategy to use lives in package_sessy_algorithms.yaml.
+#
 # Reference material (Dutch forum threads):
 #  https://forum.sessy.nl/home-assistant/quick-start-sessy-integreren-met-home-assistant/
 #  https://forum.sessy.nl/home-assistant/scripts-om-sessys-aan-uit-te-zetten-vanuit-ha/
 
-# STRATEGY [ POWER_STRATEGY_NOM, POWER_STRATEGY_ROI, POWER_STRATEGY_API, POWER_STRATEGY_IDLE, POWER_STRATEGY_SESSY_CONNECT, POWER_STRATEGY_ECO ]
+# Valid values for the strategy field of the Sessy API:
+# POWER_STRATEGY_NOM, POWER_STRATEGY_ROI, POWER_STRATEGY_API, POWER_STRATEGY_IDLE,
+# POWER_STRATEGY_SESSY_CONNECT, POWER_STRATEGY_ECO
 
 rest_command:
   sessy_set_active_strategy:
@@ -99,32 +105,32 @@ input_number:
   sessy_power_setpoint:
     name: "Sessy power setpoint"
     icon: mdi:transmission-tower
-    min: -6000  # Maximaal laden
-    max: 6000   # Maximaal ontladem
+    min: -6000  # maximum charge
+    max: 6000   # maximum discharge
     step: 100
     unit_of_measurement: W
     mode: box
   # sessy_power_setpoint_inv1:
   #   name: "Sessy power setpoint L1"
   #   icon: mdi:transmission-tower
-  #   min: -2000  # maximaal laden
-  #   max: 2000   # maximaal ontladen
+  #   min: -2000  # maximum charge
+  #   max: 2000   # maximum discharge
   #   step: 100
   #   unit_of_measurement: W
   #   mode: box
   # sessy_power_setpoint_inv2:
   #   name: "Sessy power setpoint L2"
   #   icon: mdi:transmission-tower
-  #   min: -2000  # Maximaal laden
-  #   max: 2000   # Maximaal ontladen
+  #   min: -2000  # maximum charge
+  #   max: 2000   # maximum discharge
   #   step: 100
   #   unit_of_measurement: W
   #   mode: box
   # sessy_power_setpoint_inv3:
   #   name: "Sessy power setpoint L3"
   #   icon: mdi:transmission-tower
-  #   min: -2000  # Maximaal laden
-  #   max: 2000   # Maximaal ontladen
+  #   min: -2000  # maximum charge
+  #   max: 2000   # maximum discharge
   #   step: 100
   #   unit_of_measurement: W
   #   mode: box
@@ -141,7 +147,7 @@ automation:
       - condition: template
         value_template: "{{ trigger.to_state.state not in ['unknown', 'unavailable'] }}"
     action:
-      # auto set to api when slider is set to non zero
+      # A non-zero setpoint only makes sense in API mode, so switch the strategy over
       - choose:
         - conditions:
             - condition: template
@@ -194,7 +200,7 @@ automation:
       - action: script.sessy_set_strategy
         data:
           strategy: "{{ trigger.to_state.state }}"
-      # auto set to slider to 0 when strategy is non api
+      # Outside API mode the setpoint is ignored, so reset the slider to 0
       - choose:
         - conditions:
             - condition: template

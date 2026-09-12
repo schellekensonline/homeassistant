@@ -1,5 +1,9 @@
-# Climate template from github, add to HACS as custom integration
+# LG Therma V climate entity, built on the HACS climate_template integration:
 # https://github.com/jcwillox/hass-template-climate
+#
+# It wraps the heat pump's Modbus registers into a regular climate entity. Non-auto modes
+# write the target water temperature (address 2, degrees x 10); auto mode writes a delta
+# (address 4, signed 16-bit, hence the +65536 for negative values).
 climate:
   - platform: climate_template
     name: "Therma V heating/cooling"
@@ -43,7 +47,7 @@ climate:
       {% else %} {# other modes in regular register #}
         {{ states('sensor.therma_v_target_temperature_circuit_1') }}
       {% endif %}
-    set_temperature: # variables temperature, target_temp_high, target_temp_low and hvac_mode 
+    set_temperature:  # receives: temperature, target_temp_high, target_temp_low, hvac_mode
       - choose:     
         - conditions:
             - "{{ is_state('sensor.therma_v_operation_mode', '3') }}" # auto mode 
@@ -166,7 +170,7 @@ climate:
 
 
 
-# # Same as on the RMC. 
+# # Same as on the wired remote controller (RMC).
 # # In case of Air+Water first set water control mode (0 or 1) then set to Air+Water (2)
 # #       - "Water outlet temperature"  # 0
 # #       - "Water inlet temperature"   # 1
@@ -184,7 +188,7 @@ climate:
 #       - "Water Outlet"
 #       - "Unknown"
 
-# automation:  ## STILL NEEDS A LOT OF WORKING ON
+# automation:  ## work in progress, deliberately left disabled
 #   - id: "therma_v_control_mode_update_auto"
 #     alias: "Therma V control mode update auto"
 #     description: "Updates the control mode based on input numbers and modbus"

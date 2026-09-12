@@ -43,7 +43,7 @@ input_number:
 
 template:
   - sensor:
-      # Template sensor for prices including tax  
+      # Price including tax: Nord Pool price plus purchasing fee, energy tax and VAT
       - name: "Nord pool NL current prices Including Tax"
         unique_id: nord_pool_nl_current_prices_including_tax
         unit_of_measurement: "€/kWh"
@@ -70,7 +70,7 @@ template:
             {{ ns.list }}
 
           
-      # Template sensors for current percentage of energy price
+      # Where the current price sits between today's cheapest and most expensive hour
       - name: "Current percentage of electricity price"
         unique_id: current_percentage_of_electricity_price
         unit_of_measurement: "%"
@@ -86,7 +86,7 @@ template:
 
           {{ ( (current-low) / max(high-low,0.0001) * 100 ) | round(1, default=0) }} {# max to prevent dix0 #}
 
-      # sensor that determines the e-price difference today
+      # Difference between the most and least expensive hour today
       - name: "Difference in electricity price today"
         unique_id: difference_in_electricity_price_today
         state_class: measurement
@@ -102,7 +102,7 @@ template:
           
           {{ ( (high-low) )  | round(3) }}
 
-      # Template sensors to determine the electricity cost per hour EURO/hr incl. tax, includes use of ex price when power is negative 
+      # Cost per hour in EUR/h including tax; uses the export price when the power is negative
       - name: "Electric power cost per hour including tax"
         unique_id: electric_power_cost_per_hour_including_tax
         state_class: measurement
@@ -117,7 +117,7 @@ template:
             {% set cost_in = states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) %}
             {% set cost_ex = states('sensor.nord_pool_nl_current_prices_excluding_tax') | float(0) %}
             {{ power/1000*cost_in if power > 0 else power/1000*cost_ex }}
-      # Template sensors to determine the electricity cost per hour EURO/hr excl. tax
+      # Cost per hour in EUR/h excluding tax
       - name: "Electric power cost per hour excluding tax"
         unique_id: electric_power_cost_per_hour_excluding_tax
         state_class: measurement
@@ -130,8 +130,8 @@ template:
             {% set power   = states('sensor.p1_meter_3c39e72e6af0_active_power') | float(0) %}
             {% set cost    = states('sensor.nord_pool_nl_current_price') | float(0) %}
             {{ power/1000*cost }}
-      # Total energy used in home.
-      # Is input for a statistics sensor that calculates daily data wich is in turn averaged 
+      # Total energy used in the home. Feeds the statistics sensors that calculate the
+      # daily figure, which is then averaged
       - name: "Electric energy used in home"
         unique_id: electric_energy_used_in_home
         device_class: energy
@@ -153,7 +153,7 @@ template:
           
           {{ (tot_import - tot_export + tot_solar + tot_battery_discharge - tot_battery_charge) | round(2) }}
 
-  # Triggered PV sensor that preserves its value during night
+  # Triggered PV sensor that holds its value overnight, when the source resets
   - trigger:
       - platform: state
         entity_id: sensor.total_pv_generation
@@ -169,7 +169,7 @@ template:
         state: "{{ trigger.to_state.state }}"
 
 
-  # Triggered Nord Pool price gathering in attributes excluding tax
+  # Triggered Nord Pool sensor; the raw prices live in its attributes, excluding tax
   - trigger:
       - platform: state
         entity_id: sensor.nord_pool_nl_current_price
@@ -238,7 +238,7 @@ template:
         state: "{{ states('sensor.energy_used_in_home_today')|float(0) }}"
 
 sensor:
-  # integration of Euro/hr result is Euros
+  # Integrating EUR/h gives EUR (Riemann sum)
   - platform: integration
     name: "Energy cost including tax"
     unique_id: energy_cost_including_tax
@@ -253,8 +253,8 @@ sensor:
     method: left
     unit_time: h
     round: 2
-  # moving difference over 24hrs used for template sensors that trigger at 0:00
-  # utility meters cycle and cannot be used reliably with the triggers in the template sensors
+  # Difference over the last 24 hours, used by the templates that snapshot at midnight.
+  # Utility meters cycle at midnight and cannot be combined reliably with those triggers.
   - platform: statistics
     name: Energy cost over one day including tax
     unique_id: energy_cost_over_one_day_including_tax
@@ -279,7 +279,7 @@ sensor:
     max_age:
       hours: 24
     precision: 2
-  # moving average over 7 days used for sessy api strategy
+  # Seven-day moving average of the daily consumption, used by the Sessy API strategy
   - platform: statistics
     name: "Average daily energy used in home"
     unique_id: average_daily_energy_used_in_home
@@ -315,14 +315,14 @@ utility_meter:
     net_consumption: true #allows negative power
 
 automation:
-  # Plan low and high hours
+  # Plan the cheapest and most expensive hours of the day
   - id: plan_electricity_lowest_hours_auto
     alias: "Plan electricity highest and lowest hours auto"
     description: "Plan start moment of higest and lowest electricity price hours"
     mode: single
     triggers:
     - trigger: time_pattern
-      # Run every one hour on the whole day to prevent missing days
+      # Run hourly across the whole day, so a missed run cannot skip a day
       hours: "/1"
     actions:
       - variables:
@@ -333,13 +333,13 @@ automation:
           start_highest_hour: >
             {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
             {{ cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices', time_key='time', value_key='price', use_hourly_avg=true, mode='time_max', hours='all', look_ahead=false, include_today=true, include_tomorrow=false) }}
-      # plan start lowest hours
+      # Start time of the cheapest hours
       - action: input_datetime.set_datetime
         target:
           entity_id: input_datetime.start_time_electricity_lowest_hours
         data:
           datetime: "{{start_lowest_hours}}" 
-      # plan start highest hours
+      # Start time of the most expensive hours
       - action: input_datetime.set_datetime
         target:
           entity_id: input_datetime.start_time_electricity_highest_hour
