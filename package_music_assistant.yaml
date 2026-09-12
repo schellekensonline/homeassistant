@@ -119,7 +119,9 @@ automation:
       data:
         options: >
           {% if mass_album is defined and 'items' in mass_album %}
-            {{ ['Geen albums gevonden'] + (mass_album['items'] | map(attribute='name') | list) }}
+            {# the placeholder has to match the value both automations ignore and the value the
+               ESPHome display checks for, so the album list uses the same string as the radio list #}
+            {{ ['Geen favorieten gevonden'] + (mass_album['items'] | map(attribute='name') | list) }}
           {% else %}
             {{ ['Geen favorieten gevonden'] | list }}
           {% endif %}
