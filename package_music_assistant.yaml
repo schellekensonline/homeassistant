@@ -1,13 +1,17 @@
 input_select:
-  # Input select to switch between heatpump power saving regimes
+  # Holds the Music Assistant radio stations and albums. Both lists are filled by the
+  # automations at the bottom of this file, so they always reflect the live library.
   music_assistant_radio_select:
     name: "Music Assistant Radio selector"
     options:
-      - "Geen favorieten gevonden"   # text should match with ESPhome text_sensor
+      # Intentionally Dutch: shown verbatim on the media player, and it has to keep
+      # matching the ESPHome text sensor.
+      - "Geen favorieten gevonden"
   music_assistant_album_select:
     name: "Music Assistant Album selector"
     options:
-      - "Geen favorieten gevonden"   # text should match with ESPhome text_sensor
+      # Intentionally Dutch, same reason as above.
+      - "Geen favorieten gevonden"
 
 template:
   - sensor:
@@ -25,7 +29,7 @@ template:
 automation:
   - id: music_assistant_get_radiostations_auto
     alias: "Music Assistant get Radiostations auto"
-    description: "Haalt radiozenders op en zet ze in een input_select"
+    description: "Fetches the radio stations and puts them in an input_select"
     trigger:
       - platform: homeassistant
         event: start
@@ -42,21 +46,21 @@ automation:
           domain: homeassistant
           service: reload_all
     action:
-    # 1. Haal de live bibliotheek op van Music Assistant
+    # 1. Fetch the favourite radio stations from the live Music Assistant library
     - action: music_assistant.get_library
       data:
         media_type: radio
         favorite: true
         config_entry_id: 01KRK5PNB04Z9WV4PESRKCGJ9X
       response_variable: mass_radio
-      # 2. Vul de Home Assistant input_select helper met de zenders
+      # 2. Fill the Home Assistant input_select helper with the stations
     - action: input_select.set_options
       target:
         entity_id: input_select.music_assistant_radio_select
       data:
         options: >
           {% if mass_radio is defined and 'items' in mass_radio %}
-            {# placeholder meesturen, anders is de huidige selectie ongeldig zodra de lijst gevuld raakt #}
+            {# keep the placeholder in the list, otherwise the current selection becomes invalid once the list fills up #}
             {{ ['Geen favorieten gevonden'] + (mass_radio['items'] | map(attribute='name') | list) }}
           {% else %}
             {{ ['Geen favorieten gevonden'] | list }}
@@ -65,7 +69,7 @@ automation:
 
   - id: music_assistant_play_selected_station_auto
     alias: "Music Assistant Play Selected Station auto"
-    description: "Start direct de zender zodra de input_select helper wijzigt"
+    description: "Plays the station as soon as the input_select helper changes"
     trigger:
       - platform: state
         entity_id: input_select.music_assistant_radio_select
@@ -76,7 +80,7 @@ automation:
     action:
       - action: music_assistant.play_media
         target:
-          entity_id: media_player.esp32_s3_box_player  # <--- Vervang dit door de media_player van je S3 Box (of je andere speaker)
+          entity_id: media_player.esp32_s3_box_player  # <--- replace with your S3 Box media_player (or another speaker)
         data:
           media_id: "{{ trigger.to_state.state }}"
           media_type: radio
@@ -84,7 +88,7 @@ automation:
 
   - id: music_assistant_get_albums_auto
     alias: "Music Assistant get Albums auto"
-    description: "Haalt Albums op en zet ze in een input_select"
+    description: "Fetches the albums and puts them in an input_select"
     trigger:
       - platform: homeassistant
         event: start
@@ -101,14 +105,14 @@ automation:
           domain: homeassistant
           service: reload_all
     action:
-    # 1. Haal de live bibliotheek op van Music Assistant
+    # 1. Fetch the favourite albums from the live Music Assistant library
     - action: music_assistant.get_library
       data:
         media_type: album
         favorite: true
         config_entry_id: 01KRK5PNB04Z9WV4PESRKCGJ9X
       response_variable: mass_album
-      # 2. Vul de Home Assistant input_select helper met de zenders
+      # 2. Fill the Home Assistant input_select helper with the albums
     - action: input_select.set_options
       target:
         entity_id: input_select.music_assistant_album_select
@@ -123,7 +127,7 @@ automation:
 
   - id: music_assistant_play_selected_album_auto
     alias: "Music Assistant Play Selected Album auto"
-    description: "Start direct de zender zodra de input_select helper wijzigt"
+    description: "Plays the album as soon as the input_select helper changes"
     trigger:
       - platform: state
         entity_id: input_select.music_assistant_album_select
@@ -134,7 +138,7 @@ automation:
     action:
       - action: music_assistant.play_media
         target:
-          entity_id: media_player.esp32_s3_box_player  # <--- Vervang dit door de media_player van je S3 Box (of je andere speaker)
+          entity_id: media_player.esp32_s3_box_player  # <--- replace with your S3 Box media_player (or another speaker)
         data:
           media_id: "{{ trigger.to_state.state }}"
           media_type: album
@@ -154,7 +158,7 @@ automation:
           entity_id: light.esp32_s3_box_player_backlight
       - action: music_assistant.play_media
         target:
-          entity_id: media_player.esp32_s3_box_player  # <--- Vervang dit door de media_player van je S3 Box (of je andere speaker)
+          entity_id: media_player.esp32_s3_box_player  # <--- replace with your S3 Box media_player (or another speaker)
         data:
           media_id: "{{ states('input_select.music_assistant_radio_select') }}"
           media_type: radio
@@ -173,7 +177,7 @@ automation:
           entity_id: light.esp32_s3_box_player_backlight
       - action: music_assistant.play_media
         target:
-          entity_id: media_player.esp32_s3_box_player  # <--- Vervang dit door de media_player van je S3 Box (of je andere speaker)
+          entity_id: media_player.esp32_s3_box_player  # <--- replace with your S3 Box media_player (or another speaker)
         data:
           media_id: "{{ states('input_select.music_assistant_album_select') }}"
           media_type: album
@@ -196,7 +200,7 @@ automation:
 
   - id: music_assistant_execute_ir_command_auto
     alias: "Music Assistant execute IR command auto"
-    description: "Stuurt media-opdrachten ontvangen door de ir receiver naar player"
+    description: "Forwards media commands received by the IR receiver to the player"
     mode: parallel
     max: 10
     trigger:
@@ -322,7 +326,7 @@ automation:
                           cycle: true
                         target:
                           entity_id: input_select.music_assistant_album_select
-                # Standaard actie als er GEEN radio of album activiteit actief is
+                # Default action when there is NO radio or album activity
                 default:
                   - action: media_player.media_previous_track
                     target:
@@ -358,7 +362,7 @@ automation:
                           cycle: true
                         target:
                           entity_id: input_select.music_assistant_album_select 
-                # Standaard actie als er GEEN radio of album activiteit actief is
+                # Default action when there is NO radio or album activity
                 default:
                   - action: media_player.media_next_track
                     target:

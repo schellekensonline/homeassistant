@@ -1,3 +1,4 @@
+# Reference material (Dutch forum threads):
 #  https://forum.sessy.nl/home-assistant/quick-start-sessy-integreren-met-home-assistant/
 #  https://forum.sessy.nl/home-assistant/scripts-om-sessys-aan-uit-te-zetten-vanuit-ha/
 
@@ -166,10 +167,10 @@ automation:
         entity_id: sensor.sessy_active_strategy
     condition:
       - condition: template
-        # Voorkom fouten bij opstarten
+        # Avoid errors during startup
         value_template: "{{ trigger.to_state.state not in ['unknown', 'unavailable'] }}"
       - condition: template
-        # Pas de input_select ALLEEN aan als deze momenteel iets anders aangeeft dan de sensor
+        # Only update the input_select when it currently differs from the sensor
         value_template: "{{ states('input_select.sessy_strategy') != trigger.to_state.state }}"
     action:
       - action: input_select.select_option
@@ -187,7 +188,7 @@ automation:
         entity_id: input_select.sessy_strategy
     condition:
       - condition: template
-        # Voorkomt dat de automatisering triggert bij een Home Assistant herstart (wanneer status 'unknown' of 'unavailable' is)
+        # Prevents the automation from firing on a Home Assistant restart (state 'unknown' or 'unavailable')
         value_template: "{{ trigger.to_state.state not in ['unknown', 'unavailable'] }}"
     action:
       - action: script.sessy_set_strategy

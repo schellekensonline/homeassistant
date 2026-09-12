@@ -1,4 +1,4 @@
-## GEBRUIK GEEN SECRETS IN AUTOMATIONS DE UI VAN HASS PIKT DAT NIET MEER
+## Do NOT use secrets in automations: the Home Assistant UI can no longer load them.
 
 # - id: '1690223671897'
 #   alias: person front door notification

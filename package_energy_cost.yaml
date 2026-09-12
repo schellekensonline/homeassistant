@@ -96,7 +96,7 @@ template:
           {{ current|is_number }}
         state: >
           {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
-          {# | float(0): als de macro geen getal teruggeeft (bijv. prijzen nog niet binnen) gaf (high-low) een TypeError #}
+          {# | float(0): when the macro returns no number (e.g. prices not published yet) the subtraction raised a TypeError #}
           {% set high = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='max', use_hourly_avg=false, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) | float(0) %}
           {% set low = cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', mode='min', use_hourly_avg=false, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) | float(0) %}
           
@@ -284,11 +284,11 @@ sensor:
     name: "Average daily energy used in home"
     unique_id: average_daily_energy_used_in_home
     entity_id: sensor.daily_energy_used_in_home
-    # average_step = tijdsgewogen gemiddelde. Een herstart-flikkering heeft dezelfde
-    # waarde als de dagwaarde en splitst alleen een interval, dus verschuift het
-    # gemiddelde niet meer. Met 'mean' kreeg elke flikkering een volwaardige stem.
+    # average_step = time-weighted average. A restart flap carries the same value as the
+    # daily value and only splits one interval, so it no longer moves the average.
+    # With 'mean' every flap got a full vote of its own.
     state_characteristic: average_step
-    # ruim genoeg dat een reeks herstarts/reloads de dagwaarden niet uit de buffer drukt
+    # large enough that a burst of restarts/reloads cannot push the daily values out of the buffer
     sampling_size: 60
     max_age:
       days: 7

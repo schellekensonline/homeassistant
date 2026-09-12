@@ -76,22 +76,22 @@ automation:
             {% set p1_power      = states('sensor.p1_meter_active_power_filtered') | float(0) %}
             {% set ctrl_power    = p1_power + threshold_power %} {# -threshold_power is the reference power #} 
 
-            {# Bereken de nieuwe limiet op basis van het P1-overschot/tekort #}
+            {# Adjust the export limit from the P1 surplus/shortfall #}
             {% set adjustment    = (update_ratio * 100 / rated_power) * ctrl_power %}
             {% set new_limit     = current_limit + adjustment %}
             
-            {# Begrens de uitkomst strikt tussen 0% en 100% #}
+            {# Clamp the result strictly between 0% and 100% #}
             {{ max(min(new_limit, 100), 0) }}
             
           balanced_max: >-
             {% set base_price   = states('sensor.nord_pool_nl_current_price') | float(0) | abs %}
             {% set taxed_price  = states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) | abs %}
             
-            {# Voorkom delen door nul als beide prijzen exact 0 zijn #}
+            {# Avoid a division by zero when both prices are exactly 0 #}
             {% set total_price  = taxed_price + base_price %}
             
             {% if total_price > 0 %}
-              {# Bereken het procentuele aandeel van de basisprijs #}
+              {# Work out the base price's share of the total price #}
               {% set price_ratio   = (base_price / total_price) * 100.0 %}
               {% set balanced_calc = 100.0 - price_ratio %}
               {{ max(min(balanced_calc, 100), 0) }}

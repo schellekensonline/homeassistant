@@ -67,7 +67,7 @@ template:
               entity_id: number.sessy_api_strategy_zom_peak_state
             data:
               value: >- 
-                {% if zom_sat %} {# peak detector volgt |zom_state|; na saturatie direct het juiste aantal inverters #}
+                {% if zom_sat %} {# peak detector tracks |zom_state|, so the right number of inverters is active when saturation ends #}
                   {{ zom_state | abs | round(2) }}
                 {% else %}
                   {{ max(zom_state | abs, decay*peak_state) | round(2) }}
@@ -171,9 +171,9 @@ template:
         not_to:
           - unknown
           - unavailable
-      # Vangnet: herreken elk kwartier. Zonder dit blijft de sensor op zijn waarde
-      # staan als een trigger tijdens de startvolgorde gemist is (bijv. wanneer het
-      # 7-daags gemiddelde pas na deze sensor uit de database wordt opgebouwd).
+      # Safety net: recompute every 15 minutes. Without it the sensor keeps its old value
+      # whenever a trigger is missed during the startup order (for example when the 7-day
+      # average is only rebuilt from the database after this sensor has been created).
       - trigger: time_pattern
         minutes: "/15"
     sensor:
@@ -198,10 +198,10 @@ template:
           solar_remain_wh:   "{{ (solar_remain_west + solar_remain_east)*1000 }}"
           daily_use:              "{{ states('sensor.average_daily_energy_used_in_home')  | float(0) }}"
           todays_use:             "{{ states('sensor.today_s_energy_used_in_home') | float(0) }}"
-          # bodem = 20% van het dagverbruik (min. 1 Wh tegen delen door nul).
-          # Deze bodem bepaalt ook waar de ontlaadvlag omslaat: met marge 1,5 en 13,5 kWh
-          # bruikbaar komt 20% neer op ~50% SoC. Omdat de bodem meeschaalt met het
-          # daggemiddelde wordt de grens in de winter automatisch ruimer.
+          # Floor at 20% of the daily consumption (at least 1 Wh, to avoid dividing by zero).
+          # This floor also decides where the discharge flag flips: with a margin of 1.5 and
+          # 13.5 kWh usable, 20% works out to roughly 50% SoC. Because the floor scales with
+          # the daily average, the limit automatically opens up in winter.
           daily_energy_remain_wh: "{{ max( (daily_use - todays_use)*1000 , 0.2 * daily_use * 1000 , 1) }}"
           charge_surplus: "{{ max( (batt_remain_wh - daily_energy_remain_wh) / daily_energy_remain_wh, 0) | round(2)}}"
           solar_surplus:  "{{ max( (solar_remain_wh - daily_energy_remain_wh) / batt_free_wh, 0) | round(2)}}"
