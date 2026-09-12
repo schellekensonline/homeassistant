@@ -31,7 +31,9 @@ template:   !include templates.yaml
 recorder:
   db_url: !secret database_url
   auto_purge: true
-  purge_keep_days: 90
+  # 60 days is long enough to look back on the energy history, and short enough to keep
+  # the database (and every copy of it in the backup) within bounds
+  purge_keep_days: 60
   commit_interval: 30
 
 # # Allow traefik etc.
