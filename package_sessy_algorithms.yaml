@@ -193,7 +193,11 @@ template:
           solar_remain_wh:   "{{ (solar_remain_west + solar_remain_east)*1000 }}"
           daily_use:              "{{ states('sensor.average_daily_energy_used_in_home')  | float(0) }}"
           todays_use:             "{{ states('sensor.today_s_energy_used_in_home') | float(0) }}"
-          daily_energy_remain_wh: "{{ max( (daily_use - todays_use)*1000 , 1) }}" # clip to 1 min. to prevent div
+          # bodem = 20% van het dagverbruik (min. 1 Wh tegen delen door nul).
+          # Deze bodem bepaalt ook waar de ontlaadvlag omslaat: met marge 1,5 en 13,5 kWh
+          # bruikbaar komt 20% neer op ~50% SoC. Omdat de bodem meeschaalt met het
+          # daggemiddelde wordt de grens in de winter automatisch ruimer.
+          daily_energy_remain_wh: "{{ max( (daily_use - todays_use)*1000 , 0.2 * daily_use * 1000 , 1) }}"
           charge_surplus: "{{ max( (batt_remain_wh - daily_energy_remain_wh) / daily_energy_remain_wh, 0) | round(2)}}"
           solar_surplus:  "{{ max( (solar_remain_wh - daily_energy_remain_wh) / batt_free_wh, 0) | round(2)}}"
         state: >-
@@ -259,20 +263,12 @@ input_number:
     initial: 15000
     mode: box
     unit_of_measurement: "Wh"
-  sessy_auto_api_strategy_expected_daily_energy_wh: # Installed capacity of the battery in Wh, used to calculate remaining capacity for proportional trading
-    name: "Sessy API Expected Daily Energy use"
-    min: 0
-    max: 1000000 # Redicilous large value
-    step: 1
-    # initial: 10000
-    mode: box
-    unit_of_measurement: "Wh"
   sessy_api_strategy_surplus_margin_charge:
     name: "Sessy API surplus margin charge"
     min: 0
     max: 10 
     step: 0.1
-    initial: 1
+    # initial: 1
     mode: box
     unit_of_measurement: "pu"
   sessy_api_strategy_surplus_margin_discharge:
@@ -280,7 +276,7 @@ input_number:
     min: 0
     max: 10 
     step: 0.1
-    initial: 1
+    # initial: 1
     mode: box
     unit_of_measurement: "pu"
 
@@ -426,7 +422,7 @@ automation:
                 {% if forced_discharge and discharge %}
                   Proportional Discharge
                 {% elif discharge %}
-                  Zero on Meter Discharge
+                  Zero on Meter Support
                 {% else %}
                   Zero on Meter
                 {% endif %}
