@@ -159,33 +159,51 @@ template:
           l3_active: >-
             {{ trigger.event.data.l3_active | default(false) | bool }}
 
-  - sensor:
-      - name: "Sessy API strategy estimated solar surplus"
-        unique_id: sessy_api_strategy_estimated_solar_surplus
+  - trigger:
+      - trigger: state
+        entity_id:
+          - sensor.sessy_battery_state_of_charge
+          - input_number.sessy_auto_api_strategy_battery_capacity_wh
+          - sensor.energy_production_today_remaining_east
+          - sensor.energy_production_today_remaining_west
+          - sensor.average_daily_energy_used_in_home
+          - sensor.today_s_energy_used_in_home
+        not_to:
+          - unknown
+          - unavailable
+    sensor:
+      - name: "Sessy API strategy estimated energy surplus"
+        unique_id: sessy_api_strategy_estimated_energy_surplus
         state_class: measurement
         unit_of_measurement: "pu"
         # availability: >
         #   {% set current = states('sensor.nord_pool_nl_current_prices_including_tax') | float("unknown") %}
         #   {{ current|is_number }}
+        # Time left for the day #}
+        # set seconds_left   = ((now().replace(hour=0,minute=0,second=0,microsecond=0) + timedelta(days=1)) - now()).total_seconds() #}
+        # set pu_day_left    = max(seconds_left/86400, 0.05) #}  
+        # set daily_energy_remain_wh = 11000  * pu_day_left #}
+        variables:
+          soc:            "{{ states('sensor.sessy_battery_state_of_charge') | float(50) }}"
+          batt_cap_wh:    "{{ states('input_number.sessy_auto_api_strategy_battery_capacity_wh') | float(15000) }}"
+          batt_free_wh:   "{{ max(((100 - soc) / 100) * batt_cap_wh * 0.9 , 1) }}" # clip to 1 min. to prevent div 
+          batt_remain_wh: "{{ (soc / 100) * batt_cap_wh * 0.9 }}"
+          solar_remain_east: "{{ states('sensor.energy_production_today_remaining_east') | float(0) }}"
+          solar_remain_west: "{{ states('sensor.energy_production_today_remaining_west') | float(0) }}"
+          solar_remain_wh:   "{{ (solar_remain_west + solar_remain_east)*1000 }}"
+          daily_use:              "{{ states('sensor.average_daily_energy_used_in_home')  | float(0) }}"
+          todays_use:             "{{ states('sensor.today_s_energy_used_in_home') | float(0) }}"
+          daily_energy_remain_wh: "{{ max( (daily_use - todays_use)*1000 , 1) }}" # clip to 1 min. to prevent div
+          charge_surplus: "{{ max( (batt_remain_wh - daily_energy_remain_wh) / daily_energy_remain_wh, 0) | round(2)}}"
+          solar_surplus:  "{{ max( (solar_remain_wh - daily_energy_remain_wh) / batt_free_wh, 0) | round(2)}}"
         state: >-
-          {% set soc          = states('sensor.sessy_battery_state_of_charge') | float(50) %}
-          {% set batt_cap_wh  = states('input_number.sessy_auto_api_strategy_battery_capacity_wh') | float(15000) %}
-          {% set batt_free_wh = max(((100 - soc) / 100) * batt_cap_wh * 0.9 , 1) %} {# clip to 1 min. to prevent div 0#}
-
-          {% set solar_remain_east = states('sensor.energy_production_today_remaining_east') | float(0) %}
-          {% set solar_remain_west = states('sensor.energy_production_today_remaining_west') | float(0) %}
-          {% set solar_remain_wh      = (solar_remain_west + solar_remain_east)  * 1000 %}
-
-          {% set daily_use              = states('sensor.average_daily_energy_used_in_home')  | float(0) %}
-          {% set todays_use             = states('sensor.todays_energy_used_in_home') | float(0) %}
-          {% set daily_energy_remain_wh = (daily_use - todays_use) * 1000 %}
-
-          {# Time left for the day #}
-          {# set seconds_left   = ((now().replace(hour=0,minute=0,second=0,microsecond=0) + timedelta(days=1)) - now()).total_seconds() #}
-          {# set pu_day_left    = max(seconds_left/86400, 0.05) #}  
-          {# set daily_energy_remain_wh = 11000  * pu_day_left #}
-
-          {{ ( (solar_remain_wh - daily_energy_remain_wh) / batt_free_wh ) | round(1)}}
+          {{ max(charge_surplus, solar_surplus) | round(2) }}
+        attributes:
+          charge_surplus: >-
+            {{ charge_surplus }}
+          solar_surplus: >-
+            {{ solar_surplus }}
+              
 
 input_select:
   sessy_api_strategy:
@@ -195,6 +213,7 @@ input_select:
       - "Manual"
       - "Zero on Meter"
       - "Zero on Meter Support"
+      - "Zero on Meter Charge"
       - "Proportional Discharge"
       - "Proportional Charge"
 
@@ -248,20 +267,20 @@ input_number:
     # initial: 10000
     mode: box
     unit_of_measurement: "Wh"
-  sessy_api_strategy_solar_surplus_margin_charge:
-    name: "Sessy API solar surplus margin charge"
+  sessy_api_strategy_surplus_margin_charge:
+    name: "Sessy API surplus margin charge"
     min: 0
     max: 10 
     step: 0.1
-    # initial: 1
+    initial: 1
     mode: box
     unit_of_measurement: "pu"
-  sessy_api_strategy_solar_surplus_margin_discharge:
-    name: "Sessy API solar surplus margin discharge"
+  sessy_api_strategy_surplus_margin_discharge:
+    name: "Sessy API surplus margin discharge"
     min: 0
     max: 10 
     step: 0.1
-    # initial: 1
+    initial: 1
     mode: box
     unit_of_measurement: "pu"
 
@@ -357,26 +376,28 @@ automation:
             {% set sell_pct   = states('input_number.sessy_auto_api_strategy_sell_pct') | float(100) %}
             {% set min_price_spread = states('input_number.sessy_auto_api_strategy_min_spread') | float(1) %}
 
-            {# Solar data #}
-            {% set solar_surplus = states('sensor.sessy_api_strategy_estimated_solar_surplus') | float(0) %}
+            {# Surplus data #}
+            {% set margin_min     = 0.001 %} {# prevent division by zero #} 
+            {% set energy_surplus = max(states('sensor.sessy_api_strategy_estimated_energy_surplus') | float(0) , margin_min) %}
+            {% set solar_surplus  = max(state_attr('sensor.sessy_api_strategy_estimated_energy_surplus','solar_surplus') | float(0) , margin_min) %}
+            {% set charge_surplus = max(state_attr('sensor.sessy_api_strategy_estimated_energy_surplus','charge_surplus') | float(0) , margin_min) %}
 
             {# Battery data #}
             {% set soc = states('sensor.sessy_battery_state_of_charge') | float(0) %}
 
             {# Settings #}
-            {% set solar_margin_charge    = states('input_number.sessy_api_strategy_solar_surplus_margin_charge') | float(0) %} 
-            {% set solar_margin_discharge = states('input_number.sessy_api_strategy_solar_surplus_margin_discharge') | float(0) %}
-            {% set min_prop_charge_soc    = states('input_number.sessy_api_strategy_min_prop_charge_soc') | float(0) %}
-            {% set min_prop_discharge_soc = states('input_number.sessy_api_strategy_min_prop_discharge_soc') | float(0) %}
+            {% set surplus_margin_charge    = states('input_number.sessy_api_strategy_surplus_margin_charge') | float(0) %}
+            {% set surplus_margin_discharge = states('input_number.sessy_api_strategy_surplus_margin_discharge') | float(0) %}
 
             {# Forced operation #}
-            {% set forced_soc       = 100*max(min( (1/solar_surplus) ,1),0) %}
+            {% set solar_soc       = 100*max(min( (1/solar_surplus) ,1),0) %}
+            {% set charge_soc      = 100*max(min( (1/charge_surplus) ,1),0) %}
             {# When charging is forced, buying energy #}
-            {% set forced_charge    = (soc < forced_soc)  or (price <= price_foreced_buy) %}
-            {% set charge           = solar_surplus < solar_margin_charge %}
+            {% set forced_charge    = (soc < solar_soc) or (soc < charge_soc) or (price <= price_foreced_buy) %}
+            {% set charge           = (solar_surplus < surplus_margin_charge)  or (charge_surplus < surplus_margin_charge) %}
             {# When discharging is forced, selling energy #}
-            {% set forced_discharge = (soc > forced_soc) %}
-            {% set discharge        = solar_surplus > solar_margin_discharge %}
+            {% set forced_discharge = (soc > solar_soc) or (soc > charge_soc) %}
+            {% set discharge        = (solar_surplus > surplus_margin_discharge) or (charge_surplus > surplus_margin_discharge) %}
 
             {# 2. Decision Logic #}
             {% if price_spread >= min_price_spread %}    {# Spread sufficient (e.g. >22ct) -> Execute proportional trading (sell surplus only) #}
@@ -413,8 +434,8 @@ automation:
               {% elif price_pct < buy_pct %}
                 {% if forced_charge and charge %}
                   Proportional Charge
-                {# elif charge #}
-                {#  Zero on Meter Charge #}
+                {% elif charge %}
+                  Zero on Meter Charge
                 {% else %}
                   Zero on Meter
                 {% endif %}
@@ -468,6 +489,9 @@ automation:
 
             {% elif strategy == 'Zero on Meter Support' %}
               {{ zom_discharge | int }} {# no charging for high energy prices #}
+
+            {% elif strategy == 'Zero on Meter Charge' %}
+              {{ zom_charge | int }} {# no discharging for low energy prices #}
 
             {% elif strategy == 'Proportional Charge' %}
             {# Buys energy or absorbs PV: enforces the strongest charging signal #}
