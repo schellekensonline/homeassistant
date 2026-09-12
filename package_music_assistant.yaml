@@ -10,8 +10,9 @@ input_select:
   music_assistant_album_select:
     name: "Music Assistant Album selector"
     options:
-      # Intentionally Dutch, same reason as above.
-      - "Geen favorieten gevonden"
+      # Intentionally Dutch, same reason as above. This is the text the album screen of
+      # the ESPHome player shows when there is nothing to list.
+      - "Geen albums gevonden"
 
 template:
   - sensor:
@@ -119,11 +120,10 @@ automation:
       data:
         options: >
           {% if mass_album is defined and 'items' in mass_album %}
-            {# the placeholder has to match the value both automations ignore and the value the
-               ESPHome display checks for, so the album list uses the same string as the radio list #}
-            {{ ['Geen favorieten gevonden'] + (mass_album['items'] | map(attribute='name') | list) }}
+            {# keep the placeholder in the list, otherwise the current selection becomes invalid once the list fills up #}
+            {{ ['Geen albums gevonden'] + (mass_album['items'] | map(attribute='name') | list) }}
           {% else %}
-            {{ ['Geen favorieten gevonden'] | list }}
+            {{ ['Geen albums gevonden'] | list }}
           {% endif %}
     mode: restart
 
