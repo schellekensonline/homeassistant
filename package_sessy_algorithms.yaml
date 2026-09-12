@@ -67,8 +67,8 @@ template:
               entity_id: number.sessy_api_strategy_zom_peak_state
             data:
               value: >- 
-                {% if zom_sat %} {# reset peak detector when battery if full or empty #}
-                  {{ zom_state  | round(2) }}
+                {% if zom_sat %} {# peak detector volgt |zom_state|; na saturatie direct het juiste aantal inverters #}
+                  {{ zom_state | abs | round(2) }}
                 {% else %}
                   {{ max(zom_state | abs, decay*peak_state) | round(2) }}
                 {% endif %}
