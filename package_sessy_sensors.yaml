@@ -23,9 +23,10 @@ sensor:
     name: "Sessy Active Strategy"
     unique_id: sessy_active_strategy
     method: GET
-    resource_template: "http://{{ states('input_text.sessy_url') }}/api/v1/power/active_strategy"
+    # Vaste URL uit secrets: geen afhankelijkheid van input_text tijdens de HA-start
+    resource: !secret sessy_url_active_strategy
     headers:
-      Authorization: "Basic {{ states('input_text.sessy_auth') | base64_encode }}"
+      Authorization: !secret sessy_auth_basic
     value_template: "{{ value_json.strategy }}"
     scan_interval: 15
 
@@ -34,9 +35,9 @@ sensor:
     name: "Sessy EOL NS Data"
     unique_id: sessy_eol_ns_data
     method: GET
-    resource_template: "http://{{ states('input_text.sessy_url') }}/api/v1/eol/ns"
+    resource: !secret sessy_url_eol_ns
     headers:
-      Authorization: "Basic {{ states('input_text.sessy_auth') | base64_encode }}"
+      Authorization: !secret sessy_auth_basic
     value_template: "{{ value_json.driver_state }}"
     json_attributes:
       - network_switch
@@ -48,9 +49,9 @@ sensor:
     name: "Sessy power status data"
     unique_id: sessy_pover_status_data
     method: GET
-    resource_template: "http://{{ states('input_text.sessy_url') }}/api/v2/power/status"
+    resource: !secret sessy_url_power_status
     headers:
-      Authorization: "Basic {{ states('input_text.sessy_auth') | base64_encode }}"
+      Authorization: !secret sessy_auth_basic
     value_template: "{{ value_json.status }}"
     json_attributes:
       - sessy
