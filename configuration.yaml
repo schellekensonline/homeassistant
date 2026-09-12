@@ -31,7 +31,7 @@ template:   !include templates.yaml
 recorder:
   db_url: !secret database_url
   auto_purge: true
-  purge_keep_days: 30
+  purge_keep_days: 90
   commit_interval: 30
 
 # # Allow traefik etc.
