@@ -8,17 +8,20 @@ template:
         device_class: power
         state_class: measurement
         availability: >
-          {% set tot_p1  = states('sensor.p1_meter_3c39e72e6af0_active_power') | float("unknown") %}  {# to from grid positive #}
-          {% set tot_pv  = states('sensor.goodwe_total_pv_input_power') | float("unknown") %}                {# to grid positive #}
-          {% set tot_bat = states('sensor.sessy_grid_total_power') | float("unknown") %}                     {# to grid positive #}
-          {{ tot_p1|is_number and tot_pv|is_number and tot_bat|is_number}}
+          {% set tot_p1  = states('sensor.p1_meter_3c39e72e6af0_active_power') | float("unknown") %}
+          {% set tot_pv  = states('sensor.goodwe_total_pv_input_power') | float("unknown") %}
+          {% set tot_bat = states('sensor.sessy_grid_total_power') | float("unknown") %}
+          {% set tot_hp  = states('sensor.therma_v_electric_power') | float("unknown") %}
+          {{ tot_p1|is_number and tot_pv|is_number and tot_bat|is_number and tot_hp|is_number }}
         state: >-
-          {% set tot_p1   = states('sensor.p1_meter_3c39e72e6af0_active_power') | float(0) %}  {# to from grid positive #}
-          {% set tot_pv   = states('sensor.goodwe_total_pv_input_power') | float(0) %}                {# to grid positive #}
-          {% set tot_bat = states('sensor.sessy_grid_total_power') | float(0) %}                     {# to grid positive #}
-          {% set tot_hp   = states('sensor.therma_v_electric_power') | float(0) %}                    {# from grid positive #}  
+          {# All terms use "positive = delivering" so they add up to the house consumption #}
+          {% set tot_p1   = states('sensor.p1_meter_3c39e72e6af0_active_power') | float(0) %}  {# positive = import from grid #}
+          {% set tot_pv   = states('sensor.goodwe_total_pv_input_power') | float(0) %}         {# positive = PV production #}
+          {% set tot_bat  = states('sensor.sessy_grid_total_power') | float(0) %}              {# positive = battery discharge #}
+          {% set tot_hp   = states('sensor.therma_v_electric_power') | float(0) %}             {# positive = heatpump consumption #}
 
-          {{ (tot_p1  + tot_hp - tot_pv - tot_bat)  | round(2) }}
+          {# house consumption = grid import + PV + battery discharge, minus the steerable heatpump #}
+          {{ (tot_p1 + tot_pv + tot_bat - tot_hp) | round(2) }}
 
       # Template sensoren om bestaande data te mappen naar de namen in jouw EMHASS config
       - name: "EMHASS PV Power"
@@ -51,6 +54,18 @@ template:
             {{ tot_pv | round(0) }}
           {% endif %}
 
+input_number:
+  # Doel-SoC die EMHASS als eindwaarde van de horizon meekrijgt (via REST, niet via config.json)
+  emhass_soc_target:
+    name: "EMHASS battery SoC target"
+    icon: mdi:battery-charging-60
+    min: 0
+    max: 100
+    step: 1
+    initial: 60
+    mode: slider
+    unit_of_measurement: "%"
+
 rest_command:
   # Commando om het Machine Learning model te trainen op historische HA data
   emhass_fit_load_model:
@@ -67,10 +82,10 @@ rest_command:
       {% set excl = state_attr('sensor.nord_pool_nl_current_prices_excluding_tax', 'prices') | map(attribute='price') | list %}
       {
         "load_cost_forecast": {{ incl | to_json }},
-        "prod_price_forecast": {{ excl | to_json }}
+        "prod_price_forecast": {{ excl | to_json }},
+        "soc_init": {{ (states('sensor.sessy_battery_state_of_charge') | float(60) / 100) | round(3) }},
+        "soc_final": {{ (states('input_number.emhass_soc_target') | float(60) / 100) | round(3) }}
       }
-# "prediction_horizon": 96,
-# "optimization_time_step": 15
 
   # Korte termijn optimalisatie (bijvoorbeeld elk kwartier uitvoeren)
   emhass_naive_mpc_optim:
@@ -96,14 +111,18 @@ rest_command:
 
       {
         "load_cost_forecast":  {{ incl_rounded | to_json }},
-        "prod_price_forecast": {{ excl_rounded | to_json }}
+        "prod_price_forecast": {{ excl_rounded | to_json }},
+        "prediction_horizon": 96,
+        "soc_init": {{ (states('sensor.sessy_battery_state_of_charge') | float(60) / 100) | round(3) }},
+        "soc_final": {{ (states('input_number.emhass_soc_target') | float(60) / 100) | round(3) }}
       }
-# "optimization_time_step": 15
 
   # Data handmatig publiceren naar Home Assistant sensoren
   emhass_publish:
     url: "http://localhost:5000/action/publish-data"
     method: POST
+    content_type: "application/json"
+    payload: "{}"
 
 automation:
 ## even niet todat de house power sensor voldoende data heeft. Zet de Historic_days_to_retrieve: eerst op 2 dan 7, 14 tot 60
