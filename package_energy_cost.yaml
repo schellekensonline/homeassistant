@@ -283,8 +283,12 @@ sensor:
     name: "Average daily energy used in home"
     unique_id: average_daily_energy_used_in_home
     entity_id: sensor.daily_energy_used_in_home
-    state_characteristic: mean
-    sampling_size: 10
+    # average_step = tijdsgewogen gemiddelde. Een herstart-flikkering heeft dezelfde
+    # waarde als de dagwaarde en splitst alleen een interval, dus verschuift het
+    # gemiddelde niet meer. Met 'mean' kreeg elke flikkering een volwaardige stem.
+    state_characteristic: average_step
+    # ruim genoeg dat een reeks herstarts/reloads de dagwaarden niet uit de buffer drukt
+    sampling_size: 60
     max_age:
       days: 7
 
@@ -340,4 +344,3 @@ automation:
           entity_id: input_datetime.start_time_electricity_highest_hour
         data:
           datetime: "{{start_highest_hour}}" 
-
