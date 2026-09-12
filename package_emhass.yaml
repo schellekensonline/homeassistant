@@ -67,6 +67,17 @@ input_number:
     mode: slider
     unit_of_measurement: "%"
 
+binary_sensor:
+  # EMHASS draait als aparte container. Deze sensor laat een automatisering wachten
+  # tot EMHASS echt antwoordt (na een herstart van de stack).
+  - platform: rest
+    name: "EMHASS online"
+    unique_id: emhass_online
+    resource: "http://localhost:5000/healthz"
+    value_template: "{{ value_json.status == 'ok' }}"
+    scan_interval: 60
+    timeout: 10
+
 rest_command:
   # Commando om het Machine Learning model te trainen op historische HA data
   emhass_fit_load_model:
@@ -150,13 +161,30 @@ automation:
 
   - id: emhass_execute_mpc_optimization_auto
     alias: "EMHASS execute MPC optimization auto"
-    description: "Triggert EMHASS elke 15 minuten voor realtime bijsturing en haalt de planning op."
+    description: "Triggert EMHASS elke 15 minuten voor realtime bijsturing en haalt de planning op. Draait ook direct na een HA-herstart."
     mode: single
     trigger:
       - platform: time_pattern
         minutes: "/15"
+        id: interval
+      - platform: homeassistant
+        event: start
+        id: ha_start
     condition: []
     action:
+      # Na een herstart: wacht tot EMHASS antwoordt en de load sensor echte data heeft.
+      # De sensoren van EMHASS (p_load_forecast enz.) verdwijnen bij een HA-herstart,
+      # deze run zet ze direct weer neer.
+      - if:
+          - condition: trigger
+            id: ha_start
+        then:
+          - wait_template: "{{ is_state('binary_sensor.emhass_online', 'on') }}"
+            timeout: "00:03:00"
+            continue_on_timeout: true
+          - wait_template: "{{ states('sensor.emhass_house_power_no_def_loads') not in ['unknown', 'unavailable', 'none', ''] }}"
+            timeout: "00:02:00"
+            continue_on_timeout: true
       - action: rest_command.emhass_naive_mpc_optim
         data: {}
       - delay:
