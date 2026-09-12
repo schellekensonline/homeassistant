@@ -56,7 +56,8 @@ automation:
       data:
         options: >
           {% if mass_radio is defined and 'items' in mass_radio %}
-            {{ mass_radio['items'] | map(attribute='name') | list }}
+            {# placeholder meesturen, anders is de huidige selectie ongeldig zodra de lijst gevuld raakt #}
+            {{ ['Geen favorieten gevonden'] + (mass_radio['items'] | map(attribute='name') | list) }}
           {% else %}
             {{ ['Geen favorieten gevonden'] | list }}
           {% endif %}
@@ -114,7 +115,7 @@ automation:
       data:
         options: >
           {% if mass_album is defined and 'items' in mass_album %}
-            {{ mass_album['items'] | map(attribute='name') | list }}
+            {{ ['Geen albums gevonden'] + (mass_album['items'] | map(attribute='name') | list) }}
           {% else %}
             {{ ['Geen favorieten gevonden'] | list }}
           {% endif %}
