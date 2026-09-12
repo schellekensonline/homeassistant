@@ -21,7 +21,8 @@ template:
           {% set tot_hp   = states('sensor.therma_v_electric_power') | float(0) %}             {# positive = heatpump consumption #}
 
           {# house consumption = grid import + PV + battery discharge, minus the steerable heatpump #}
-          {{ (tot_p1 + tot_pv + tot_bat - tot_hp) | round(2) }}
+          {# clamp at 0: brief P1 transients can momentarily make the balance negative, which is physically impossible #}
+          {{ [ (tot_p1 + tot_pv + tot_bat - tot_hp), 0 ] | max | round(2) }}
 
       # Template sensoren om bestaande data te mappen naar de namen in jouw EMHASS config
       - name: "EMHASS PV Power"
