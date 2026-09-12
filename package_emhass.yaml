@@ -90,6 +90,11 @@ rest_command:
   emhass_dayahead_optim:
     url: "http://localhost:5000/action/dayahead-optim"
     method: POST
+    # EMHASS asks Home Assistant for the recent history before it can optimise, so a run
+    # can take longer than the 10 second default of rest_command. Timing out here means
+    # Home Assistant abandons a run that EMHASS keeps working on, which collides with the
+    # next scheduled run (that is what broke the run just after midnight).
+    timeout: 30
     content_type: "application/json"
     payload: >-
       {% set incl = state_attr('sensor.nord_pool_nl_current_prices_including_tax', 'prices') | map(attribute='price') | list %}
@@ -105,6 +110,8 @@ rest_command:
   emhass_naive_mpc_optim:
     url: "http://localhost:5000/action/naive-mpc-optim"
     method: POST
+    # Same reason as the day-ahead command above: give EMHASS room to answer.
+    timeout: 30
     content_type: "application/json"
     payload: >-
       {% set incl = state_attr('sensor.nord_pool_nl_current_prices_including_tax', 'prices') %}
@@ -191,10 +198,25 @@ automation:
             continue_on_timeout: true
       - action: rest_command.emhass_naive_mpc_optim
         data: {}
+        # The response variable is only set when the call succeeded, so an undefined
+        # variable means the run failed and is worth one retry a minute later.
+        response_variable: mpc_response
+        continue_on_error: true
+      - delay:
+          seconds: 60
+      - if:
+          - condition: template
+            value_template: "{{ mpc_response is not defined }}"
+        then:
+          - action: rest_command.emhass_naive_mpc_optim
+            data: {}
+            continue_on_error: true
       - delay:
           seconds: 5
       - action: rest_command.emhass_publish
         data: {}
+        # Publishing the previous result is better than aborting the whole run.
+        continue_on_error: true
   
   - id: emhass_execute_day_ahead_optimization_auto    
     alias: "EMHASS execute Day-Ahead optimization auto"
