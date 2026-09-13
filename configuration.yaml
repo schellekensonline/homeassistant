@@ -74,7 +74,6 @@ homeassistant:
     goodwe_sensors_pack:        !include package_goodwe_sensors.yaml
     goodwe_export_limit_pack:   !include package_goodwe_export_limit.yaml
     energy_cost_pack:           !include package_energy_cost.yaml
-    unavailable_entities_pack:  !include package_unavailable_entities.yaml
     garden_irrigation_pack:     !include package_garden_irrigation.yaml
     garage_door_pack:           !include package_garage_door.yaml
     music_assistant_pack:       !include package_music_assistant.yaml
