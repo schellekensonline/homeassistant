@@ -168,6 +168,7 @@ template:
           - sensor.energy_production_today_remaining_west
           - sensor.average_daily_energy_used_in_home
           - sensor.today_s_energy_used_in_home
+          - input_number.night_energy_in_percent_of_daily_used_in_home
         not_to:
           - unknown
           - unavailable
@@ -196,13 +197,18 @@ template:
           solar_remain_east: "{{ states('sensor.energy_production_today_remaining_east') | float(0) }}"
           solar_remain_west: "{{ states('sensor.energy_production_today_remaining_west') | float(0) }}"
           solar_remain_wh:   "{{ (solar_remain_west + solar_remain_east)*1000 }}"
-          daily_use:              "{{ states('sensor.average_daily_energy_used_in_home')  | float(0) }}"
-          todays_use:             "{{ states('sensor.today_s_energy_used_in_home') | float(0) }}"
-          # Floor at 20% of the daily consumption (at least 1 Wh, to avoid dividing by zero).
-          # This floor also decides where the discharge flag flips: with a margin of 1.5 and
-          # 13.5 kWh usable, 20% works out to roughly 50% SoC. Because the floor scales with
-          # the daily average, the limit automatically opens up in winter.
-          daily_energy_remain_wh: "{{ max( (daily_use - todays_use)*1000 , 0.2 * daily_use * 1000 , 1) }}"
+          daily_use:  "{{ states('sensor.average_daily_energy_used_in_home')  | float(0) }}"
+          # Fall back to the default 25% when the helper is unknown, so a startup-order
+          # problem cannot silently drop the night reserve to zero.
+          night_pct:  "{{ states('input_number.night_energy_in_percent_of_daily_used_in_home') | float(25) }}"
+          todays_use: "{{ states('sensor.today_s_energy_used_in_home') | float(0) }}"
+
+          # The reserve is the daily use plus the night part (night_pu * daily_use), minus what the
+          # house already used today, and never drops below that night part. At night_pu = 0.25 the
+          # reserve runs from 125% of the daily use after midnight down to 25% at the end of the
+          # day, so the battery is filled ahead of the evening. Clipped to at least 1 Wh.
+          night_pu: "{{ min(max(night_pct / 100 ,0),1) }}"
+          daily_energy_remain_wh: "{{ max( (daily_use*(1+night_pu) - todays_use)*1000 , night_pu * daily_use * 1000 , 1) }}"
           charge_surplus: "{{ max( (batt_remain_wh - daily_energy_remain_wh) / daily_energy_remain_wh, 0) | round(2)}}"
           solar_surplus:  "{{ max( (solar_remain_wh - daily_energy_remain_wh) / batt_free_wh, 0) | round(2)}}"
         state: >-
@@ -284,7 +290,14 @@ input_number:
     # initial: 1
     mode: box
     unit_of_measurement: "pu"
-
+  night_energy_in_percent_of_daily_used_in_home:
+    name: "Night energy in percent of daily used in home"
+    min: 0
+    max: 100
+    step: 1
+    initial: 25 # fixed for my house, but can be adjusted for other houses with different night consumption
+    mode: box
+    unit_of_measurement: "%"
   ## Consider changing everything with max / min power to template number with template max / min based on input number! 
   # FOR API STRATEGY
   sessy_api_strategy_inverter_nominal_power:
