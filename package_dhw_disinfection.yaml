@@ -110,7 +110,7 @@ automation:
       # start time of the cheapes 3 hours between disinfection window start and end
       cheepest_hours: >
         {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
-        {{ cheapest_energy_hours( sensor='sensor.nord_pool_nl_current_prices_excluding_tax', attr_all='prices',time_key='time', value_key='price', hours=3, look_ahead=false, include_today=true, include_tomorrow=false, start=states('input_datetime.dhw_disinfection_window_start'), end=states('input_datetime.dhw_disinfection_window_end') ) }}
+        {{ cheapest_energy_hours( sensor='sensor.electricity_selling_price', attr_all='prices',time_key='time', value_key='price', hours=3, look_ahead=false, include_today=true, include_tomorrow=false, start=states('input_datetime.dhw_disinfection_window_start'), end=states('input_datetime.dhw_disinfection_window_end') ) }}
     conditions:
       - or:
         - and:

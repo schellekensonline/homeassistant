@@ -97,8 +97,8 @@ rest_command:
     timeout: 30
     content_type: "application/json"
     payload: >-
-      {% set incl = state_attr('sensor.nord_pool_nl_current_prices_including_tax', 'prices') | map(attribute='price') | list %}
-      {% set excl = state_attr('sensor.nord_pool_nl_current_prices_excluding_tax', 'prices') | map(attribute='price') | list %}
+      {% set incl = state_attr('sensor.electricity_buying_price', 'prices') | map(attribute='price') | list %}
+      {% set excl = state_attr('sensor.electricity_selling_price', 'prices') | map(attribute='price') | list %}
       {
         "load_cost_forecast": {{ incl | to_json }},
         "prod_price_forecast": {{ excl | to_json }},
@@ -114,8 +114,8 @@ rest_command:
     timeout: 30
     content_type: "application/json"
     payload: >-
-      {% set incl = state_attr('sensor.nord_pool_nl_current_prices_including_tax', 'prices') %}
-      {% set excl = state_attr('sensor.nord_pool_nl_current_prices_excluding_tax', 'prices') %}
+      {% set incl = state_attr('sensor.electricity_buying_price', 'prices') %}
+      {% set excl = state_attr('sensor.electricity_selling_price', 'prices') %}
       
       {# Round down to the start of the current quarter hour so the filter is stable within it #}
       {% set minute = now().minute %}

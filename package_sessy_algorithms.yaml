@@ -183,7 +183,7 @@ template:
         state_class: measurement
         unit_of_measurement: "pu"
         # availability: >
-        #   {% set current = states('sensor.nord_pool_nl_current_prices_including_tax') | float("unknown") %}
+        #   {% set current = states('sensor.electricity_buying_price') | float("unknown") %}
         #   {{ current|is_number }}
         # Time left for the day #}
         # set seconds_left   = ((now().replace(hour=0,minute=0,second=0,microsecond=0) + timedelta(days=1)) - now()).total_seconds() #}
@@ -364,7 +364,7 @@ automation:
     mode: restart
     trigger:
       - platform: state
-        entity_id: sensor.nord_pool_nl_current_prices_excluding_tax
+        entity_id: sensor.electricity_selling_price
       - platform: time_pattern # catch for static prices
         minutes: "/30"
     condition:
@@ -380,7 +380,7 @@ automation:
         data:
           option: >-
             {# Get price data #}
-            {% set price             = states('sensor.nord_pool_nl_current_prices_excluding_tax') | float(0) %}
+            {% set price             = states('sensor.electricity_selling_price') | float(0) %}
             {% set price_pct         = states('sensor.current_percentage_of_electricity_price') | float(50) %}
             {% set price_spread      = states('sensor.difference_in_electricity_price_today') | float(0) %}
             {% set price_foreced_buy = states('input_number.sessy_auto_api_strategy_min_forced_buy_price') | float(0) %}

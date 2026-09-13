@@ -85,7 +85,7 @@ automation:
             
           balanced_max: >-
             {% set base_price   = states('sensor.nord_pool_nl_current_price') | float(0) | abs %}
-            {% set taxed_price  = states('sensor.nord_pool_nl_current_prices_including_tax') | float(0) | abs %}
+            {% set taxed_price  = states('sensor.electricity_buying_price') | float(0) | abs %}
             
             {# Avoid a division by zero when both prices are exactly 0 #}
             {% set total_price  = taxed_price + base_price %}
@@ -101,7 +101,7 @@ automation:
       - choose:
           - conditions: # ZERO EXPORT for inc. negative prices (always active)
               - condition: numeric_state
-                entity_id: sensor.nord_pool_nl_current_prices_including_tax
+                entity_id: sensor.electricity_buying_price
                 below: input_number.goodwe_grid_export_gross_negative
             sequence:
               - action: input_number.set_value
@@ -113,7 +113,7 @@ automation:
               - condition: template
                 value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 1 ] ) }}"
               - condition: numeric_state
-                entity_id: sensor.nord_pool_nl_current_prices_excluding_tax
+                entity_id: sensor.electricity_selling_price
                 below: input_number.goodwe_grid_export_gross_negative
             sequence:
               - action: input_number.set_value
@@ -125,7 +125,7 @@ automation:
               - condition: template
                 value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 2 ] ) }}"
               - condition: numeric_state
-                entity_id: sensor.nord_pool_nl_current_prices_excluding_tax
+                entity_id: sensor.electricity_selling_price
                 below: input_number.goodwe_grid_export_gross_negative
             sequence:
               - action: input_number.set_value
@@ -141,7 +141,7 @@ automation:
                       - condition: template
                         value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 3 ] ) }}"
                       - condition: numeric_state
-                        entity_id: sensor.nord_pool_nl_current_prices_excluding_tax
+                        entity_id: sensor.electricity_selling_price
                         below: input_number.goodwe_grid_export_gross_negative
                   - condition: template # NO EXPORT (net metering)
                     value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 4 ] ) }}"
