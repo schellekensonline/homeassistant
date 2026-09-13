@@ -2,7 +2,8 @@ template:
   - sensor:
     # The GoodWe Modbus entities at the bottom of this file expose only voltages and
     # currents, so the power values are derived here: DC string power as V x I per string,
-    # AC phase power as V x I per phase (apparent power, in VA).
+    # AC phase power as V x I per phase (apparent power, in VA). Outside the polling window
+    # these derived powers are 0, so stale daytime registers do not leak into EMHASS at night.
     - name: "Goodwe PV1 input power"
       unique_id: goodwe_pv1_input_power
       state_class: measurement
@@ -13,10 +14,13 @@ template:
         {% set Ipv1 = states('sensor.goodwe_pv1_input_current') | float("unknown") %}
         {{ Vpv1|is_number and Ipv1|is_number}}
       state: >
-        {% set Vpv1 = states('sensor.goodwe_pv1_input_voltage') | float(0) %}
-        {% set Ipv1 = states('sensor.goodwe_pv1_input_current') | float(0) %}
-
-        {{ (Vpv1*Ipv1) | round(0) }}
+        {% if is_state('sun.sun', 'above_horizon') %}
+          {% set Vpv1 = states('sensor.goodwe_pv1_input_voltage') | float(0) %}
+          {% set Ipv1 = states('sensor.goodwe_pv1_input_current') | float(0) %}
+          {{ (Vpv1 * Ipv1) | round(0) }}
+        {% else %}
+          0
+        {% endif %}
     - name: "Goodwe PV2 input power"
       unique_id: goodwe_pv2_input_power
       state_class: measurement
@@ -27,10 +31,13 @@ template:
         {% set Ipv2 = states('sensor.goodwe_pv2_input_current') | float("unknown") %}
         {{ Vpv2|is_number and Ipv2|is_number}}
       state: >
-        {% set Vpv2 = states('sensor.goodwe_pv2_input_voltage') | float(0) %}
-        {% set Ipv2 = states('sensor.goodwe_pv2_input_current') | float(0) %}
-
-        {{ (Vpv2*Ipv2) | round(0) }}
+        {% if is_state('sun.sun', 'above_horizon') %}
+          {% set Vpv2 = states('sensor.goodwe_pv2_input_voltage') | float(0) %}
+          {% set Ipv2 = states('sensor.goodwe_pv2_input_current') | float(0) %}
+          {{ (Vpv2 * Ipv2) | round(0) }}
+        {% else %}
+          0
+        {% endif %}
 
     - name: "Goodwe total PV input power"
       unique_id: goodwe_total_pv_input_power
@@ -44,11 +51,15 @@ template:
         {% set Ipv2 = states('sensor.goodwe_pv2_input_current') | float("unknown") %}
         {{ Vpv1|is_number and Ipv1|is_number and Vpv2|is_number and Ipv2|is_number}}
       state: >
-        {% set Vpv1 = states('sensor.goodwe_pv1_input_voltage') | float(0) %}
-        {% set Ipv1 = states('sensor.goodwe_pv1_input_current') | float(0) %}
-        {% set Vpv2 = states('sensor.goodwe_pv2_input_voltage') | float(0) %}
-        {% set Ipv2 = states('sensor.goodwe_pv2_input_current') | float(0) %}
-        {{ ((Vpv1*Ipv1)+(Vpv2*Ipv2)) | round(0) }}
+        {% if is_state('sun.sun', 'above_horizon') %}
+          {% set Vpv1 = states('sensor.goodwe_pv1_input_voltage') | float(0) %}
+          {% set Ipv1 = states('sensor.goodwe_pv1_input_current') | float(0) %}
+          {% set Vpv2 = states('sensor.goodwe_pv2_input_voltage') | float(0) %}
+          {% set Ipv2 = states('sensor.goodwe_pv2_input_current') | float(0) %}
+          {{ ((Vpv1 * Ipv1) + (Vpv2 * Ipv2)) | round(0) }}
+        {% else %}
+          0
+        {% endif %}
 
     - name: "Goodwe L1 phase power"
       unique_id: goodwe_l1_phase_power
@@ -60,10 +71,13 @@ template:
         {% set IL1 = states('sensor.goodwe_l1_phase_current') | float("unknown") %}
         {{ VL1|is_number and IL1|is_number}}
       state: >
-        {% set VL1 = states('sensor.goodwe_l1_phase_voltage') | float(0) %}
-        {% set IL1 = states('sensor.goodwe_l1_phase_current') | float(0) %}
-
-        {{ (VL1*IL1) | round(0) }}
+        {% if is_state('sun.sun', 'above_horizon') %}
+          {% set VL1 = states('sensor.goodwe_l1_phase_voltage') | float(0) %}
+          {% set IL1 = states('sensor.goodwe_l1_phase_current') | float(0) %}
+          {{ (VL1 * IL1) | round(0) }}
+        {% else %}
+          0
+        {% endif %}
     - name: "Goodwe L2 phase power"
       unique_id: goodwe_l2_phase_power
       state_class: measurement
@@ -74,10 +88,13 @@ template:
         {% set IL2 = states('sensor.goodwe_l2_phase_current') | float("unknown") %}
         {{ VL2|is_number and IL2|is_number}}
       state: >
-        {% set VL2 = states('sensor.goodwe_l2_phase_voltage') | float(0) %}
-        {% set IL2 = states('sensor.goodwe_l2_phase_current') | float(0) %}
-
-        {{ (VL2*IL2) | round(0) }}
+        {% if is_state('sun.sun', 'above_horizon') %}
+          {% set VL2 = states('sensor.goodwe_l2_phase_voltage') | float(0) %}
+          {% set IL2 = states('sensor.goodwe_l2_phase_current') | float(0) %}
+          {{ (VL2 * IL2) | round(0) }}
+        {% else %}
+          0
+        {% endif %}
     - name: "Goodwe L3 phase power"
       unique_id: goodwe_l3_phase_power
       state_class: measurement
@@ -88,18 +105,21 @@ template:
         {% set IL3 = states('sensor.goodwe_l3_phase_current') | float("unknown") %}
         {{ VL3|is_number and IL3|is_number}}
       state: >
-        {% set VL3 = states('sensor.goodwe_l3_phase_voltage') | float(0) %}
-        {% set IL3 = states('sensor.goodwe_l3_phase_current') | float(0) %}
-
-        {{ (VL3*IL3) | round(0) }}
+        {% if is_state('sun.sun', 'above_horizon') %}
+          {% set VL3 = states('sensor.goodwe_l3_phase_voltage') | float(0) %}
+          {% set IL3 = states('sensor.goodwe_l3_phase_current') | float(0) %}
+          {{ (VL3 * IL3) | round(0) }}
+        {% else %}
+          0
+        {% endif %}
 
 automation:
   # Manual Modbus polling, so nothing is polled overnight while the inverter is off.
   # Every GoodWe Modbus entity below has scan_interval: 0, which makes this automation
   # the only reader; it runs every 20 s and only while the sun is above the horizon.
   - id: goodwe_scan_modbus_auto
-    alias: "Goodwe scan modbus auto"
-    description: "Polls all sensor entities for modbus_gateway_goodwe"
+    alias: "GoodWe scan Modbus auto"
+    description: "Polls all GoodWe sensor entities while the sun is above the horizon"
     mode: single
     max_exceeded: silent
     triggers:
