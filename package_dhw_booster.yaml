@@ -1,51 +1,58 @@
 template:
-  # State of shelly switche S1 for Therma V DHW heater 2
-  # which switches the DHW heater separately from the heatpump
-  - binary_sensor: 
+  # Real state of the Shelly Plug S1 that powers the second DHW heater. It runs in parallel
+  # with the heat pump and can also be switched by hand.
+  - binary_sensor:
       - name: "Therma V DHW booster 2 state (S1)"
         unique_id: therma_v_dhw_booster_2_state
-        state: >
-          {{ is_state('switch.shelly_plug_s1', 'on') }}
+        availability: "{{ has_value('switch.shelly_plug_s1') }}"
+        state: "{{ is_state('switch.shelly_plug_s1', 'on') }}"
 
-  # Switch which acts as state memory for the automations
-  # So the automation knows the previous silent mode setting
+  # Switch for the automations to remember their requested state, separate from the relay.
+  # Optimistic on purpose: the relay can also be switched by hand.
   - switch:
-#      - state: "{{ is_state('switch.shelly_plug_s1', 'on') }}"
-#        availability: "{{ has_value('switch.shelly_plug_s1') }}" 
       - name: DHW Booster 2 Switch
         unique_id: dhw_booster_2_switch
+        availability: "{{ has_value('switch.shelly_plug_s1') }}"
         turn_on:
-          action: switch.turn_on
-          target:
-            entity_id: switch.shelly_plug_s1
+          - action: switch.turn_on
+            target:
+              entity_id: switch.shelly_plug_s1
         turn_off:
-          action: switch.turn_off
-          target:
-            entity_id: switch.shelly_plug_s1
+          - action: switch.turn_off
+            target:
+              entity_id: switch.shelly_plug_s1
 
 
 automation:
-  # switch on DHW heater when e-price incl. tax is negative
-  # the DHW heater is switched with a separate parallel relay
+  # Switch the DHW booster on while the buying price is negative. The heartbeat makes the
+  # state robust across a Home Assistant restart.
   - id: dhw_e_price_negative_auto
     alias: "DHW e-price negative auto"
-    description: Set DHW booster on when E-price is negative 
+    description: "Turns the DHW booster on when the buying price is negative"
     mode: single
     max_exceeded: silent
     triggers:
       - trigger: state
         entity_id: sensor.electricity_buying_price
+      - trigger: time_pattern
+        minutes: "/5"
     conditions:
-      - "{{ (states('sensor.electricity_buying_price') | float(0) ) < 0.0 }}"
+      - condition: template
+        value_template: "{{ has_value('switch.shelly_plug_s1') }}"
+      - condition: template
+        value_template: >-
+          {{ states('sensor.electricity_buying_price') | is_number
+             and states('sensor.electricity_buying_price') | float(0) < 0.0 }}
     actions:
       - action: switch.turn_on
-        entity_id: switch.dhw_booster_2_switch
-  # switch off DHW heater when e-price incl. tax is positive
-  # Done every X minutes to make it robust for HA restarts
-  # the DHW heater is switched with a separate parallel relay
+        target:
+          entity_id: switch.dhw_booster_2_switch
+
+  # Switch the DHW booster off when the buying price is zero or positive. If the price is
+  # unknown, float(0) deliberately takes the safe off path.
   - id: dhw_e_price_positive_auto
     alias: "DHW e-price positive auto"
-    description: Set DHW booster on when E-price is positive
+    description: "Turns the DHW booster off when the buying price is not negative"
     mode: single
     max_exceeded: silent
     triggers:
@@ -54,7 +61,11 @@ automation:
       - trigger: state
         entity_id: sensor.electricity_buying_price
     conditions:
-      - "{{ (states('sensor.electricity_buying_price') | float(0) ) >= 0.0 }}"
+      - condition: template
+        value_template: "{{ has_value('switch.shelly_plug_s1') }}"
+      - condition: template
+        value_template: "{{ states('sensor.electricity_buying_price') | float(0) >= 0.0 }}"
     actions:
       - action: switch.turn_off
-        entity_id: switch.dhw_booster_2_switch
+        target:
+          entity_id: switch.dhw_booster_2_switch
