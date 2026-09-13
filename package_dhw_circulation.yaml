@@ -1,79 +1,77 @@
-
-
 template:
-  # State of shelly switche S3 for DHW circulation pump
-  # The circulation pump is for a vertical water tank to have more
-  # equal heating during disinfection cycles and heating cycles
-  - binary_sensor: 
+  # Real state of the Shelly plug S3 that powers the DHW circulation pump. The pump sits in
+  # the vertical tank circuit so the tank heats more evenly during heating and disinfection.
+  - binary_sensor:
       - name: "Therma V DHW circulation state (S3)"
-        unique_id: therma_v_dhw_circulation_state_S3
-        state: >
-          {{ is_state('switch.shelly_plug_s3', 'on') }}
+        unique_id: therma_v_dhw_circulation_state_s3
+        availability: "{{ has_value('switch.shelly_plug_s3') }}"
+        state: "{{ is_state('switch.shelly_plug_s3', 'on') }}"
 
   - switch:
-      # Template switch to used by the automationsas as state memory
-      # seperately from the real state of the relay which can be switched manually too
+      # Switch the automations use as their own state memory, separate from the relay (which
+      # can be switched by hand too). Optimistic on purpose: no state template, so it keeps
+      # whatever the automations set.
       - name: "DHW Circulation Switch"
         unique_id: dhw_circulation_switch
-#      - state: "{{ is_state('switch.shelly_plug_s3', 'on') }}"
-#        availability: "{{ has_value('switch.shelly_plug_s3') }}" 
+        availability: "{{ has_value('switch.shelly_plug_s3') }}"
         turn_on:
-          action: switch.turn_on
-          target:
-            entity_id: switch.shelly_plug_s3
+          - action: switch.turn_on
+            target:
+              entity_id: switch.shelly_plug_s3
         turn_off:
-          action: switch.turn_off
-          target:
-            entity_id: switch.shelly_plug_s3
+          - action: switch.turn_off
+            target:
+              entity_id: switch.shelly_plug_s3
 
 automation:
-  # Switch on the circulation pump during long heating cycles and 
-  # when the DHW heater has been turned on for a while
+  # Switch the circulation pump on after 20 minutes of DHW heating, by the heat pump or by
+  # either booster, as long as the unit is not defrosting.
   - id: dhw_circulation_on_auto
     alias: "DHW circulation on auto"
-    description: Set the DHW circulation state to on
+    description: "Turns the DHW circulation pump on during long DHW heating cycles"
     mode: restart
     triggers:
       - trigger: state
         entity_id: binary_sensor.therma_v_dhw_heating_state
-        to: 'on'
+        to: "on"
         for:
           minutes: 20
       - trigger: state
         entity_id: binary_sensor.therma_v_dhw_booster_state
-        to: 'on'
+        to: "on"
         for:
           minutes: 20
       - trigger: state
         entity_id: binary_sensor.therma_v_dhw_booster_2_state_s1
-        to: 'on'
+        to: "on"
         for:
           minutes: 20
     conditions:
       and:
         - condition: state
           entity_id: binary_sensor.therma_v_defrost_state
-          state: 'off'
+          state: "off"
         - or:
           - condition: state
             entity_id: binary_sensor.therma_v_dhw_heating_state
-            state: 'on'
+            state: "on"
           - condition: state
             entity_id: binary_sensor.therma_v_dhw_booster_state
-            state: 'on'
+            state: "on"
           - condition: state
             entity_id: binary_sensor.therma_v_dhw_booster_2_state_s1
-            state: 'on'
+            state: "on"
     actions:
       - action: switch.turn_on
         target:
-            entity_id: switch.dhw_circulation_switch
+          entity_id: switch.dhw_circulation_switch
 
   - id: dhw_circulation_off_auto
-    # Switch off the circulation after heating (HP or heater by heatpump or relay)
-    # This is also triggered every X minutes to make it robust for HA reboots
-    alias: dhw_circulation_off_auto
-    description: Set the DHW circulation state to off
+    # Switch the circulation pump off once none of the three DHW sources heats any more. The
+    # 5-minute heartbeat keeps it robust: a missed trigger (for example around a restart) is
+    # corrected within 5 minutes.
+    alias: "DHW circulation off auto"
+    description: "Turns the DHW circulation pump off when DHW heating has stopped"
     mode: restart
     triggers:
       - trigger: time_pattern
@@ -84,19 +82,17 @@ automation:
         entity_id: binary_sensor.therma_v_dhw_booster_state
       - trigger: state
         entity_id: binary_sensor.therma_v_dhw_booster_2_state_s1
-    conditions: 
+    conditions:
       - condition: state
         entity_id: binary_sensor.therma_v_dhw_booster_state
-        state: 'off'
+        state: "off"
       - condition: state
         entity_id: binary_sensor.therma_v_dhw_heating_state
-        state: 'off'
+        state: "off"
       - condition: state
         entity_id: binary_sensor.therma_v_dhw_booster_2_state_s1
-        state: 'off'
+        state: "off"
     actions:
       - action: switch.turn_off
         target:
           entity_id: switch.dhw_circulation_switch
-
-
