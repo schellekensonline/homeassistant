@@ -1,49 +1,56 @@
-# Set silent mode time interval
+# Therma V silent mode: night window, low-power operation and startup control.
 input_datetime:
-  silent_start_time: # start time of silent mode add to UI
-    name: Silent mode start time
+  silent_start_time:
+    name: "Silent mode start time"
     has_date: false
     has_time: true
-  silent_stop_time: # stop time of silent mode add to UI
-    name: Silent mode stop time
+  silent_stop_time:
+    name: "Silent mode stop time"
     has_date: false
     has_time: true
 
-# Extra input which acts as state memory for silent mode at start-up
 input_boolean:
+  # Enabled when heating/cooling starts. The startup automation uses it to keep silent mode on
+  # until the compressor has finished its startup sequence.
   silent_mode_startup:
-    name: "Silent Mode at Startup" 
+    name: "Silent Mode at Startup"
 
 input_number:
+  # Silent mode is requested while electric power stays below this value.
   silent_power_threshold:
     name: "Silent Mode Power Threshold"
     min: 0
     max: 6000
     mode: box
+    unit_of_measurement: "W"
 
 template:
-  # Switch which acts as state memory for the automations to enable silent mode
+  # Optimistic switch holding the requested silent state. It is the automations' memory and the
+  # startup sequence reads it after its forced silent start to decide whether silent mode must
+  # stay on. Separate from the actual Modbus switch, which can also be changed by hand. No state
+  # template on purpose: changing this switch drives the heat pump and keeps the request.
   - switch:
-#      - state: "{{ is_state('switch.therma_v_silent_mode', 'on') }}"
-#        availability: "{{ has_value('switch.therma_v_silent_mode') }}" 
       - name: "Silent mode state"
         unique_id: silent_mode_state
+        availability: "{{ has_value('switch.therma_v_silent_mode') }}"
         turn_on:
-          action: switch.turn_on
-          target:
-            entity_id: switch.therma_v_silent_mode
+          - action: switch.turn_on
+            target:
+              entity_id: switch.therma_v_silent_mode
         turn_off:
-          action: switch.turn_off
-          target:
-            entity_id: switch.therma_v_silent_mode
+          - action: switch.turn_off
+            target:
+              entity_id: switch.therma_v_silent_mode
 
 automation:
+  # Keep silent mode on in the night window, or during the day while the heat pump draws little
+  # power. Low power in silent mode gives a better COP without holding back a real heat demand.
   - id: therma_v_silent_on_power_temp_time_based_auto
     alias: "Therma V Silent ON power temp time based auto"
-    description: "Turns on silent mode when outside temp is above freezing and within silent window"
+    description: "Turns silent mode on in the night window or while electric power stays below the threshold"
     mode: single
     max_exceeded: silent
-    triggers: # Time trigger to ensure that silent mode recovers to a safe state
+    triggers:
       - trigger: time
         at: input_datetime.silent_start_time
       - trigger: numeric_state
@@ -51,22 +58,18 @@ automation:
         entity_id: sensor.therma_v_electric_power
         below: input_number.silent_power_threshold
         for: "00:15:00"
-      # - trigger: numeric_state
-      #   entity_id: sensor.therma_v_refrigirant_temperature_suction
-      #   above: 0
-      #   for: "00:15:00"
     conditions:
-      - and:
+      and:
         - condition: state
           entity_id: switch.therma_v_heating_cooling_on_off
-          state: 'on' # Allow only when heating is on! otherwise RMC may crash
-        - or: # When time is within window or silent mode is on
-          - condition: time 
+          state: "on" # Silent mode with the unit off can crash the controller.
+        - or:
+          - condition: time
             after: input_datetime.silent_start_time
             before: input_datetime.silent_stop_time
           - condition: state
             entity_id: switch.silent_mode_state
-            state: 'on' # Allow only when silent mode state is on
+            state: "on" # Keep an explicit request from the dashboard on.
           - condition: trigger
             id: power_trig
     actions:
@@ -74,12 +77,14 @@ automation:
         target:
           entity_id: switch.silent_mode_state
 
+  # Leave silent mode when power rises during the day, or immediately when the refrigerant
+  # suction temperature drops below freezing. Never interfere with the startup sequence.
   - id: therma_v_silent_off_power_temp_time_based_auto
     alias: "Therma V Silent OFF power temp time based auto"
-    description: "Turns off silent mode respecting silent time window and temperature"
+    description: "Turns silent mode off when power rises during the day or refrigerant suction falls below freezing"
     mode: single
     max_exceeded: silent
-    triggers: # Time trigger to ensure that silent mode recovers to a safe state
+    triggers:
       - trigger: time
         at: input_datetime.silent_stop_time
       - trigger: numeric_state
@@ -88,27 +93,23 @@ automation:
         below: 0
         for: "00:05:00"
       - trigger: numeric_state
-        id: power_trig
         entity_id: sensor.therma_v_electric_power
         above: input_number.silent_power_threshold
         for: "00:05:00"
     conditions:
-      - and:
-        - condition: numeric_state # Allow only when startup_auto not active
-          entity_id: "automation.therma_v_silent_on_at_startup_auto"  
-          attribute: current  # Attribute is number of active instances of automation                  
-          below: 1            # Below 1 means no active startup_auto instances
+      and:
+        - condition: numeric_state
+          entity_id: automation.therma_v_silent_on_at_startup_auto
+          attribute: current
+          below: 1 # No active startup sequence.
         - or:
           - and:
-            - condition: state
-              entity_id: switch.silent_mode_state
-              state: 'off'
-            - condition: time 
-              after: input_datetime.silent_stop_time
-              before: input_datetime.silent_start_time
-            - condition: numeric_state
-              entity_id: sensor.therma_v_electric_power
-              above: input_number.silent_power_threshold
+              - condition: time
+                after: input_datetime.silent_stop_time
+                before: input_datetime.silent_start_time
+              - condition: numeric_state
+                entity_id: sensor.therma_v_electric_power
+                above: input_number.silent_power_threshold
           - condition: trigger
             id: temp_trig
     actions:
@@ -116,121 +117,128 @@ automation:
         target:
           entity_id: switch.silent_mode_state
 
+  # Turn silent mode on for the startup sequence. This automation controls the Modbus switch
+  # directly and deliberately leaves switch.silent_mode_state (the requested state) untouched,
+  # so the restore step below can use that memory to decide whether silent mode stays on.
   - id: therma_v_silent_on_at_startup_auto
     alias: "Therma V Silent ON at startup auto"
-    description: Turns on silent mode for some minutes after start-up
+    description: "Turns silent mode on after compressor startup, then restores the requested state"
     mode: restart
     max_exceeded: silent
     triggers:
       - trigger: state
-        entity_id: "binary_sensor.therma_v_compressor_state"
+        entity_id: binary_sensor.therma_v_compressor_state
         from: "off"
-        to: "on" # When compressor starts
+        to: "on" # Compressor starts.
       - trigger: state
-        entity_id: "binary_sensor.therma_v_defrost_state"
-        from: "on"
-        to: "off" # Catch missed compressor restart  
-    conditions:
-      - condition: state 
-        entity_id: switch.therma_v_heating_cooling_on_off
-        state: "on" # And heating_cooling is on! otherwise RMC may crash
-      - condition: state 
         entity_id: binary_sensor.therma_v_defrost_state
-        state: "off" # And no defrost is active
-      - condition: state 
+        from: "on"
+        to: "off" # Catch a missed compressor restart after defrost.
+    conditions:
+      - condition: state
+        entity_id: switch.therma_v_heating_cooling_on_off
+        state: "on" # Silent mode with the unit off can crash the controller.
+      - condition: state
+        entity_id: binary_sensor.therma_v_defrost_state
+        state: "off" # Do not start during defrost.
+      - condition: state
         entity_id: input_boolean.silent_mode_startup
-        state: "on" # And silent mode startup is ON
+        state: "on" # Startup silent mode is enabled.
     actions:
       - variables:
-          heat_target_temp: 24 # minimum temperature heating curve
-          cool_target_temp: 17 # minimum temperature cooling curve
-          timeout_minutes: 45 # time out after which wait for target is stopped
-          wait_minutes: 16 # extra wait added after target reached for heating and timeout for DHW
-      - action: switch.turn_on # Turn on silent mode
+          heat_target_temp: 24 # Minimum temperature for the heating curve.
+          cool_target_temp: 17 # Minimum temperature for the cooling curve.
+          timeout_minutes: 45 # Stop waiting for the target after this time.
+          wait_minutes: 16 # Extra time after the target, or the DHW timeout.
+      - action: switch.turn_on
         target:
           entity_id: switch.therma_v_silent_mode
-      - delay: # Wait for modbus registers to settle
-          minutes: "1" 
-      - choose: # Wait for start-up to finish 
-          - conditions: # In case of DHW run
+      - delay:
+          minutes: "1" # Let the Modbus registers settle.
+      - choose:
+          - conditions:
               - condition: state
                 entity_id: binary_sensor.therma_v_dhw_heating_state
                 state: "on"
             sequence:
               - wait_template: "{{ is_state('binary_sensor.therma_v_dhw_heating_state', 'off') }}"
-                timeout: 
+                timeout:
                   minutes: "{{ wait_minutes }}"
-          - conditions: # In case of cooling run
-              - condition: state
-                entity_id: sensor.therma_v_outdoor_unit_state
-                state: "1" # 0 off 1 cooling 2 heating
-            sequence:
-              - wait_template: "{{ (states('sensor.therma_v_inlet_temperature')|float(0)) < cool_target_temp }}"
-                timeout: 
-                  minutes: "{{ timeout_minutes }}" # Wait for target or timeout
-              - delay: # In case of a heat run
-                  minutes: "{{ wait_minutes }}" # Wait for X more minutes              
-          - conditions: # In case of heating run
-              - condition: state
-                entity_id: sensor.therma_v_outdoor_unit_state
-                state: "2" # 0 off 1 cooling 2 heating
-            sequence:
-              - wait_template: "{{ (states('sensor.therma_v_inlet_temperature')|float(0)) > heat_target_temp }}"
-                timeout: 
-                  minutes: "{{ timeout_minutes }}" # Wait for target or timeout
-              - delay: 
-                  minutes: "{{ wait_minutes }}" # Wait for X more minutes              
-        default: # in case of unknown run
-              - delay: 
-                  minutes: "{{ wait_minutes }}" # Wait for X minutes      
-      - choose: # Restore previous silent mode state
           - conditions:
-            - and:
+              - condition: state
+                entity_id: sensor.therma_v_outdoor_unit_state
+                state: "1" # 0 off, 1 cooling, 2 heating.
+            sequence:
+              - wait_template: "{{ (states('sensor.therma_v_inlet_temperature') | float(0)) < cool_target_temp }}"
+                timeout:
+                  minutes: "{{ timeout_minutes }}"
+              - delay:
+                  minutes: "{{ wait_minutes }}"
+          - conditions:
+              - condition: state
+                entity_id: sensor.therma_v_outdoor_unit_state
+                state: "2" # 0 off, 1 cooling, 2 heating.
+            sequence:
+              - wait_template: "{{ (states('sensor.therma_v_inlet_temperature') | float(0)) > heat_target_temp }}"
+                timeout:
+                  minutes: "{{ timeout_minutes }}"
+              - delay:
+                  minutes: "{{ wait_minutes }}"
+        default:
+          - delay:
+              minutes: "{{ wait_minutes }}"
+      # If the requested state is off and it is outside the night window, leave startup silent
+      # mode off again. An explicit request on, or the night window, keeps the switch on.
+      - choose:
+          - conditions:
               - condition: state
                 entity_id: switch.silent_mode_state
-                state: 'off'
-              - condition: time 
+                state: "off"
+              - condition: time
                 after: input_datetime.silent_stop_time
                 before: input_datetime.silent_start_time
             sequence:
-              - action: switch.turn_off # If off switch off silent mode
+              - action: switch.turn_off
                 target:
                   entity_id: switch.therma_v_silent_mode
 
+  # Clear both the requested state and the startup flag when heating/cooling is turned off.
+  # The 30-minute heartbeat catches a missed transition around a Home Assistant restart.
   - id: therma_v_silent_mode_off_auto
     alias: "Therma V Silent Mode OFF auto"
     description: "Turns off silent mode when heating/cooling is switched off"
     mode: single
     triggers:
       - trigger: state
-        entity_id: "switch.therma_v_heating_cooling_on_off"
-        from: "on"
-        to: "off" # When heating/cooling switched off
-      - trigger: time_pattern
-        minutes: "/30"  # catch missed triggers
-    conditions:
-      - condition: state 
         entity_id: switch.therma_v_heating_cooling_on_off
-        state: "off" # And heating_cooling is off!        
+        from: "on"
+        to: "off"
+      - trigger: time_pattern
+        minutes: "/30"
+    conditions:
+      - condition: state
+        entity_id: switch.therma_v_heating_cooling_on_off
+        state: "off"
     actions:
-      - action: switch.turn_off # Turn off silent mode
+      - action: switch.turn_off
         target:
           entity_id: switch.silent_mode_state
-      - action: input_boolean.turn_off # Turn off silent start
+      - action: input_boolean.turn_off
         target:
           entity_id: input_boolean.silent_mode_startup
 
+  # Enable startup silent mode again whenever heating/cooling is switched on.
   - id: therma_v_silent_mode_start_on_auto
     alias: "Therma V Silent Mode Start ON auto"
-    description: "Turns on silent mode start when heating/cooling is switched on"
+    description: "Turns on startup silent mode when heating/cooling is switched on"
     mode: single
     triggers:
       - trigger: state
-        entity_id: "switch.therma_v_heating_cooling_on_off"
+        entity_id: switch.therma_v_heating_cooling_on_off
         from: "off"
-        to: "on" # When heating/cooling switched on
+        to: "on"
     conditions: []
     actions:
-      - action: input_boolean.turn_on # Turn on silent start
+      - action: input_boolean.turn_on
         target:
           entity_id: input_boolean.silent_mode_startup
