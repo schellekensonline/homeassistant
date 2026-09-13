@@ -1,40 +1,40 @@
 input_select:
   # Input select to switch between export regimes
   # 0 - Manual control of grid export limit
-  # 1 - No export with net nagative prices
-  # 2 - No export with net nagative prices
+  # 1 - Maximum export, but no export with net negative prices
+  # 2 - No export with net negative prices
   #     With gross negative prices the export limiter is scaled down linearly
   #     But if power usage is higher zero on meter wins
   # 3 - Net metering when gross prices become negative
-  # 4 - No export only zero on meter  
+  # 4 - No export only zero on meter
   goodwe_export_strategy_select:
-    name: "Goodwe grid export strategy"
+    name: "GoodWe grid export strategy"
     options:
       - "0 - Manual"
       - "1 - Maximum (zero export with net negative prices)"
-      - "2 - Balanced (ratiomatic export with gross negative prices)"
-      - "3 - Minimum (zero om meter with gross negative prices)"
+      - "2 - Balanced (ratio-based export with gross negative prices)"
+      - "3 - Minimum (zero on meter with gross negative prices)"
       - "4 - No (zero on meter)"
-    # initial: "3 - Minimum (zero om meter with gross negative prices)"
     icon: mdi:sun-compass
 
 input_number:
   goodwe_grid_export_limit:
-    name: "Goodwe grid export limit"
+    name: "GoodWe grid export limit"
     initial: 100
     min: 0
-    max: 100 
-    step: 0.1 # 0.1 resolution leads to better integration accuracy of error
+    max: 100
+    step: 0.1 # 0.1 resolution gives better integration accuracy.
     mode: slider
     unit_of_measurement: "%"
-  # Not on UI just a convinent way to set the gross price limit that is considered for switching grid export
-  goodwe_grid_export_gross_negative: 
-    name: "Goodwe grid export gross negative"
-    initial: -0.01 # a bit conservative, based on gross market price
+  # Not on the UI: threshold for the export strategies. The always-active rule compares it
+  # with the buying price; strategies 1-3 compare it with the selling price.
+  goodwe_grid_export_gross_negative:
+    name: "GoodWe grid export gross negative"
+    initial: -0.01 # Slightly conservative.
     unit_of_measurement: "€"
     min: -1
-    max: 1 
-    step: 0.001 # smallest
+    max: 1
+    step: 0.001
 
 sensor:
   # Filtered power sensor, this filter acts as anti-aliasing filter for the 
@@ -48,16 +48,16 @@ sensor:
         time_constant: 3
 
 automation:
-  # Adjust grid export limit to 0 when e-price incl tax is negative
-  - id: goodwe_e_price_negative_auto 
-    alias: "Goodwe e-price negative auto"
-    description: Set inverter grid_limit to 0% when E-price is negative, E-price from ENTSO-e corrected to incl tax
+  # Export-limit controller: zero on a negative net price, then apply the selected strategy.
+  - id: goodwe_e_price_negative_auto
+    alias: "GoodWe e-price negative auto"
+    description: "Controls the GoodWe export limit from the current prices and P1 power"
     mode: single
-    max_exceeded: silent 
+    max_exceeded: silent
     triggers:
       - trigger: time_pattern
-        seconds: "/50" # a bit slower icw sessy "/21" # response time of DT to setpoint changes is a bit over 10s so don't update too fast
-    conditions: 
+        seconds: "/50" # Slower than the Sessy loop: the inverter needs time to follow changes.
+    conditions:
       - condition: state  # 'day' condition: from sunrise until sunset
         entity_id: sun.sun
         state: "above_horizon"
@@ -67,14 +67,14 @@ automation:
         value_template: "{{ not is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 0 ] ) }}"
     actions:
       - variables:
-          rated_power: 8000 # rated power of inverter
-          update_ratio: 0.8 # convergence speed (0 < update_ratio < 1). 0.9 = fast, 0.1 = slow
-          threshold_power: 100 # threshold power for battery ZoM algorithm, by leaving X Watt available the battery ZoM takes the lead
+          rated_power: 8000 # Inverter rated power.
+          update_ratio: 0.8 # Convergence speed, 0 < ratio < 1.
+          threshold_power: 100 # Leave this much import headroom so the battery ZoM stays in control.
 
           zero_on_meter: >-
             {% set current_limit = states('input_number.goodwe_grid_export_limit') | float(0) %}
             {% set p1_power      = states('sensor.p1_meter_active_power_filtered') | float(0) %}
-            {% set ctrl_power    = p1_power + threshold_power %} {# -threshold_power is the reference power #} 
+            {% set ctrl_power    = p1_power + threshold_power %} {# Positive P1 means import. #}
 
             {# Adjust the export limit from the P1 surplus/shortfall #}
             {% set adjustment    = (update_ratio * 100 / rated_power) * ctrl_power %}
@@ -85,10 +85,10 @@ automation:
             
           balanced_max: >-
             {% set base_price   = states('sensor.nord_pool_nl_current_price') | float(0) | abs %}
-            {% set taxed_price  = states('sensor.electricity_buying_price') | float(0) | abs %}
+            {% set buying_price = states('sensor.electricity_buying_price') | float(0) | abs %}
             
             {# Avoid a division by zero when both prices are exactly 0 #}
-            {% set total_price  = taxed_price + base_price %}
+            {% set total_price  = buying_price + base_price %}
             
             {% if total_price > 0 %}
               {# Work out the base price's share of the total price #}
@@ -134,10 +134,9 @@ automation:
                 data:
                   value: "{{ max(balanced_max,zero_on_meter) | round(1) }}"
           - conditions: # MINIMUM EXPORT OR NO EXPORT (net metering strategies)
-              - condition: or
-                conditions: 
-                  - condition: and
-                    conditions: # MINIMUM EXPORT (net metering below set gross negative price)
+              - or:
+                  - and:
+                      # MINIMUM EXPORT (net metering below the price threshold)
                       - condition: template
                         value_template: "{{ is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 3 ] ) }}"
                       - condition: numeric_state
@@ -160,8 +159,8 @@ automation:
 
   # Update function for grid export limit. Sets input number based on Goodwe state and vice verse
   - id: goodwe_update_grid_export_limit_auto
-    alias: "Goodwe update grid export limit auto"
-    description: Synchronizes the Goodwe grid export limit input number and modbus state
+    alias: "GoodWe update grid export limit auto"
+    description: "Synchronizes the GoodWe grid export limit input number and Modbus state"
     mode: single
     max_exceeded: silent
     triggers:
@@ -169,11 +168,17 @@ automation:
         entity_id:
           - input_number.goodwe_grid_export_limit
         id: grid_export_limit_number_trig
-      # when inconsistent for
       - trigger: template
-        value_template: "{{ (states('sensor.goodwe_export_power_limit') | float(0) - states('input_number.goodwe_grid_export_limit') | float(0)) | abs  > 1 }}"
+        value_template: >-
+          {% set modbus_limit = states('sensor.goodwe_export_power_limit') | float('unknown') %}
+          {% set requested    = states('input_number.goodwe_grid_export_limit') | float('unknown') %}
+          {{ modbus_limit | is_number and requested | is_number
+             and (modbus_limit - requested) | abs > 1 }}
         for: "00:15:00"
         id: grid_export_limit_catch_trig
+      - trigger: time_pattern
+        minutes: "/15"
+        id: grid_export_limit_heartbeat_trig
     conditions:
       - condition: state  # 'day' condition: from sunrise until sunset
         entity_id: sun.sun
@@ -182,14 +187,14 @@ automation:
         value_template: "{{ has_value('sensor.goodwe_export_power_limit') }}"
     actions:
       - variables:
-          input_value: '{{ states("input_number.goodwe_grid_export_limit") | round(0) }}'
+          input_value: "{{ states('input_number.goodwe_grid_export_limit') | round(0) }}"
       - action: modbus.write_register
-        data_template:
+        data:
           address: 292
           slave: 1
           hub: modbus_gateway_goodwe
           # Should be written using [array] mode, i.e. 0x10, iso (single data) mode, i.e. 0x06
           # Even for int16 and uint16, which is in violation with the modbus spec.
-          # The goodwe modbus manual explains this correctly though, all writes with function-code 0x10
-          # number is rounded and clipped to 0..100  
-          value: '{{ [ min(max( input_value | round(0) ,0),100) ] }}'
+          # The GoodWe manual explains this correctly though: all writes use function code 0x10.
+          # The number is rounded and clipped to 0..100.
+          value: "{{ [min(max(input_value | round(0), 0), 100)] }}"
