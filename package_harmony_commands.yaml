@@ -1,102 +1,184 @@
-# Useful reference for a Harmony package (article in Dutch):
+# Dynamic Harmony command selector.
+#
+# The Harmony remote entity, hub id, config file, device list and command lists are all discovered
+# at runtime. Only the two helper entity ids below are static.
+#
+# The hub stores its exported configuration as harmony_<hub-id>.conf in the Home Assistant config
+# directory. The file integration needs that directory in allowlist_external_dirs.
+#
+# Reference article (Dutch):
 # https://pcgsm.nl/ohh/2026/02/16/home-assistant-logitech-harmony-de-ultieme-integratie-volledige-handleiding/
 
+input_select:
+  harmony_command_device:
+    name: "Harmony command device"
+    options:
+      - "Select device from list"
+  harmony_command_command:
+    name: "Harmony command"
+    options:
+      - "Select command from list"
 
-# input_select:
-#   harmony_commands_ms_media_pc: # HASS standin
-#     name: "Harmony commands MS media PC"
-#     options:
-#       - "Select command from list"
-#   harmony_commands_samsung_dvd:
-#     name: "Harmony commands Samsung DVD"
-#     options:
-#       - "Select command from list"
-#   harmony_commands_samsung_tv:
-#     name: "Harmony commands Samsung TV"
-#     options:
-#       - "Select command from list"
-#   harmony_commands_yamaha_av_receiver:
-#     name: "Harmony commands Yamaha AV Receiver"
-#     options:
-#       - "Select command from list"
+script:
+  # Reads the current harmony_<hub-id>.conf and fills the command selector for the selected device.
+  harmony_load_commands_for_device:
+    alias: "Harmony load commands for device"
+    mode: restart
+    sequence:
+      - variables:
+          harmony_remote: >-
+            {{ integration_entities('harmony')
+               | select('match', '^remote\\.')
+               | first | default('', true) }}
+          hub_id: >-
+            {% set identifiers = device_attr(device_id(harmony_remote), 'identifiers')
+               if harmony_remote else [] %}
+            {% set ns = namespace(id='') %}
+            {% for domain, identifier in identifiers | default([]) %}
+              {% if domain == 'harmony' %}{% set ns.id = identifier %}{% endif %}
+            {% endfor %}
+            {{ ns.id }}
+      - condition: template
+        value_template: "{{ harmony_remote | string | length > 0 and hub_id | string | length > 0 }}"
+      - action: file.read_file
+        continue_on_error: true
+        response_variable: harmony_data
+        data:
+          file_name: "harmony_{{ hub_id }}.conf"
+          file_encoding: JSON
+      - condition: template
+        value_template: "{{ harmony_data is defined and harmony_data.data is defined }}"
+      - variables:
+          harmony: >-
+            {{ harmony_data.data
+               if harmony_data.data is mapping
+               else harmony_data.data | from_json }}
+          selected_device: "{{ states('input_select.harmony_command_device') }}"
+          command_options: >-
+            {% set devices = harmony.get('Devices', {}) if harmony is mapping else {} %}
+            {% set commands = devices.get(selected_device, {}).get('commands', [])
+               if selected_device in devices else [] %}
+            {{ ['Select command from list'] + commands }}
+      - action: input_select.set_options
+        target:
+          entity_id: input_select.harmony_command_command
+        data:
+          options: "{{ command_options }}"
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.harmony_command_command
+        data:
+          option: "Select command from list"
 
+automation:
+  # Discover the hub and fill both selectors. The device selector is refreshed from the config file;
+  # the command selector follows the currently selected device.
+  - id: harmony_fill_commands_per_device_auto
+    alias: "Harmony fill commands per device auto"
+    description: "Discovers the Harmony hub and fills the device and command selectors"
+    mode: restart
+    triggers:
+      - trigger: homeassistant
+        event: start
+      - trigger: time_pattern
+        minutes: "/10"
+      - trigger: event
+        event_type: call_service
+        event_data:
+          domain: input_select
+          service: reload
+      - trigger: event
+        event_type: call_service
+        event_data:
+          domain: homeassistant
+          service: reload_all
+    actions:
+      - variables:
+          harmony_remote: >-
+            {{ integration_entities('harmony')
+               | select('match', '^remote\\.')
+               | first | default('', true) }}
+          hub_id: >-
+            {% set identifiers = device_attr(device_id(harmony_remote), 'identifiers')
+               if harmony_remote else [] %}
+            {% set ns = namespace(id='') %}
+            {% for domain, identifier in identifiers | default([]) %}
+              {% if domain == 'harmony' %}{% set ns.id = identifier %}{% endif %}
+            {% endfor %}
+            {{ ns.id }}
+      - condition: template
+        value_template: "{{ harmony_remote | string | length > 0 and hub_id | string | length > 0 }}"
+      - action: file.read_file
+        continue_on_error: true
+        response_variable: harmony_data
+        data:
+          file_name: "harmony_{{ hub_id }}.conf"
+          file_encoding: JSON
+      - condition: template
+        value_template: "{{ harmony_data is defined and harmony_data.data is defined }}"
+      - variables:
+          harmony: >-
+            {{ harmony_data.data
+               if harmony_data.data is mapping
+               else harmony_data.data | from_json }}
+          device_options: >-
+            {% set devices = harmony.get('Devices', {}) if harmony is mapping else {} %}
+            {{ ['Select device from list'] + (devices.keys() | list) }}
+      - action: input_select.set_options
+        target:
+          entity_id: input_select.harmony_command_device
+        data:
+          options: "{{ device_options }}"
+      - action: script.harmony_load_commands_for_device
 
-# automation:
-#   - id: harmony_fill_commands_per_device_auto
-#     alias: Harmony Fill Commands Per Device Auto
-#     triggers:
-#       - trigger: homeassistant
-#         event: start
-#       - trigger: time_pattern
-#         minutes: /10
-#     actions:
-#       - action: file.read_file
-#         data:
-#           file_name: harmony_6229454.conf
-#           file_encoding: JSON
-#         response_variable: harmony_data
-#       - variables:
-#           harmony: "{{ harmony_data.data }}"
-#       - action: input_select.set_options
-#         target:
-#           entity_id: input_select.harmony_commands_ms_media_pc
-#         data:
-#           options: |
-#             {{ [''] + harmony.Devices['Microsoft Media PC SE'].commands }}
-#       - action: input_select.set_options
-#         target:      
-#           entity_id: input_select.harmony_commands_samsung_dvd
-#         data:
-#           options: |
-#             {{ [''] + harmony.Devices['Samsung DVD'].commands }}
-#       - action: input_select.set_options
-#         target:
-#           entity_id: input_select.harmony_commands_samsung_tv
-#         data:
-#           options: |
-#             {{ [''] + harmony.Devices['Samsung TV'].commands }}
-#       - action: input_select.set_options
-#         target:
-#           entity_id: input_select.harmony_commands_yamaha_av_receiver
-#         data:
-#           options: |
-#             {{ [''] + harmony.Devices['Yamaha AV Receiver'].commands }}
+  # Keep the command selector in sync when the user chooses another device.
+  - id: harmony_device_changed_auto
+    alias: "Harmony device changed auto"
+    description: "Reloads the command list when the selected Harmony device changes"
+    mode: restart
+    triggers:
+      - trigger: state
+        entity_id: input_select.harmony_command_device
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ trigger.to_state.state
+             not in ['Select device from list', 'unknown', 'unavailable'] }}
+    actions:
+      - action: script.harmony_load_commands_for_device
 
-#   - id: hrmony_send_command_from_device_auto
-#     alias: Harmony Send Command From Device Auto
-#     triggers:
-#       - trigger: state
-#         entity_id:
-#           - input_select.harmony_commands_ms_media_pc
-#           - input_select.harmony_commands_samsung_dvd
-#           - input_select.harmony_commands_samsung_tv
-#           - input_select.harmony_commands_av_receiver
-#     actions:
-#       - action: file.read_file
-#         data:
-#           file_name: harmony_6229454.conf
-#           file_encoding: JSON
-#         response_variable: harmony_data
-#       - variables:
-#           harmony: "{{ harmony_data.data }}"
-#           device_name: |
-#             {% set map = {
-#               'input_select.harmony_commands_ms_media_pc': 'Microsoft Media PC SE',
-#               'input_select.harmony_commands_samsung_dvd': 'Samsung DVD',
-#               'input_select.harmony_commands_samsung_tv': 'Samsung TV',
-#               'input_select.harmony_commands_av_receiver': 'Yamaha AV Receiver',
-#             } %} {{ map[changed_helper] }}
-#           device_id: "{{ harmony.Devices[device_name].id }}"
-#           changed_helper: "{{ trigger.entity_id }}"
-#           command: "{{ states(changed_helper) }}"
-#       - action: remote.send_command
-#         target:
-#           entity_id: remote.living_room
-#         data:
-#           device: "{{ device_id }}"
-#           command: "{{ command }}"
-#       - action: input_select.select_option
-#         target:
-#           entity_id: "{{ changed_helper }}"
-#         data:
-#           option: "Select command from list"
+  # Sending is discovered too: the Harmony integration provides the remote entity, and
+  # remote.send_command accepts the hub's own device name.
+  - id: harmony_send_command_from_device_auto
+    alias: "Harmony send command from device auto"
+    description: "Sends the selected command through the discovered Harmony remote"
+    mode: queued
+    max: 10
+    triggers:
+      - trigger: state
+        entity_id: input_select.harmony_command_command
+    variables:
+      harmony_remote: >-
+        {{ integration_entities('harmony')
+           | select('match', '^remote\\.')
+           | first | default('', true) }}
+      selected_device: "{{ states('input_select.harmony_command_device') }}"
+      selected_command: "{{ trigger.to_state.state }}"
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ harmony_remote | length > 0
+             and selected_command not in ['Select command from list', 'unknown', 'unavailable']
+             and selected_device in state_attr(harmony_remote, 'devices_list') | default([], true) }}
+    actions:
+      - action: remote.send_command
+        target:
+          entity_id: "{{ harmony_remote }}"
+        data:
+          device: "{{ selected_device }}"
+          command: "{{ selected_command }}"
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.harmony_command_command
+        data:
+          option: "Select command from list"

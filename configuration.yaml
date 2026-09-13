@@ -55,6 +55,8 @@ recorder:
 #   login_attempts_threshold: 5
 
 homeassistant:
+  allowlist_external_dirs:
+    - /config
 # Ensures slider switches instead of 2 button swiches
   customize_domain:
     switch:
