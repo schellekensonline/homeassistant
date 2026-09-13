@@ -1,5 +1,16 @@
+# Timestamp of the last write to Modbus register 9. The readback on register 11 can lag, so the
+# catch-up synchronizer waits before deciding that a write was really missed.
+input_datetime:
+  therma_v_ess_last_write:
+    name: "Therma V ESS last write"
+    has_date: true
+    has_time: true
+
 input_select:
-  # Input select to switch between heatpump power saving regimes
+  # User-facing ESS mode. The leading number is the value written to Modbus register 9; the
+  # text in brackets is the heat pump's documented (Heating/Cooling/DHW) setting. Signs are
+  # intentionally omitted to keep the labels short: high modes use + for heating/DHW and - for
+  # cooling; low modes use the opposite signs. Zero components stay "0".
   therma_v_ess_select:
     name: "Therma V energy state (H/C/DHW)"
     options:
@@ -12,18 +23,16 @@ input_select:
       - "6 - High power state (0/0/3)"
       - "7 - Low power state (0/0/3)"
       - "8 - Very low power state (1/2/5)"
-    # icon: mdi:state
- #   initial: "0 - Power saving state not used" # remember previous state
+    # No initial: Home Assistant restores the last chosen state.
 
 
 input_number:
-  # Input number to set the price difference that results in high price regime
+  # Daily price spread above which the high-price regime is used.
   therma_v_ess_high_price_difference:
     name: "Therma V ESS high price difference"
-#    initial: 0.07
     min: 0
-    max: 1 
-    step: 0.01 # 1ct accuracy 
+    max: 1
+    step: 0.01 # 1 ct accuracy.
     mode: box
     unit_of_measurement: "€"
     icon: mdi:cash-edit
@@ -33,7 +42,7 @@ automation:
   # Automation that deals with setting ESS for net negative energy prices
   - id: ess_based_on_e_price_negative_auto
     alias: "ESS based on e-price negative auto"
-    description: "Set the ESS state of the Therma V based on negative e-price"
+    description: "Sets the Therma V ESS state for negative buying prices"
     mode: queued
     triggers:
       - trigger: time
@@ -41,8 +50,9 @@ automation:
         id: lowest_time_trig
       - trigger: state
         entity_id: sensor.electricity_buying_price
-        id: hourly_price_trig
-    conditions: "{{ (states('sensor.electricity_buying_price') | float(0) ) <= -0.001 }}" # slightly negative to prevent triggering at 0
+    conditions:
+      - condition: template
+        value_template: "{{ states('sensor.electricity_buying_price') | float(0) <= -0.001 }}"
     actions:
       - action: switch.turn_on
         target:
@@ -53,40 +63,40 @@ automation:
       - action: input_boolean.turn_on
         target:
           entity_id: input_boolean.silent_mode_startup
-      - delay: '00:01' # to ensure prices are updated
+      - delay: "00:01" # Let the price sensors settle after the trigger.
       - choose:
-        - conditions:
-            - condition: trigger
-              id: lowest_time_trig
-          sequence:
-            - action: input_select.select_option
-              target:
-                entity_id: input_select.therma_v_ess_select
-              data:
-                option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 5 ] }}' # Very high power state
-            - delay: '00:55' # prevent secondary triggers from price
-        - conditions:
-            - condition: state
-              entity_id: binary_sensor.therma_v_dhw_heating_state
-              state: "on"
-          sequence:
-            - action: input_select.select_option
-              target:
-                entity_id: input_select.therma_v_ess_select
-              data:
-                option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 5 ] }}' # At least high state for DHW
-            - delay: '00:25' # prevent secondary triggers from price
+          - conditions:
+              - condition: trigger
+                id: lowest_time_trig
+            sequence:
+              - action: input_select.select_option
+                target:
+                  entity_id: input_select.therma_v_ess_select
+                data:
+                  option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 5 ] }}' # Very high power state.
+              - delay: "00:55" # Prevent price triggers from overriding this forced run.
+          - conditions:
+              - condition: state
+                entity_id: binary_sensor.therma_v_dhw_heating_state
+                state: "on"
+            sequence:
+              - action: input_select.select_option
+                target:
+                  entity_id: input_select.therma_v_ess_select
+                data:
+                  option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 5 ] }}' # At least high power while DHW runs.
+              - delay: "00:25" # Prevent price triggers from overriding the DHW run.
         default:
           - action: input_select.select_option
             target:
               entity_id: input_select.therma_v_ess_select
             data:
-              option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 2 ] }}' # Normal power state
+              option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 2 ] }}' # Normal power state.
 
   # Automation that deals with setting ESS for positive energy prices low price difference
   - id: ess_based_on_e_price_positive_normal_auto
     alias: "ESS based on e-price positive normal auto"
-    description: "Set the ESS state of the Therma V based on positive e-price low price difference"
+    description: "Sets the Therma V ESS state for positive prices and a small daily spread"
     mode: queued
     triggers:
       - trigger: time
@@ -94,15 +104,17 @@ automation:
         id: lowest_time_trig
       - trigger: state
         entity_id: sensor.electricity_buying_price
-        id: hourly_price_trig
       - trigger: state
         entity_id: binary_sensor.therma_v_dhw_heating_state
-        id: dhw_start_trig
     conditions:
-      - "{{ (states('sensor.electricity_buying_price') | float(0) ) > -0.001 }}"
-      - "{{ (states('sensor.difference_in_electricity_price_today') | float(0) ) < (states('input_number.therma_v_ess_high_price_difference') | float(0)) }}"
+      - condition: template
+        value_template: "{{ states('sensor.electricity_buying_price') | float(0) > -0.001 }}"
+      - condition: template
+        value_template: >-
+          {{ states('sensor.difference_in_electricity_price_today') | float(0)
+             < states('input_number.therma_v_ess_high_price_difference') | float(0) }}
     actions:
-      - delay: '00:01' # to ensure the prices are updated
+      - delay: "00:01" # Let the price sensors settle after the trigger.
       - choose:
           - conditions:
               - condition: trigger
@@ -112,8 +124,8 @@ automation:
                 target:
                   entity_id: input_select.therma_v_ess_select
                 data:
-                  option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 6 ] }}' # High power state to force a DHW run also always during DHW run
-              - delay: '00:55' # prevent secondary triggers from price
+                  option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 6 ] }}' # High power to force a DHW run.
+              - delay: "00:55" # Prevent price triggers from overriding this forced run.
           - conditions:
               - condition: state
                 entity_id: binary_sensor.therma_v_dhw_heating_state
@@ -123,8 +135,8 @@ automation:
                 target:
                   entity_id: input_select.therma_v_ess_select
                 data:
-                  option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 6 ] }}' # At least high state for DHW
-              - delay: '00:25' # prevent secondary triggers from price
+                  option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 6 ] }}' # At least high power while DHW runs.
+              - delay: "00:25" # Prevent price triggers from overriding the DHW run.
           - conditions:
               - condition: numeric_state
                 entity_id: sensor.current_percentage_of_electricity_price
@@ -134,80 +146,84 @@ automation:
                 target:
                   entity_id: input_select.therma_v_ess_select
                 data:
-                  option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 7 ] }}' # Low power state
-        default:
-          sequence:
-            - action: input_select.select_option
-              target:
-                entity_id: input_select.therma_v_ess_select
-              data:
-                option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 2 ] }}' # Normal power state
-
-
-# Automation that deals with setting ESS for positive energy prices high price difference
-  - id: ess_based_on_e_price_positive_high_auto
-    alias: "ESS based on e-price positive high auto"
-    description: "Set the ESS state of the Therma V based on positive e-price high price difference"
-    mode: queued
-    triggers:
-      - trigger: time
-        at: input_datetime.start_time_electricity_lowest_hours
-        id: lowest_time_trig
-      - trigger: state
-        entity_id: sensor.electricity_buying_price
-        id: hourly_price_trig
-      - trigger: state
-        entity_id: binary_sensor.therma_v_dhw_heating_state
-        id: dhw_start_trig
-    conditions:
-      - "{{ (states('sensor.electricity_buying_price') | float(0) ) > -0.001 }}"
-      - "{{ (states('sensor.difference_in_electricity_price_today') | float(0) ) >= (states('input_number.therma_v_ess_high_price_difference') | float(0)) }}"
-    actions:
-      - delay: '00:01' # to ensure prices are updated
-      - choose:
-          - conditions:
-              - condition: trigger
-                id: lowest_time_trig
-            sequence:
-              - action: input_select.select_option
-                target:
-                  entity_id: input_select.therma_v_ess_select
-                data:
-                  option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 5 ] }}' # Very high power state to force DHW
-              - delay: '00:55' # prevent secondary triggers from price
-          - conditions:
-              - condition: state
-                entity_id: binary_sensor.therma_v_dhw_heating_state
-                state: "on"
-            sequence:
-              - action: input_select.select_option
-                target:
-                  entity_id: input_select.therma_v_ess_select
-                data:
-                  option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 5 ] }}' # At least high state for DHW
-              - delay: '00:25' # prevent secondary triggers from price
-          - conditions:
-              - condition: numeric_state
-                entity_id: sensor.current_percentage_of_electricity_price
-                above: 75
-            sequence:
-              - action: input_select.select_option
-                target:
-                  entity_id: input_select.therma_v_ess_select
-                data:
-                  option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 8 ] }}' # Very low power state
+                  option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 7 ] }}' # Low power state.
         default:
           - action: input_select.select_option
             target:
               entity_id: input_select.therma_v_ess_select
             data:
-              option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 7 ] }}' # Low power state
+              option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 2 ] }}' # Normal power state.
 
 
-  # Update function for ESS state. Sets input select based on HP state and vice verse
+  # Automation that deals with setting ESS for positive energy prices and a large daily spread.
+  - id: ess_based_on_e_price_positive_high_auto
+    alias: "ESS based on e-price positive high auto"
+    description: "Sets the Therma V ESS state for positive prices and a large daily spread"
+    mode: queued
+    triggers:
+      - trigger: time
+        at: input_datetime.start_time_electricity_lowest_hours
+        id: lowest_time_trig
+      - trigger: state
+        entity_id: sensor.electricity_buying_price
+      - trigger: state
+        entity_id: binary_sensor.therma_v_dhw_heating_state
+    conditions:
+      - condition: template
+        value_template: "{{ states('sensor.electricity_buying_price') | float(0) > -0.001 }}"
+      - condition: template
+        value_template: >-
+          {{ states('sensor.difference_in_electricity_price_today') | float(0)
+             >= states('input_number.therma_v_ess_high_price_difference') | float(0) }}
+    actions:
+      - delay: "00:01" # Let the price sensors settle after the trigger.
+      - choose:
+          - conditions:
+              - condition: trigger
+                id: lowest_time_trig
+            sequence:
+              - action: input_select.select_option
+                target:
+                  entity_id: input_select.therma_v_ess_select
+                data:
+                  option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 5 ] }}' # Very high power to force a DHW run.
+              - delay: "00:55" # Prevent price triggers from overriding this forced run.
+          - conditions:
+              - condition: state
+                entity_id: binary_sensor.therma_v_dhw_heating_state
+                state: "on"
+            sequence:
+              - action: input_select.select_option
+                target:
+                  entity_id: input_select.therma_v_ess_select
+                data:
+                  option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 5 ] }}' # At least high power while DHW runs.
+              - delay: "00:25" # Prevent price triggers from overriding the DHW run.
+          - conditions:
+              - condition: numeric_state
+                entity_id: sensor.current_percentage_of_electricity_price
+                above: 75
+            sequence:
+              - action: input_select.select_option
+                target:
+                  entity_id: input_select.therma_v_ess_select
+                data:
+                  option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 8 ] }}' # Very low power state.
+        default:
+          - action: input_select.select_option
+            target:
+              entity_id: input_select.therma_v_ess_select
+            data:
+              option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 7 ] }}' # Low power state.
+
+
+  # Keep the input select and Modbus register 9 in sync. sensor.therma_v_energy_state reads the
+  # heat pump's current state back from register 11. The catch-up trigger repairs a missed write
+  # only after the readback grace period; its action must use the select state because a template
+  # trigger has no trigger.to_state.
   - id: therma_v_update_energy_saving_state_auto
     alias: "Therma V Update Energy Saving State auto"
-    description: "Synchronizes the Therma V ESS input select and modbus state"
+    description: "Synchronizes the Therma V ESS input select and Modbus state"
     mode: single
     max_exceeded: silent
     triggers:
@@ -217,42 +233,48 @@ automation:
       - trigger: state
         entity_id: input_select.therma_v_ess_select
         id: ess_select_trig
-      # when inconsistent for x run default
       - trigger: template
-        value_template: "{{ ( (states('sensor.therma_v_energy_state') | int(0)) - (state_attr('input_select.therma_v_ess_select', 'options').index(states('input_select.therma_v_ess_select')) | int(0)) ) | abs > 0 }}"
+        value_template: >-
+          {% set options = state_attr('input_select.therma_v_ess_select', 'options') | default([], true) %}
+          {% set selected = states('input_select.therma_v_ess_select') %}
+          {% set selected_idx = options.index(selected) if selected in options else none %}
+          {% set last_write = state_attr('input_datetime.therma_v_ess_last_write', 'timestamp') %}
+          {% set readback_grace = 600 %}
+          {{ selected_idx is not none
+             and states('sensor.therma_v_energy_state') | is_number
+             and (states('sensor.therma_v_energy_state') | int(0) - selected_idx) | abs > 0
+             and (last_write is none or (now().timestamp() - last_write) > readback_grace) }}
         for: "00:02:00"
         id: ess_catch_trig
     conditions: []
     actions:
       - choose:
-        - conditions:
-            - condition: trigger
-              id: ess_modbus_trig
-          sequence:
-            - variables:
-                idx: '{{ trigger.to_state.state | int(0) }}'
-            - action: input_select.select_option
-              target:
-                entity_id: input_select.therma_v_ess_select
-              data:
-                option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ idx ] }}'
-        - conditions:
-            - condition: trigger
-              id: ess_select_trig
-          sequence:
-            - action: modbus.write_register
-              data_template:
-                address: 9
-                slave: 1
-                hub: modbus_gateway_therma_v
-                value: '{{ trigger.to_state.state[0] | int(0)  }}'
-            # - delay: '00:00:01' # prevent retriggering on write event
+          - conditions:
+              - condition: trigger
+                id: ess_modbus_trig
+            sequence:
+              - variables:
+                  idx: "{{ trigger.to_state.state | int(-1) }}"
+              - action: input_select.select_option
+                target:
+                  entity_id: input_select.therma_v_ess_select
+                data:
+                  option: >-
+                    {% set options = state_attr('input_select.therma_v_ess_select', 'options') %}
+                    {{ options[idx] if 0 <= idx < options | count else states('input_select.therma_v_ess_select') }}
         default:
+          - condition: template
+            value_template: >-
+              {{ states('input_select.therma_v_ess_select')
+                 in (state_attr('input_select.therma_v_ess_select', 'options') | default([], true)) }}
+          - action: input_datetime.set_datetime
+            target:
+              entity_id: input_datetime.therma_v_ess_last_write
+            data:
+              timestamp: "{{ now().timestamp() }}"
           - action: modbus.write_register
-            data_template:
+            data:
               address: 9
               slave: 1
               hub: modbus_gateway_therma_v
-              value: '{{ trigger.to_state.state[0] | int(0)  }}'
-          # - delay: '00:00:01' # prevent retriggering on write event
-            
+              value: "{{ states('input_select.therma_v_ess_select')[0] | int(0) }}"
