@@ -12,15 +12,15 @@ input_number:
   electric_energy_tax_ex:
     name: "Electric energy tax ex. VAT"
     min: 0
-    max: 100  # Redicilous large value
+    max: 100 # Deliberately high ceiling so it never limits a valid tariff value.
     step: 0.00001
     initial: 0.09161
     mode: box
     unit_of_measurement: "€"
-  electric_energy_purchasing_fee_ex: 
+  electric_energy_purchasing_fee_ex:
     name: "Electric energy purchasing fee ex. VAT"
     min: 0
-    max: 100  # Redicilous large value
+    max: 100 # Deliberately high ceiling so it never limits a valid tariff value.
     step: 0.00001
     initial: 0.0165
     mode: box
@@ -28,7 +28,7 @@ input_number:
   electric_energy_selling_fee_ex:
     name: "Electric energy selling fee ex. VAT"
     min: 0
-    max: 100  # Redicilous large value
+    max: 100 # Deliberately high ceiling so it never limits a valid tariff value.
     step: 0.00001
     initial: 0.0165
     mode: box
@@ -52,6 +52,7 @@ template:
         unique_id: electricity_buying_price
         unit_of_measurement: "€/kWh"
         state_class: measurement
+        availability: "{{ states('sensor.electricity_selling_price') | is_number }}"
         state: >
           {% set sell       = states('sensor.electricity_selling_price') | float(0) %}
           {% set buy_fee    = states('input_number.electric_energy_purchasing_fee_ex') | float(0) %}
@@ -82,8 +83,8 @@ template:
         unit_of_measurement: "%"
         state_class: measurement
         availability: >
-          {% set current = states('sensor.electricity_selling_price') | float("unknown") %}
-          {{ current|is_number }}
+          {% set prices = state_attr('sensor.electricity_selling_price', 'prices') | default([], true) %}
+          {{ states('sensor.electricity_selling_price') | is_number and prices | count > 1 }}
         state: >
           {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
           {% set high    = cheapest_energy_hours( sensor='sensor.electricity_selling_price', attr_all='prices',time_key='time', value_key='price', mode='max', use_hourly_avg=false, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) | float(0) %}
@@ -98,8 +99,8 @@ template:
         state_class: measurement
         unit_of_measurement: '€'
         availability: >
-          {% set current = states('sensor.electricity_buying_price') | float("unknown") %}
-          {{ current|is_number }}
+          {% set prices = state_attr('sensor.electricity_selling_price', 'prices') | default([], true) %}
+          {{ states('sensor.electricity_buying_price') | is_number and prices | count > 1 }}
         state: >
           {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
           {# | float(0): when the macro returns no number (e.g. prices not published yet) the subtraction raised a TypeError #}
@@ -185,7 +186,10 @@ template:
       - platform: homeassistant
         event: start
     action:
+      - variables:
+          previous_prices: "{{ state_attr('sensor.electricity_selling_price', 'prices') | default([], true) }}"
       - action: nordpool.get_prices_for_date
+        continue_on_error: true
         response_variable: today_prices
         data:
           config_entry: !secret nord_pole_config_entry
@@ -193,6 +197,7 @@ template:
           areas: NL
           currency: EUR
       - action: nordpool.get_prices_for_date
+        continue_on_error: true
         response_variable: tomorrow_prices
         data:
           config_entry: !secret nord_pole_config_entry
@@ -203,6 +208,7 @@ template:
       name: Electricity selling price
       unique_id: electricity_selling_price
       unit_of_measurement: "€/kWh"
+      availability: "{{ states('sensor.nord_pool_nl_current_price') | is_number }}"
       state: >
         {% set price    = states('sensor.nord_pool_nl_current_price') | float(0) %}
         {% set sell_fee = states('input_number.electric_energy_selling_fee_ex') | float(0) %}
@@ -212,7 +218,12 @@ template:
         prices: >
           {% set sell_fee = states('input_number.electric_energy_selling_fee_ex') | float(0) %}
           {% set VAT      = states('input_number.electric_energy_vat') | float(0.21) %}
-          {% set energy_prices = (today_prices['NL'] | default([], true) + tomorrow_prices['NL'] | default([], true)) %}
+          {% set today    = today_prices['NL'] | default([], true) if today_prices is defined else [] %}
+          {% set tomorrow = tomorrow_prices['NL'] | default([], true) if tomorrow_prices is defined else [] %}
+          {% set previous = previous_prices
+             if previous_prices is defined and previous_prices is iterable and previous_prices is not string
+             else [] %}
+          {% set energy_prices = today + tomorrow if (today | count + tomorrow | count) > 0 else previous %}
           {% set ns = namespace(list=[]) %}
           {% for i in range(energy_prices|length) %}
           {%   set start = ((energy_prices[i]['start'] | as_datetime) | as_local).isoformat() %}
@@ -332,30 +343,39 @@ automation:
   # Plan the cheapest and most expensive hours of the day
   - id: plan_electricity_lowest_hours_auto
     alias: "Plan electricity highest and lowest hours auto"
-    description: "Plan start moment of higest and lowest electricity price hours"
+    description: "Plans the start of the cheapest and most expensive hours of today"
     mode: single
     triggers:
-    - trigger: time_pattern
-      # Run hourly across the whole day, so a missed run cannot skip a day
-      hours: "/1"
+      - trigger: time_pattern
+        # Run hourly across the whole day, so a missed run cannot skip a day.
+        hours: "/1"
     actions:
       - variables:
-          number_of_lowest_hours: 1  # Peak and low hours
+          number_of_lowest_hours: 1 # Start time of the cheapest hour.
           start_lowest_hours: >
             {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
-            {{ cheapest_energy_hours( sensor='sensor.electricity_selling_price', attr_all='prices', time_key='time', value_key='price', use_hourly_avg=true, hours=number_of_lowest_hours, look_ahead=false, include_today=true, include_tomorrow=false) }}
+            {{ cheapest_energy_hours( sensor='sensor.electricity_selling_price', attr_all='prices', time_key='time', value_key='price', use_hourly_avg=true, hours=number_of_lowest_hours, look_ahead=true, include_today=true, include_tomorrow=false) }}
           start_highest_hour: >
             {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
             {{ cheapest_energy_hours( sensor='sensor.electricity_selling_price', attr_all='prices', time_key='time', value_key='price', use_hourly_avg=true, mode='time_max', hours='all', look_ahead=false, include_today=true, include_tomorrow=false) }}
-      # Start time of the cheapest hours
-      - action: input_datetime.set_datetime
-        target:
-          entity_id: input_datetime.start_time_electricity_lowest_hours
-        data:
-          datetime: "{{start_lowest_hours}}" 
-      # Start time of the most expensive hours
-      - action: input_datetime.set_datetime
-        target:
-          entity_id: input_datetime.start_time_electricity_highest_hour
-        data:
-          datetime: "{{start_highest_hour}}" 
+      # Only write a usable future time. If no complete hour remains, keep the previous value.
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ start_lowest_hours | as_datetime is not none }}"
+            sequence:
+              - action: input_datetime.set_datetime
+                target:
+                  entity_id: input_datetime.start_time_electricity_lowest_hours
+                data:
+                  datetime: "{{ start_lowest_hours }}"
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ start_highest_hour | as_datetime is not none }}"
+            sequence:
+              - action: input_datetime.set_datetime
+                target:
+                  entity_id: input_datetime.start_time_electricity_highest_hour
+                data:
+                  datetime: "{{ start_highest_hour }}"
