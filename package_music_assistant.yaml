@@ -15,12 +15,14 @@ input_select:
       - "Geen albums gevonden"
 
 template:
+  # ESPHome expects the literal string "none" when no album art is active, so it can clear the
+  # online image without trying to fetch an invalid URL.
   - sensor:
       - name: "Music Assistant Active Album Art"
         unique_id: music_assistant_active_album_art
         state: >
-          {% set player = 'media_player.' ~ 'esp32_s3_box_player' %}
-          {% if state_attr(player, 'entity_picture') %}
+          {% set player = 'media_player.esp32_s3_box_player' %}
+          {% if has_value(player) and state_attr(player, 'entity_picture') %}
             {{ state_attr(player, 'entity_picture') }}
           {% else %}
             none
@@ -29,24 +31,24 @@ template:
 
 automation:
   - id: music_assistant_get_radiostations_auto
-    alias: "Music Assistant get Radiostations auto"
+    alias: "Music Assistant get radio stations auto"
     description: "Fetches the radio stations and puts them in an input_select"
-    trigger:
-      - platform: homeassistant
+    triggers:
+      - trigger: homeassistant
         event: start
-      - platform: time
-        at: "04:00:00"  # Dagelijkse synchronisatie
-      - platform: event
+      - trigger: time
+        at: "04:00:00" # Daily library sync.
+      - trigger: event
         event_type: call_service
         event_data:
           domain: input_select
           service: reload
-      - platform: event
+      - trigger: event
         event_type: call_service
         event_data:
           domain: homeassistant
           service: reload_all
-    action:
+    actions:
     # 1. Fetch the favourite radio stations from the live Music Assistant library
     - action: music_assistant.get_library
       data:
@@ -71,41 +73,41 @@ automation:
   - id: music_assistant_play_selected_station_auto
     alias: "Music Assistant Play Selected Station auto"
     description: "Plays the station as soon as the input_select helper changes"
-    trigger:
-      - platform: state
+    triggers:
+      - trigger: state
         entity_id: input_select.music_assistant_radio_select
-    condition:
-      # Voorkom dat hij probeert af te spelen als de lijst leeg is of laadt
+    conditions:
+      # Do not try to play when the list is empty or still loading.
       - condition: template
         value_template: "{{ trigger.to_state.state not in ['Laden...', 'Geen favorieten gevonden', 'Geen zenders gevonden', 'unknown', 'unavailable'] }}"
-    action:
+    actions:
       - action: music_assistant.play_media
         target:
-          entity_id: media_player.esp32_s3_box_player  # <--- replace with your S3 Box media_player (or another speaker)
+          entity_id: media_player.esp32_s3_box_player
         data:
           media_id: "{{ trigger.to_state.state }}"
           media_type: radio
     mode: restart
 
   - id: music_assistant_get_albums_auto
-    alias: "Music Assistant get Albums auto"
+    alias: "Music Assistant get albums auto"
     description: "Fetches the albums and puts them in an input_select"
-    trigger:
-      - platform: homeassistant
+    triggers:
+      - trigger: homeassistant
         event: start
-      - platform: time
-        at: "04:00:00"  # Dagelijkse synchronisatie
-      - platform: event
+      - trigger: time
+        at: "04:00:00" # Daily library sync.
+      - trigger: event
         event_type: call_service
         event_data:
           domain: input_select
           service: reload
-      - platform: event
+      - trigger: event
         event_type: call_service
         event_data:
           domain: homeassistant
           service: reload_all
-    action:
+    actions:
     # 1. Fetch the favourite albums from the live Music Assistant library
     - action: music_assistant.get_library
       data:
@@ -130,24 +132,24 @@ automation:
   - id: music_assistant_play_selected_album_auto
     alias: "Music Assistant Play Selected Album auto"
     description: "Plays the album as soon as the input_select helper changes"
-    trigger:
-      - platform: state
+    triggers:
+      - trigger: state
         entity_id: input_select.music_assistant_album_select
-    condition:
-      # Voorkom dat hij probeert af te spelen als de lijst leeg is of laadt
+    conditions:
+      # Do not try to play when the list is empty or still loading.
       - condition: template
         value_template: "{{ trigger.to_state.state not in ['Laden...', 'Geen favorieten gevonden', 'Geen albums gevonden', 'unknown', 'unavailable'] }}"
-    action:
+    actions:
       - action: music_assistant.play_media
         target:
-          entity_id: media_player.esp32_s3_box_player  # <--- replace with your S3 Box media_player (or another speaker)
+          entity_id: media_player.esp32_s3_box_player
         data:
           media_id: "{{ trigger.to_state.state }}"
           media_type: album
     mode: restart
 
   - id: listen_radio_harmony_auto
-    alias: "Listen to radio started from harmony hub auto"
+    alias: "Listen to radio from Harmony hub auto"
     triggers:
       - trigger: state
         entity_id: remote.living_room
@@ -160,13 +162,13 @@ automation:
           entity_id: light.esp32_s3_box_player_backlight
       - action: music_assistant.play_media
         target:
-          entity_id: media_player.esp32_s3_box_player  # <--- replace with your S3 Box media_player (or another speaker)
+          entity_id: media_player.esp32_s3_box_player
         data:
           media_id: "{{ states('input_select.music_assistant_radio_select') }}"
           media_type: radio
 
   - id: listen_albums_harmony_auto
-    alias: "Listen to albums started from harmony hub auto"
+    alias: "Listen to albums from Harmony hub auto"
     triggers:
       - trigger: state
         entity_id: remote.living_room
@@ -179,13 +181,13 @@ automation:
           entity_id: light.esp32_s3_box_player_backlight
       - action: music_assistant.play_media
         target:
-          entity_id: media_player.esp32_s3_box_player  # <--- replace with your S3 Box media_player (or another speaker)
+          entity_id: media_player.esp32_s3_box_player
         data:
           media_id: "{{ states('input_select.music_assistant_album_select') }}"
           media_type: album
 
   - id: standby_player_from_harmony_auto
-    alias: "Standby player from harmony hub auto"
+    alias: "Standby player from Harmony hub auto"
     triggers:
       - trigger: state
         entity_id: remote.living_room
@@ -205,52 +207,52 @@ automation:
     description: "Forwards media commands received by the IR receiver to the player"
     mode: parallel
     max: 10
-    trigger:
-      - platform: state
+    triggers:
+      - trigger: state
         entity_id: binary_sensor.livingroom_rf_ir_remote_media_player_play
         from: "off"
         to: "on"
         id: play
-      - platform: state
+      - trigger: state
         entity_id: binary_sensor.livingroom_rf_ir_remote_media_player_pause
         from: "off"
         to: "on"
         id: pause
-      - platform: state
+      - trigger: state
         entity_id: binary_sensor.livingroom_rf_ir_remote_media_player_stop
         from: "off"
         to: "on"
         id: stop
-      - platform: state
+      - trigger: state
         entity_id: binary_sensor.livingroom_rf_ir_remote_media_player_rewind
         from: "off"
         to: "on"
         id: rewind
-      - platform: state
+      - trigger: state
         entity_id: binary_sensor.livingroom_rf_ir_remote_media_player_fast_forward
         from: "off"
         to: "on"
         id: fast_forward
-      - platform: state
+      - trigger: state
         entity_id: binary_sensor.livingroom_rf_ir_remote_media_player_previous
         from: "off"
         to: "on"
         id: previous
-      - platform: state
+      - trigger: state
         entity_id: binary_sensor.livingroom_rf_ir_remote_media_player_next
         from: "off"
         to: "on"
         id: next
     conditions:
       - or:
-        - condition: state
-          entity_id: remote.living_room
-          attribute: current_activity
-          state: "Listen to Radio"
-        - condition: state
-          entity_id: remote.living_room
-          attribute: current_activity
-          state: "Listen to Albums"
+          - condition: state
+            entity_id: remote.living_room
+            attribute: current_activity
+            state: "Listen to Radio"
+          - condition: state
+            entity_id: remote.living_room
+            attribute: current_activity
+            state: "Listen to Albums"
     actions:
       - choose:
           # === PLAY ===
@@ -304,7 +306,7 @@ automation:
                 id: previous
             sequence:
               - choose:
-                  # Als de activiteit 'Listen to Radio' is -> Radio input_select eentje omlaag
+                  # In radio mode, step to the previous radio station.
                   - conditions:
                       - condition: state
                         entity_id: remote.living_room
@@ -316,7 +318,7 @@ automation:
                           cycle: true
                         target:
                           entity_id: input_select.music_assistant_radio_select
-                  # Als de activiteit 'Listen to Albums' is -> Album input_select eentje omlaag
+                  # In album mode, step to the previous album.
                   - conditions:
                       - condition: state
                         entity_id: remote.living_room
@@ -340,7 +342,7 @@ automation:
                 id: next
             sequence:
               - choose:
-                  # Als de activiteit 'Listen to Radio' is -> Radio input_select eentje omhoog
+                  # In radio mode, step to the next radio station.
                   - conditions:
                       - condition: state
                         entity_id: remote.living_room
@@ -352,7 +354,7 @@ automation:
                           cycle: true
                         target:
                           entity_id: input_select.music_assistant_radio_select 
-                  # Als de activiteit 'Listen to Albums' is -> Album input_select eentje omhoog
+                  # In album mode, step to the next album.
                   - conditions:
                       - condition: state
                         entity_id: remote.living_room
