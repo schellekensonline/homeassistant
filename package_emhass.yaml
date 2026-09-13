@@ -56,6 +56,30 @@ template:
             {{ tot_pv | round(0) }}
           {% endif %}
 
+      # How much price data the MPC has to plan with: the number of quarter hours from the
+      # current quarter until the last known price. The price list holds whole days (96
+      # quarters each), so this is ~96 in the morning (only today is published) and 97-192
+      # once Nord Pool has published tomorrow around 13:00. Below 24 quarters (6 hours)
+      # something is wrong: tomorrow's prices are missing and the horizon keeps shrinking
+      # towards midnight. The MPC automation warns on that and skips when there is nothing.
+      - name: "EMHASS price horizon"
+        unique_id: emhass_price_horizon
+        unit_of_measurement: "quarters"
+        state: >
+          {% set prices = state_attr('sensor.electricity_buying_price', 'prices') | default([], true) %}
+          {% set quarter = now().replace(minute=now().minute - (now().minute % 15), second=0, microsecond=0) %}
+          {{ prices | selectattr('time', '>=', quarter.isoformat()) | list | length }}
+        attributes:
+          last_price_time: >
+            {% set prices = state_attr('sensor.electricity_buying_price', 'prices') | default([], true) %}
+            {{ prices[-1]['time'] if prices else none }}
+          covers_tomorrow: >
+            {% set prices = state_attr('sensor.electricity_buying_price', 'prices') | default([], true) %}
+            {{ ((prices[-1]['time'] | as_datetime | as_local).date() > now().date()) if prices else false }}
+          quarters_tomorrow: >
+            {% set prices = state_attr('sensor.electricity_buying_price', 'prices') | default([], true) %}
+            {{ prices | selectattr('time', '>=', (now().date() + timedelta(days=1)).isoformat()) | list | length }}
+
 input_number:
   # Target SoC at the end of the optimisation horizon. Passed to EMHASS via REST
   # instead of config.json, so it can be adjusted without restarting the container.
@@ -68,6 +92,18 @@ input_number:
     initial: 60
     mode: slider
     unit_of_measurement: "%"
+
+input_datetime:
+  # Date the day-ahead plan was last built for successfully. Set by the day-ahead automation
+  # after EMHASS answered, so the automation can retry until tomorrow's plan really exists
+  # and the 23:55 check can see whether tomorrow is covered.
+  emhass_dayahead_plan_date:
+    name: "EMHASS day-ahead planned date"
+    icon: mdi:calendar-check
+    has_date: true
+    has_time: false
+    # Never planned: the automation only skips when this equals tomorrow's date.
+    initial: "1970-01-01"
 
 binary_sensor:
   # EMHASS runs as a separate container. This sensor lets an automation wait until
@@ -97,11 +133,18 @@ rest_command:
     timeout: 30
     content_type: "application/json"
     payload: >-
-      {% set incl = state_attr('sensor.electricity_buying_price', 'prices') | map(attribute='price') | list %}
-      {% set excl = state_attr('sensor.electricity_selling_price', 'prices') | map(attribute='price') | list %}
+      {# The day-ahead plan is for tomorrow, so only send the quarters of tomorrow (and
+         later, should they ever be published): EMHASS plans from the start of the list, so
+         the current day has to be left out. #}
+      {% set tomorrow = (now().date() + timedelta(days=1)).isoformat() %}
+      {% set incl = state_attr('sensor.electricity_buying_price', 'prices') | selectattr('time', '>=', tomorrow) | map(attribute='price') | list %}
+      {% set excl = state_attr('sensor.electricity_selling_price', 'prices') | selectattr('time', '>=', tomorrow) | map(attribute='price') | list %}
+      {% set incl_rounded = incl | map('round', 4) | list %}
+      {% set excl_rounded = excl | map('round', 4) | list %}
       {
-        "load_cost_forecast": {{ incl | to_json }},
-        "prod_price_forecast": {{ excl | to_json }},
+        "load_cost_forecast": {{ incl_rounded | to_json }},
+        "prod_price_forecast": {{ excl_rounded | to_json }},
+        "prediction_horizon": {{ min(96, incl_rounded | length) }},
         "soc_init": {{ (states('sensor.sessy_battery_state_of_charge') | float(60) / 100) | round(3) }},
         "soc_final": {{ (states('input_number.emhass_soc_target') | float(60) / 100) | round(3) }}
       }
@@ -133,7 +176,10 @@ rest_command:
       {
         "load_cost_forecast":  {{ incl_rounded | to_json }},
         "prod_price_forecast": {{ excl_rounded | to_json }},
-        "prediction_horizon": 96,
+        {# EMHASS requires the horizon to match the list length, and the list only reaches as
+           far as Nord Pool has published (today, plus tomorrow after ~13:00). Asking for 96
+           while the list is shorter made EMHASS reject the run with "length should be 96". #}
+        "prediction_horizon": {{ min(96, incl_rounded | length) }},
         "soc_init": {{ (states('sensor.sessy_battery_state_of_charge') | float(60) / 100) | round(3) }},
         "soc_final": {{ (states('input_number.emhass_soc_target') | float(60) / 100) | round(3) }}
       }
@@ -144,6 +190,88 @@ rest_command:
     method: POST
     content_type: "application/json"
     payload: "{}"
+
+script:
+  # Price-data guard, shared by the MPC and the day-ahead automation. Returns 'run' or 'skip'
+  # so the caller can decide whether the optimisation makes sense; the caller keeps the
+  # optimisation itself.
+  emhass_price_guard:
+    alias: "EMHASS price guard"
+    description: >-
+      Logs an error when there is no price data at all and a warning when the horizon is
+      short. Returns 'skip' when the caller should not run EMHASS, otherwise 'run'.
+    fields:
+      label:
+        name: "Label in the log line"
+        description: "What is being guarded, e.g. MPC or Day-ahead."
+        default: "EMHASS"
+        selector:
+          text:
+      warn_below:
+        name: "Warn below (quarters)"
+        description: "Log a warning when fewer than this many quarters are known (see require_tomorrow)."
+        default: 24
+        selector:
+          number:
+            min: 0
+            max: 192
+      require_tomorrow:
+        name: "Look at tomorrow instead of the horizon"
+        description: "Measure tomorrow's quarters instead of the quarters from now; for the day-ahead run."
+        default: false
+        selector:
+          boolean:
+    sequence:
+      - variables:
+          require: "{{ require_tomorrow | default(false, true) | bool(false) }}"
+      # The MPC needs the quarters from now on, the day-ahead needs the quarters of tomorrow.
+      - variables:
+          known: >-
+            {% if require %}
+              {{ state_attr('sensor.emhass_price_horizon', 'quarters_tomorrow') | int(0) }}
+            {% else %}
+              {{ states('sensor.emhass_price_horizon') | int(0) }}
+            {% endif %}
+          unit: "{{ 'quarters of tomorrow' if require else 'quarters' }}"
+      # A field default is not always filled in by Home Assistant, so fall back here too.
+      - variables:
+          warn_at: "{{ warn_below | default(24, true) | int(0) }}"
+      # No data at all: the restart case, right before the price sensor has fetched its first
+      # day. A run with an empty price list is rejected by EMHASS (and falls back to the
+      # missing csv), so not calling it is the honest answer.
+      - if:
+          - condition: template
+            value_template: "{{ known < 1 }}"
+        then:
+          - action: system_log.write
+            data:
+              message: >-
+                EMHASS: {{ label }} run skipped, no price data for it ({{ known }} {{ unit }},
+                sensor.emhass_price_horizon is {{ states('sensor.emhass_price_horizon') }}).
+                The published sensors keep their previous values.
+              level: error
+              logger: emhass.prices
+        else:
+          # Warn when the horizon gets so short that tomorrow's prices are missing. Normal is
+          # ~44 quarters or more, so a warning means the Nord Pool data is incomplete.
+          - if:
+              - condition: template
+                value_template: "{{ known < warn_at }}"
+            then:
+              - action: system_log.write
+                data:
+                  message: >-
+                    EMHASS: {{ label }} price data is short, only {{ known }} {{ unit }}
+                    (last price {{ state_attr('sensor.emhass_price_horizon', 'last_price_time') }},
+                    tomorrow's prices {{ 'are in' if state_attr('sensor.emhass_price_horizon', 'covers_tomorrow') else 'are NOT in' }}).
+                  level: warning
+                  logger: emhass.prices
+      # The response has to be a dictionary; the caller reads .decision from it.
+      - variables:
+          guard_response:
+            decision: "{{ 'skip' if known < 1 else 'run' }}"
+      - stop: ""
+        response_variable: guard_response
 
 automation:
 # Weekly ML training is disabled until the house power sensor has enough clean history.
@@ -196,17 +324,31 @@ automation:
           - wait_template: "{{ states('sensor.emhass_house_power_no_def_loads') not in ['unknown', 'unavailable', 'none', ''] }}"
             timeout: "00:02:00"
             continue_on_timeout: true
+      # Shared price guard: it logs the problem and returns 'run' or 'skip'.
+      - action: script.emhass_price_guard
+        data:
+          label: "MPC"
+        response_variable: price_guard
+      - if:
+          - condition: template
+            # 'run' unless the guard explicitly says otherwise, so a guard that fails to
+            # answer does not silently stop the optimisation.
+            value_template: "{{ price_guard.decision | default('run') != 'run' }}"
+        then:
+          - stop: "EMHASS MPC skipped by the price guard"
       - action: rest_command.emhass_naive_mpc_optim
         data: {}
         # The response variable is only set when the call succeeded, so an undefined
-        # variable means the run failed and is worth one retry a minute later.
+        # variable means the call never got an answer; an answer with a status other than
+        # 200 (EMHASS rejecting the payload) is a failure too. Both get one retry.
         response_variable: mpc_response
         continue_on_error: true
       - delay:
           seconds: 60
       - if:
           - condition: template
-            value_template: "{{ mpc_response is not defined }}"
+            value_template: >-
+              {{ mpc_response is not defined or mpc_response.status | default(0) | int(0) != 200 }}
         then:
           - action: rest_command.emhass_naive_mpc_optim
             data: {}
@@ -220,29 +362,132 @@ automation:
   
   - id: emhass_execute_day_ahead_optimization_auto    
     alias: "EMHASS execute Day-Ahead optimization auto"
-    description: "Builds the main 24-hour plan once a day, as soon as the new market prices are published."
+    description: >-
+      Builds the plan for tomorrow as soon as our own price data covers tomorrow, and keeps
+      retrying until EMHASS answered. The 23:55 check reports when tomorrow is still open.
     mode: single
     trigger:
-      # Trigger 1: prices for tomorrow become available
-      - platform: state
-        entity_id: binary_sensor.uilities_nord_pool_nl_tomorrow_price_available
-        to: "on"
+      # The moment our own price array covers tomorrow. Triggering on our own data instead of
+      # on the Nord Pool binary sensor removes the race: the payload reads those arrays.
+      - platform: template
+        value_template: "{{ state_attr('sensor.emhass_price_horizon', 'covers_tomorrow') | bool(false) }}"
         id: "prijzen_binnen"
-      # Trigger 2: failsafe in case the price sensor failed earlier in the day
-      - platform: time
-        at: "00:10:00"
-        id: "failsafe"
+      # Retry until the plan is in, and catch a missed template trigger (for example when
+      # Home Assistant restarted just after the prices arrived).
+      - platform: time_pattern
+        minutes: "/30"
+        id: "retry"
+      - platform: homeassistant
+        event: start
+        id: "ha_start"
     condition:
-      # Allow at most one successful run per calendar day
+      # Only when tomorrow's data is there and tomorrow's plan is not: retries are welcome,
+      # duplicates and an empty price list are not. After midnight covers_tomorrow is false
+      # again until the new prices arrive, so the retries stay quiet.
       - condition: template
-        value_template: "{{ this.attributes.last_triggered is none or this.attributes.last_triggered.date() != now().date() }}"
+        value_template: >-
+          {{ state_attr('sensor.emhass_price_horizon', 'covers_tomorrow') | bool(false)
+             and states('input_datetime.emhass_dayahead_plan_date') != (now().date() + timedelta(days=1)).isoformat() }}
     action:
+      # Same guard as the MPC: it logs and reports whether there is anything to optimise.
+      - action: script.emhass_price_guard
+        data:
+          label: "Day-ahead"
+          # The day-ahead plans tomorrow, so it is tomorrow's data that has to be there.
+          require_tomorrow: true
+          warn_below: 96
+        response_variable: price_guard
+      - if:
+          - condition: template
+            # 'run' unless the guard explicitly says otherwise (see the MPC automation).
+            value_template: "{{ price_guard.decision | default('run') != 'run' }}"
+        then:
+          - stop: "EMHASS day-ahead skipped by the price guard"
       - action: rest_command.emhass_dayahead_optim
         data: {}
+        # Same as the MPC: no answer, or an answer without status 200, means the run failed.
+        response_variable: dayahead_response
+        continue_on_error: true
+      - if:
+          - condition: template
+            value_template: >-
+              {{ dayahead_response is not defined or dayahead_response.status | default(0) | int(0) != 200 }}
+        then:
+          - action: system_log.write
+            data:
+              message: >-
+                EMHASS: the day-ahead run for tomorrow
+                ({{ (now().date() + timedelta(days=1)).isoformat() }}) failed
+                (HTTP {{ dayahead_response.status | default('no answer') }}); the automation
+                retries within 30 minutes.
+              level: error
+              logger: emhass.prices
+          - stop: "EMHASS day-ahead failed"
+      # Remember which date was planned, so the condition above stops retrying.
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.emhass_dayahead_plan_date
+        data:
+          date: "{{ (now().date() + timedelta(days=1)).isoformat() }}"
       - delay:
           seconds: 15
       - action: rest_command.emhass_publish
         data: {}
+
+  # Early warning when tomorrow's prices are late. Normally they are published around 13:00
+  # and our price sensor picks them up within minutes; without them the day-ahead plan for
+  # tomorrow is never built, so this makes the cause visible at 14:00 already.
+  - id: emhass_tomorrow_prices_late_warning_auto
+    alias: "EMHASS warn when tomorrow prices are late"
+    description: "Logs a warning when our price data still does not cover tomorrow at 14:00."
+    mode: single
+    trigger:
+      - platform: time
+        at: "14:00:00"
+    condition:
+      - condition: template
+        value_template: "{{ not state_attr('sensor.emhass_price_horizon', 'covers_tomorrow') | bool(false) }}"
+    action:
+      - action: system_log.write
+        data:
+          message: >-
+            EMHASS: our price data does not cover tomorrow at 14:00
+            ({{ state_attr('sensor.emhass_price_horizon', 'quarters_tomorrow') }} quarters of
+            tomorrow known; Nord Pool's tomorrow-price sensor is
+            {{ states('binary_sensor.uilities_nord_pool_nl_tomorrow_price_available') }}).
+            The day-ahead plan for tomorrow will not be built until that fetch succeeds;
+            check the Nord Pool integration.
+          level: warning
+          logger: emhass.prices
+
+  # Safety net in the other direction: the day-ahead plan for tomorrow should exist before
+  # midnight. If it does not, say so - with the reason, so the log tells whether the prices
+  # never arrived or EMHASS kept failing.
+  - id: emhass_dayahead_missing_check_auto
+    alias: "EMHASS check tomorrow's plan before midnight"
+    description: "Logs an error at 23:55 when no day-ahead plan for tomorrow was built."
+    mode: single
+    trigger:
+      - platform: time
+        at: "23:55:00"
+    action:
+      - if:
+          - condition: template
+            value_template: >-
+              {{ states('input_datetime.emhass_dayahead_plan_date') != (now().date() + timedelta(days=1)).isoformat() }}
+        then:
+          - action: system_log.write
+            data:
+              message: >-
+                EMHASS: no day-ahead plan for tomorrow
+                ({{ (now().date() + timedelta(days=1)).isoformat() }}). Tomorrow's prices
+                {{ 'are in' if state_attr('sensor.emhass_price_horizon', 'covers_tomorrow') else 'are NOT in' }}
+                ({{ state_attr('sensor.emhass_price_horizon', 'quarters_tomorrow') }} quarters
+                known), last planned date is
+                {{ states('input_datetime.emhass_dayahead_plan_date') }}. Check the Nord Pool
+                integration and the day-ahead automation.
+              level: error
+              logger: emhass.prices
 
   # - id: emhass_battery_control_auto    
   #   alias: "EMHASS battery control auto"
