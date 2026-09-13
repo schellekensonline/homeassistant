@@ -1,78 +1,80 @@
 template:
-  # Dewpoint from Shelly Plus HT T1
-  - trigger: 
-      - trigger: state
-        entity_id:
-          - sensor.shelly_plus_ht1_temperature
-    sensor:
-      - name: "Shelly plus HT1 dewpoint"
+  # Dewpoint for the living room (Shelly Plus HT1), outside (OpenWeatherMap) and the bathroom
+  # (eWeLink SNZB-02P). Plain template sensors: they follow the temperature *and* the humidity,
+  # where the earlier trigger-based version only recalculated when the temperature changed (so
+  # a humidity-only change left a stale dewpoint). Simple approximation, good enough above
+  # ~50% RH: Td = T - (100 - RH) / 5. Kept inline in the package on purpose: a template sensor
+  # cannot call a script, and custom_templates/ belongs to HACS and Home Assistant itself.
+  - sensor:
+      - name: "Shelly Plus HT1 dewpoint"
         unique_id: shelly_plus_ht1_dewpoint
         state_class: measurement
         device_class: temperature
-        unit_of_measurement: '°C'
+        unit_of_measurement: "°C"
+        availability: >
+          {{ states('sensor.shelly_plus_ht1_temperature') | is_number
+             and states('sensor.shelly_plus_ht1_humidity') | is_number }}
         state: >
-          {% set t1_temp = states('sensor.shelly_plus_ht1_temperature') | float(0) %}
-          {% set t1_rh   = states('sensor.shelly_plus_ht1_humidity') | float(0) %}   
-          
-          {{ ( t1_temp - ((100.0-t1_rh)/5.0) ) | round(0) }}
+          {% set t  = states('sensor.shelly_plus_ht1_temperature') | float(0) %}
+          {% set rh = states('sensor.shelly_plus_ht1_humidity') | float(0) %}
+          {{ (t - ((100.0 - rh) / 5.0)) | round(1) }}
 
-  # Dewpoint from Open Weather
-  - trigger: 
-      - trigger: state
-        entity_id:
-          - sensor.openweathermap_temperature
-    sensor:
-      - name: "Openweathermap dewpoint"
-        unique_id: openweathermap_dewpoint 
+      - name: "OpenWeatherMap dewpoint"
+        unique_id: openweathermap_dewpoint
         state_class: measurement
         device_class: temperature
-        unit_of_measurement: '°C'
+        unit_of_measurement: "°C"
+        availability: >
+          {{ states('sensor.openweathermap_temperature') | is_number
+             and states('sensor.openweathermap_humidity') | is_number }}
         state: >
-          {% set ow_temp = states('sensor.openweathermap_temperature') | float(0) %}
-          {% set ow_rh   = states('sensor.openweathermap_humidity') | float(0) %}   
+          {% set t  = states('sensor.openweathermap_temperature') | float(0) %}
+          {% set rh = states('sensor.openweathermap_humidity') | float(0) %}
+          {{ (t - ((100.0 - rh) / 5.0)) | round(1) }}
 
-          {{ ( ow_temp - ((100.0-ow_rh)/5.0) ) | round(0) }}
-  
-  # Dewpoint from eWeLink Bathroom
-  - trigger: 
-      - trigger: state
-        entity_id:
-          - sensor.ewelink_snzb_02p_temperature
-    sensor:
       - name: "eWeLink SNZB-02P dewpoint"
         unique_id: ewelink_snzb_02p_dewpoint
         state_class: measurement
         device_class: temperature
-        unit_of_measurement: '°C'
+        unit_of_measurement: "°C"
+        availability: >
+          {{ states('sensor.ewelink_snzb_02p_temperature') | is_number
+             and states('sensor.ewelink_snzb_02p_humidity') | is_number }}
         state: >
-          {% set t2_temp = states('sensor.ewelink_snzb_02p_temperature') | float(0) %}
-          {% set t2_rh   = states('sensor.ewelink_snzb_02p_humidity') | float(0) %}   
-          
-          {{ ( t2_temp - ((100.0-t2_rh)/5.0) ) | round(0) }}
+          {% set t  = states('sensor.ewelink_snzb_02p_temperature') | float(0) %}
+          {% set rh = states('sensor.ewelink_snzb_02p_humidity') | float(0) %}
+          {{ (t - ((100.0 - rh) / 5.0)) | round(1) }}
 
 automation:
-  # Switch off cooling when dewpoint becomes to high, to prevent condensation when cooling
+  # Stop cooling when the living room dewpoint is above the return temperatures: water colder
+  # than the dewpoint condenses in the floor circuit. Silent mode goes off with it.
   - id: cooling_off_based_on_dewpoint_auto
     alias: "Cooling off based on dewpoint auto"
-    description: "Switch off cooling if livingroom dewpoint is above return temperatures"
+    description: "Switches cooling and silent mode off when the living room dewpoint is above both return temperatures"
     mode: restart
     triggers:
       - trigger: state
-        entity_id:
-          - sensor.shelly_plus_ht1_dewpoint
+        entity_id: sensor.shelly_plus_ht1_dewpoint
+      # Also when cooling starts, in case the dewpoint is already too high.
+      - trigger: state
+        entity_id: climate.therma_v_heating_cooling
     conditions:
       - condition: state
         entity_id: climate.therma_v_heating_cooling
-        state: 'cool'
+        state: "cool"
       - condition: template
-        value_template: "{{ ( states('sensor.shelly_plus_ht1_dewpoint') | float(0) ) > (states('sensor.therma_v_buffer_temperatures_return_from_heating_t3') | float(0) ) }}"
-      - condition: template
-        value_template: "{{ ( states('sensor.shelly_plus_ht1_dewpoint') | float(0) ) > (states('sensor.therma_v_buffer_temperatures_return_to_heatpump_t4') | float(0) ) }}"
+        # One comparison against the highest of the two return temperatures.
+        value_template: >-
+          {{ states('sensor.shelly_plus_ht1_dewpoint') | is_number
+             and (states('sensor.shelly_plus_ht1_dewpoint') | float(0))
+                 > max(states('sensor.therma_v_buffer_temperatures_return_from_heating_t3') | float(0),
+                       states('sensor.therma_v_buffer_temperatures_return_to_heatpump_t4') | float(0)) }}
     actions:
       - action: switch.turn_off
-        entity_id: switch.silent_mode_state
+        target:
+          entity_id: switch.silent_mode_state
       - action: climate.set_hvac_mode
         target:
           entity_id: climate.therma_v_heating_cooling
         data:
-          hvac_mode: off
+          hvac_mode: "off"
