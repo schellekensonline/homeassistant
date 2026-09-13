@@ -28,7 +28,7 @@ template:
         set_value:
           - variables:
               decay:      "{{ 1-5/(30*60) }}" # 5s update, 30min decay --> b~1-Ts/tau
-              soc_state:  "{{states('sensor.sessy_battery_state_of_charge') | round(0) }}"
+              soc_state: "{{ states('sensor.sessy_battery_state_of_charge') | float(50) | round(0) }}"
               zom_state:  "{{states('number.sessy_api_strategy_zom_state')  | round(0) }}"
               peak_state: "{{states('number.sessy_api_strategy_zom_peak_state') | round(2) }}"
               nom_power:  "{{states('input_number.sessy_api_strategy_inverter_nominal_power') | round(0) }}"
