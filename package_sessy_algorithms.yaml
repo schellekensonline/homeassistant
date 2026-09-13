@@ -203,7 +203,8 @@ template:
           solar_remain_wh:   "{{ (solar_remain_west + solar_remain_east)*1000 }}"
           daily_use:  "{{ states('sensor.average_daily_energy_used_in_home')  | float(0) }}"
           # Fall back to the default 25% when the helper is unknown, so a startup-order
-          # problem cannot silently drop the night reserve to zero.
+          # problem cannot silently drop the night reserve to zero. The helper has no
+          # dashboard card on purpose: the value is a house constant that stays at 25%.
           night_pct:  "{{ states('input_number.night_energy_in_percent_of_daily_used_in_home') | float(25) }}"
           todays_use: "{{ states('sensor.today_s_energy_used_in_home') | float(0) }}"
 
@@ -262,10 +263,12 @@ input_number:
     # initial: 0.22
     mode: box
     unit_of_measurement: "€"
-  sessy_auto_api_strategy_min_forced_buy_price: # price spread in EURO to start proportional trading, active buying
+  sessy_auto_api_strategy_min_forced_buy_price:
+    # Net buying-price threshold for forced charging. Must stay negative: buy only when the
+    # price is actually negative, not merely low.
     name: "Sessy API minimum forced buy price"
     min: -100 # Redicilous large value
-    max:  0 # Redicilous large value
+    max: -0.001
     step: 0.001
     # initial: -0.15
     mode: box
@@ -368,7 +371,7 @@ automation:
     mode: restart
     trigger:
       - platform: state
-        entity_id: sensor.electricity_selling_price
+        entity_id: sensor.electricity_buying_price
       - platform: time_pattern # catch for static prices
         minutes: "/30"
     condition:
@@ -384,10 +387,10 @@ automation:
         data:
           option: >-
             {# Get price data #}
-            {% set price             = states('sensor.electricity_selling_price') | float(0) %}
+            {% set buying_price      = states('sensor.electricity_buying_price') | float(0) %}
             {% set price_pct         = states('sensor.current_percentage_of_electricity_price') | float(50) %}
             {% set price_spread      = states('sensor.difference_in_electricity_price_today') | float(0) %}
-            {% set price_foreced_buy = states('input_number.sessy_auto_api_strategy_min_forced_buy_price') | float(0) %}
+            {% set forced_buy_price  = states('input_number.sessy_auto_api_strategy_min_forced_buy_price') | float(-0.001) %}
 
             {# Price Settings #}
             {% set buy_pct    = states('input_number.sessy_auto_api_strategy_buy_pct') | float(0) %}
@@ -411,7 +414,7 @@ automation:
             {% set solar_soc       = 100*max(min( (1/solar_surplus) ,1),0) %}
             {% set charge_soc      = 100*max(min( (1/charge_surplus) ,1),0) %}
             {# When charging is forced, buying energy #}
-            {% set forced_charge    = (soc < solar_soc) or (soc < charge_soc) or (price <= price_foreced_buy) %}
+            {% set forced_charge    = (soc < solar_soc) or (soc < charge_soc) or (buying_price <= forced_buy_price) %}
             {% set charge           = (solar_surplus < surplus_margin_charge)  or (charge_surplus < surplus_margin_charge) %}
             {# When discharging is forced, selling energy #}
             {% set forced_discharge = (soc > solar_soc) or (soc > charge_soc) %}
