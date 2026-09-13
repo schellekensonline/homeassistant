@@ -74,9 +74,13 @@ template:
                 {% endif %}
           - variables:
               active_inverter_event_data: >-
-                {% set tot_energy_l1 = states('sensor.sessy_l1_imported_energy') | float(0) + states('sensor.sessy_l1_exported_energy') | float(0) %}
-                {% set tot_energy_l2 = states('sensor.sessy_l2_imported_energy') | float(0) + states('sensor.sessy_l2_exported_energy') | float(0) %}
-                {% set tot_energy_l3 = states('sensor.sessy_l3_imported_energy') | float(0) + states('sensor.sessy_l3_exported_energy') | float(0) %}
+                {# Per-inverter totals; the entity ids start with sessy_inv_, the same as the
+                   other per-inverter sensors. Earlier this read sensor.sessy_l1_... which does
+                   not exist, so every phase came out as 0 Wh and the phases were never really
+                   balanced (2026-09-13). #}
+                {% set tot_energy_l1 = states('sensor.sessy_inv_l1_imported_energy') | float(0) + states('sensor.sessy_inv_l1_exported_energy') | float(0) %}
+                {% set tot_energy_l2 = states('sensor.sessy_inv_l2_imported_energy') | float(0) + states('sensor.sessy_inv_l2_exported_energy') | float(0) %}
+                {% set tot_energy_l3 = states('sensor.sessy_inv_l3_imported_energy') | float(0) + states('sensor.sessy_inv_l3_exported_energy') | float(0) %}
                 {% set active_l1 = state_attr('number.sessy_api_strategy_active_inverters', 'l1_active') | bool(false) %}
                 {% set active_l2 = state_attr('number.sessy_api_strategy_active_inverters', 'l2_active') | bool(false) %}
                 {% set active_l3 = state_attr('number.sessy_api_strategy_active_inverters', 'l3_active') | bool(false) %}

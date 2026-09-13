@@ -87,12 +87,12 @@ template:
       # ========================================================================
 
       - name: "Sessy NS errors"
-        unique_id: sessy_network_switch_errors
+        unique_id: sessy_ns_errors
         state: "{{ state_attr('sensor.sessy_eol_ns_data', 'network_switch')['errors'] | int(0) }}"
         state_class: measurement
 
       - name: "Sessy NS warnings"
-        unique_id: sessy_network_switch_warnings
+        unique_id: sessy_ns_warnings
         state: "{{ state_attr('sensor.sessy_eol_ns_data', 'network_switch')['warnings'] | int(0) }}"
         state_class: measurement
 
@@ -129,207 +129,207 @@ template:
       # ========================================================================
       # CONVERTER 1 (INVERTER_L1) -> INDEX 0
       # ========================================================================
-      - name: "Sessy INV L1 imported_energy"
-        unique_id: sessy_l1_imported_energy
+      - name: "Sessy INV L1 imported energy"
+        unique_id: sessy_inv_l1_imported_energy
         state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[0]['imported_energy'] / 1000| int(0) }}"
         unit_of_measurement: "kWh"
         device_class: energy
         state_class: total
 
-      - name: "Sessy INV L1 exported_energy"
-        unique_id: sessy_l1_exported_energy
+      - name: "Sessy INV L1 exported energy"
+        unique_id: sessy_inv_l1_exported_energy
         state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[0]['exported_energy'] / 1000| int(0) }}"
         unit_of_measurement: "kWh"
         device_class: energy
         state_class: total
 
       - name: "Sessy INV L1 active power"
-        unique_id: sessy_l1_active_power
+        unique_id: sessy_inv_l1_active_power
         state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[0]['active_power'] }}"
         unit_of_measurement: "W"
         device_class: power
         state_class: measurement
 
       - name: "Sessy INV L1 apparent power"
-        unique_id: sessy_l1_apparent_power
+        unique_id: sessy_inv_l1_apparent_power
         state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[0]['apparent_power'] | int(0) }}"
         unit_of_measurement: "VA"
         device_class: apparent_power
         state_class: measurement
 
       - name: "Sessy INV L1 DClink voltage"
-        unique_id: sessy_l1_dc_link_voltage
+        unique_id: sessy_inv_l1_dclink_voltage
         state: "{{ (state_attr('sensor.sessy_eol_ns_data', 'inverters')[0]['dc_link_voltage'] / 1000) | round(2) }}"
         unit_of_measurement: "V"
         device_class: voltage
         state_class: measurement
 
       - name: "Sessy INV L1 battery voltage"
-        unique_id: sessy_l1_battery_voltage
+        unique_id: sessy_inv_l1_battery_voltage
         state: "{{ (state_attr('sensor.sessy_eol_ns_data', 'inverters')[0]['battery_voltage'] / 1000) | round(2) }}"
         unit_of_measurement: "V"
         device_class: voltage
         state_class: measurement
 
       - name: "Sessy INV L1 AC/DC temperature"
-        unique_id: sessy_l1_ac_dc_temp
+        unique_id: sessy_inv_l1_ac_dc_temperature
         state: "{{ (state_attr('sensor.sessy_eol_ns_data', 'inverters')[0]['ac_dc_temperature'] / 1000) | round(1) }}"
         unit_of_measurement: "°C"
         device_class: temperature
         state_class: measurement
 
       - name: "Sessy INV L1 DC/DC temperature"
-        unique_id: sessy_l1_dc_dc_temp
+        unique_id: sessy_inv_l1_dc_dc_temperature
         state: "{{ (state_attr('sensor.sessy_eol_ns_data', 'inverters')[0]['dc_dc_temperature'] / 1000) | round(1) }}"
         unit_of_measurement: "°C"
         device_class: temperature
         state_class: measurement
 
       - name: "Sessy INV L1 errors"
-        unique_id: sessy_l1_errors
+        unique_id: sessy_inv_l1_errors
         state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[0]['errors'] | int(0) }}"
         state_class: measurement
 
       - name: "Sessy INV L1 warnings"
-        unique_id: sessy_l1_warnings
+        unique_id: sessy_inv_l1_warnings
         state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[0]['warnings'] | int(0) }}"
         state_class: measurement
 
       # ========================================================================
       # CONVERTER 2 (INVERTER_L2) -> INDEX 1
       # ========================================================================
-      - name: "Sessy INV L2 imported_energy"
-        unique_id: sessy_l2_imported_energy
+      - name: "Sessy INV L2 imported energy"
+        unique_id: sessy_inv_l2_imported_energy
         state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[1]['imported_energy'] / 1000| int(0) }}"
         unit_of_measurement: "kWh"
         device_class: energy
         state_class: total
 
-      - name: "Sessy INV L2 exported_energy"
-        unique_id: sessy_l2_exported_energy
+      - name: "Sessy INV L2 exported energy"
+        unique_id: sessy_inv_l2_exported_energy
         state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[1]['exported_energy'] / 1000| int(0) }}"
         unit_of_measurement: "kWh"
         device_class: energy
         state_class: total
 
       - name: "Sessy INV L2 active power"
-        unique_id: sessy_l2_active_power
+        unique_id: sessy_inv_l2_active_power
         state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[1]['active_power'] }}"
         unit_of_measurement: "W"
         device_class: power
         state_class: measurement
 
       - name: "Sessy INV L2 apparent power"
-        unique_id: sessy_l2_apparent_power
+        unique_id: sessy_inv_l2_apparent_power
         state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[1]['apparent_power'] | int(0) }}"
         unit_of_measurement: "VA"
         device_class: apparent_power
         state_class: measurement
 
       - name: "Sessy INV L2 DC link voltage"
-        unique_id: sessy_l2_dc_link_voltage
+        unique_id: sessy_inv_l2_dc_link_voltage
         state: "{{ (state_attr('sensor.sessy_eol_ns_data', 'inverters')[1]['dc_link_voltage'] / 1000) | round(2) }}"
         unit_of_measurement: "V"
         device_class: voltage
         state_class: measurement
 
       - name: "Sessy INV L2 battery voltage"
-        unique_id: sessy_l2_battery_voltage
+        unique_id: sessy_inv_l2_battery_voltage
         state: "{{ (state_attr('sensor.sessy_eol_ns_data', 'inverters')[1]['battery_voltage'] / 1000) | round(2) }}"
         unit_of_measurement: "V"
         device_class: voltage
         state_class: measurement
 
       - name: "Sessy INV L2 AC/DC temperature"
-        unique_id: sessy_l2_ac_dc_temp
+        unique_id: sessy_inv_l2_ac_dc_temperature
         state: "{{ (state_attr('sensor.sessy_eol_ns_data', 'inverters')[1]['ac_dc_temperature'] / 1000) | round(1) }}"
         unit_of_measurement: "°C"
         device_class: temperature
         state_class: measurement
 
       - name: "Sessy INV L2 DC/DC temperature"
-        unique_id: sessy_l2_dc_dc_temp
+        unique_id: sessy_inv_l2_dc_dc_temperature
         state: "{{ (state_attr('sensor.sessy_eol_ns_data', 'inverters')[1]['dc_dc_temperature'] / 1000) | round(1) }}"
         unit_of_measurement: "°C"
         device_class: temperature
         state_class: measurement
 
       - name: "Sessy INV L2 errors"
-        unique_id: sessy_l2_errors
+        unique_id: sessy_inv_l2_errors
         state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[1]['errors'] | int(0) }}"
         state_class: measurement
 
       - name: "Sessy INV L2 warnings"
-        unique_id: sessy_l2_warnings
+        unique_id: sessy_inv_l2_warnings
         state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[1]['warnings'] | int(0) }}"
         state_class: measurement
 
       # ========================================================================
       # CONVERTER 3 (INVERTER_L3) -> INDEX 2
       # ========================================================================
-      - name: "Sessy INV L3 imported_energy"
-        unique_id: sessy_l3_imported_energy
+      - name: "Sessy INV L3 imported energy"
+        unique_id: sessy_inv_l3_imported_energy
         state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[2]['imported_energy'] / 1000| int(0) }}"
         unit_of_measurement: "kWh"
         device_class: energy
         state_class: total
 
-      - name: "Sessy INV L3 exported_energy"
-        unique_id: sessy_l3_exported_energy
+      - name: "Sessy INV L3 exported energy"
+        unique_id: sessy_inv_l3_exported_energy
         state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[2]['exported_energy'] / 1000| int(0) }}"
         unit_of_measurement: "kWh"
         device_class: energy
         state_class: total
 
       - name: "Sessy INV L3 active power"
-        unique_id: sessy_l3_active_power
+        unique_id: sessy_inv_l3_active_power
         state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[2]['active_power'] }}"
         unit_of_measurement: "W"
         device_class: power
         state_class: measurement
 
       - name: "Sessy INV L3 apparent power"
-        unique_id: sessy_l3_apparent_power
+        unique_id: sessy_inv_l3_apparent_power
         state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[2]['apparent_power'] | int(0) }}"
         unit_of_measurement: "VA"
         device_class: apparent_power
         state_class: measurement
 
       - name: "Sessy INV L3 DC link voltage"
-        unique_id: sessy_l3_dc_link_voltage
+        unique_id: sessy_inv_l3_dc_link_voltage
         state: "{{ (state_attr('sensor.sessy_eol_ns_data', 'inverters')[2]['dc_link_voltage'] / 1000) | round(2) }}"
         unit_of_measurement: "V"
         device_class: voltage
         state_class: measurement
 
       - name: "Sessy INV L3 battery voltage"
-        unique_id: sessy_l3_battery_voltage
+        unique_id: sessy_inv_l3_battery_voltage
         state: "{{ (state_attr('sensor.sessy_eol_ns_data', 'inverters')[2]['battery_voltage'] / 1000) | round(2) }}"
         unit_of_measurement: "V"
         device_class: voltage
         state_class: measurement
 
       - name: "Sessy INV L3 AC/DC temperature"
-        unique_id: sessy_l3_ac_dc_temp
+        unique_id: sessy_inv_l3_ac_dc_temperature
         state: "{{ (state_attr('sensor.sessy_eol_ns_data', 'inverters')[2]['ac_dc_temperature'] / 1000) | round(1) }}"
         unit_of_measurement: "°C"
         device_class: temperature
         state_class: measurement
 
       - name: "Sessy INV L3 DC/DC temperature"
-        unique_id: sessy_l3_dc_dc_temp
+        unique_id: sessy_inv_l3_dc_dc_temperature
         state: "{{ (state_attr('sensor.sessy_eol_ns_data', 'inverters')[2]['dc_dc_temperature'] / 1000) | round(1) }}"
         unit_of_measurement: "°C"
         device_class: temperature
         state_class: measurement
 
       - name: "Sessy INV L3 errors"
-        unique_id: sessy_l3_errors
+        unique_id: sessy_inv_l3_errors
         state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[2]['errors'] | int(0) }}"
         state_class: measurement
 
       - name: "Sessy INV L3 warnings"
-        unique_id: sessy_l3_warnings
+        unique_id: sessy_inv_l3_warnings
         state: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters')[2]['warnings'] | int(0) }}"
         state_class: measurement
 
@@ -447,30 +447,32 @@ template:
         availability: >
           {{ state_attr('sensor.sessy_power_status_data', 'sessy').inverters[2].power | is_number }} 
 
-      # Solar PV Power per phase
-      - name: "Sessy Solar PV Power L1"
-        unique_id: sessy_solar_pv_power_l1
-        state: "{{ state_attr('sensor.sessy_power_status_data', 'solar').pv_power[0] }}"
-        unit_of_measurement: "W"
-        device_class: power
-        state_class: measurement
-        availability: >
-          {{ state_attr('sensor.sessy_power_status_data', 'solar').pv_power[0] | is_number }}
+      # Solar PV Power per phase. Not used anywhere yet (2026-09-13), so commented out. The
+      # registry entries were removed as well, so uncommenting creates them fresh - with the
+      # same entity ids, because those follow the names below.
+      # - name: "Sessy Solar PV Power L1"
+      #   unique_id: sessy_solar_pv_power_l1
+      #   state: "{{ state_attr('sensor.sessy_power_status_data', 'solar').pv_power[0] }}"
+      #   unit_of_measurement: "W"
+      #   device_class: power
+      #   state_class: measurement
+      #   availability: >
+      #     {{ state_attr('sensor.sessy_power_status_data', 'solar').pv_power[0] | is_number }}
 
-      - name: "Sessy Solar PV Power L2"
-        unique_id: sessy_solar_pv_power_l2
-        state: "{{ state_attr('sensor.sessy_power_status_data', 'solar').pv_power[1] }}"
-        unit_of_measurement: "W"
-        device_class: power
-        state_class: measurement
-        availability: >
-          {{ state_attr('sensor.sessy_power_status_data', 'solar').pv_power[1] | is_number }} 
+      # - name: "Sessy Solar PV Power L2"
+      #   unique_id: sessy_solar_pv_power_l2
+      #   state: "{{ state_attr('sensor.sessy_power_status_data', 'solar').pv_power[1] }}"
+      #   unit_of_measurement: "W"
+      #   device_class: power
+      #   state_class: measurement
+      #   availability: >
+      #     {{ state_attr('sensor.sessy_power_status_data', 'solar').pv_power[1] | is_number }}
 
-      - name: "Sessy Solar PV Power L3"
-        unique_id: sessy_solar_pv_power_l3
-        state: "{{ state_attr('sensor.sessy_power_status_data', 'solar').pv_power[2] }}"
-        unit_of_measurement: "W"
-        device_class: power
-        state_class: measurement
-        availability: >
-          {{ state_attr('sensor.sessy_power_status_data', 'solar').pv_power[2] | is_number }} 
+      # - name: "Sessy Solar PV Power L3"
+      #   unique_id: sessy_solar_pv_power_l3
+      #   state: "{{ state_attr('sensor.sessy_power_status_data', 'solar').pv_power[2] }}"
+      #   unit_of_measurement: "W"
+      #   device_class: power
+      #   state_class: measurement
+      #   availability: >
+      #     {{ state_attr('sensor.sessy_power_status_data', 'solar').pv_power[2] | is_number }}
