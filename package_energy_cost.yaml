@@ -215,22 +215,33 @@ template:
         {% set VAT      = states('input_number.electric_energy_vat') | float(0.21) %}
         {{ (price + sell_fee) * (1 + VAT) }}
       attributes:
-        prices: >
+        prices: >-
           {% set sell_fee = states('input_number.electric_energy_selling_fee_ex') | float(0) %}
           {% set VAT      = states('input_number.electric_energy_vat') | float(0.21) %}
-          {% set today    = today_prices['NL'] | default([], true) if today_prices is defined else [] %}
-          {% set tomorrow = tomorrow_prices['NL'] | default([], true) if tomorrow_prices is defined else [] %}
+          {% set today    = today_prices['NL'] | default([], true)
+             if today_prices is defined and today_prices is mapping else [] %}
+          {% set tomorrow = tomorrow_prices['NL'] | default([], true)
+             if tomorrow_prices is defined and tomorrow_prices is mapping else [] %}
           {% set previous = previous_prices
              if previous_prices is defined and previous_prices is iterable and previous_prices is not string
              else [] %}
-          {% set energy_prices = today + tomorrow if (today | count + tomorrow | count) > 0 else previous %}
-          {% set ns = namespace(list=[]) %}
-          {% for i in range(energy_prices|length) %}
-          {%   set start = ((energy_prices[i]['start'] | as_datetime) | as_local).isoformat() %}
-          {%   set price = (((energy_prices[i]['price'] | float) / 1000) + sell_fee) * (1 + VAT) %}
-          {%   set ns.list = ns.list + [{'time': start, 'price': price}] %}
-          {% endfor %}
-          {{ ns.list }}
+          {% set fresh = today + tomorrow %}
+          {# Build from a fresh fetch when there is one; on a failed fetch keep the last
+             known list untouched instead of re-parsing it with the raw-price keys. #}
+          {% if fresh | count > 0 %}
+            {% set ns = namespace(list=[]) %}
+            {% for entry in fresh %}
+              {% set start = entry.get('start') if entry is mapping else none %}
+              {% if start is not none %}
+                {% set time  = (start | as_datetime | as_local).isoformat() %}
+                {% set price = (((entry.get('price', 0) | float(0)) / 1000) + sell_fee) * (1 + VAT) %}
+                {% set ns.list = ns.list + [{'time': time, 'price': price}] %}
+              {% endif %}
+            {% endfor %}
+            {{ ns.list }}
+          {% else %}
+            {{ previous }}
+          {% endif %}
 
 
   # triggered sensors for the total energy cost per day based on the statistics sensors
