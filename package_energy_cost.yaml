@@ -116,14 +116,14 @@ template:
         unit_of_measurement: "€/h"
         availability: >
           {% set power      = states('sensor.p1_meter_3c39e72e6af0_active_power') | float("unknown") %}
-          {% set cost_in    = states('sensor.electricity_buying_price') | float("unknown") %}
-          {% set cost_ex    = states('sensor.electricity_selling_price') | float("unknown") %}
-          {{ power|is_number and cost_in|is_number and cost_ex|is_number}}
+          {% set cost_buy    = states('sensor.electricity_buying_price') | float("unknown") %}
+          {% set cost_sell    = states('sensor.electricity_selling_price') | float("unknown") %}
+          {{ power|is_number and cost_buy|is_number and cost_sell|is_number}}
         state: >
             {% set power   = states('sensor.p1_meter_3c39e72e6af0_active_power') | float(0) %}
-            {% set cost_in = states('sensor.electricity_buying_price') | float(0) %}
-            {% set cost_ex = states('sensor.electricity_selling_price') | float(0) %}
-            {{ power/1000*cost_in if power > 0 else power/1000*cost_ex }}
+            {% set cost_buy = states('sensor.electricity_buying_price') | float(0) %}
+            {% set cost_sell = states('sensor.electricity_selling_price') | float(0) %}
+            {{ power/1000*cost_buy if power > 0 else power/1000*cost_sell }}
       # Cost per hour in EUR/h excluding tax
       - name: "Electric power cost per hour excluding tax"
         unique_id: electric_power_cost_per_hour_excluding_tax
