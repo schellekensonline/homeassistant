@@ -173,6 +173,9 @@ template:
           - sensor.average_daily_energy_used_in_home
           - sensor.today_s_energy_used_in_home
           - input_number.night_energy_in_percent_of_daily_used_in_home
+          - sensor.electricity_buying_price
+          - input_number.sessy_pv_forecast_next_day_wh
+          - input_number.sessy_api_strategy_pv_forecast_bias
         not_to:
           - unknown
           - unavailable
@@ -182,7 +185,11 @@ template:
       - trigger: time_pattern
         minutes: "/15"
     sensor:
-      - name: "Sessy API strategy estimated energy surplus"
+      # The entity id stays sessy_api_strategy_estimated_energy_surplus (the Utilities card and
+      # the automations point at it); only the friendly name follows the wider content, because
+      # the state is still the surplus while the attributes now carry the whole daily energy
+      # budget (2026-09-14).
+      - name: "Sessy energy surplus"
         unique_id: sessy_api_strategy_estimated_energy_surplus
         state_class: measurement
         unit_of_measurement: "pu"
@@ -214,8 +221,38 @@ template:
           # day, so the battery is filled ahead of the evening. Clipped to at least 1 Wh.
           night_pu: "{{ min(max(night_pct / 100 ,0),1) }}"
           daily_energy_remain_wh: "{{ max( (daily_use*(1+night_pu) - todays_use)*1000 , night_pu * daily_use * 1000 , 1) }}"
-          charge_surplus: "{{ max( (batt_remain_wh - daily_energy_remain_wh) / daily_energy_remain_wh, 0) | round(2)}}"
+          # Signed since 2026-09-14: positive means the pack is ahead of the reserve for the rest
+          # of today plus tonight, negative means it is behind. The auto strategy no longer uses
+          # this value (it gates on the Wh volumes below); the clamp at 0 was what hid how far
+          # behind the pack could be.
+          charge_surplus: "{{ ((batt_remain_wh - daily_energy_remain_wh) / daily_energy_remain_wh) | round(2)}}"
           solar_surplus:  "{{ max( (solar_remain_wh - daily_energy_remain_wh) / batt_free_wh, 0) | round(2)}}"
+
+          # The same information as volumes in Wh, so the strategy gates can reason about how
+          # much energy is involved instead of only about ratios (2026-09-14):
+          # - solar_to_pack_wh: PV that is still left for the battery after the house need
+          # - buy_room_wh:      free capacity that the remaining PV will NOT fill; the only room
+          #                     where a grid buy does not simply push free PV out
+          # - soc_target:       the SoC that belongs to remain + buy_room (ceiling for a buy);
+          #                     100% when the net price is negative, then the buy is pure profit
+          # - sellable_wh:      the part of the pack above today/tonight's need (sellable)
+          usable_wh: "{{ max(batt_cap_wh * 0.9, 1) }}"
+          # The PV that is still to come before the next trade. After sunset (and in the stale
+          # midnight window, when the "today remaining" sensors read 0 until their first update)
+          # that is tomorrow's forecast, not today's empty remainder: PV that comes tomorrow fills
+          # the pack just as well, so buying then would still push free PV out (audit 2026-09-14).
+          pv_next_day_wh: "{{ states('input_number.sessy_pv_forecast_next_day_wh') | float(0) }}"
+          pv_incoming_wh: "{{ solar_remain_wh if solar_remain_wh > 0 else pv_next_day_wh }}"
+          # Forecast misses must not create phantom buy room, so the buy room uses an optimistic
+          # PV estimate. The one measured sample (2026-09-14: 18.5 kWh forecast, 23.2 kWh real)
+          # suggests ~1.2; the plain forecast still drives solar_surplus and the sensor state.
+          pv_bias: "{{ states('input_number.sessy_api_strategy_pv_forecast_bias') | float(1.2) }}"
+          solar_to_pack_wh: "{{ max(pv_incoming_wh * pv_bias - daily_energy_remain_wh, 0) }}"
+          buy_room_wh: "{{ max(batt_free_wh - min(solar_to_pack_wh, batt_free_wh), 0) }}"
+          sellable_wh: "{{ max(batt_remain_wh - daily_energy_remain_wh, 0) }}"
+          buy_price_now: "{{ states('sensor.electricity_buying_price') | float(1) }}"
+          forced_buy_price: "{{ states('input_number.sessy_auto_api_strategy_min_forced_buy_price') | float(-0.001) }}"
+          soc_target: "{{ 100 if buy_price_now <= forced_buy_price else min(100 * (daily_energy_remain_wh + buy_room_wh) / usable_wh, 100) }}"
         state: >-
           {{ max(charge_surplus, solar_surplus) | round(2) }}
         attributes:
@@ -223,6 +260,28 @@ template:
             {{ charge_surplus }}
           solar_surplus: >-
             {{ solar_surplus }}
+          remain_wh: >-
+            {{ daily_energy_remain_wh | round(0) }}
+          solar_remain_wh: >-
+            {{ solar_remain_wh | round(0) }}
+          batt_remain_wh: >-
+            {{ batt_remain_wh | round(0) }}
+          batt_free_wh: >-
+            {{ batt_free_wh | round(0) }}
+          usable_wh: >-
+            {{ usable_wh | round(0) }}
+          solar_to_pack_wh: >-
+            {{ solar_to_pack_wh | round(0) }}
+          pv_incoming_wh: >-
+            {{ pv_incoming_wh | round(0) }}
+          pv_bias: >-
+            {{ pv_bias }}
+          buy_room_wh: >-
+            {{ buy_room_wh | round(0) }}
+          sellable_wh: >-
+            {{ sellable_wh | round(0) }}
+          soc_target: >-
+            {{ soc_target | round(1) }}
               
 
 input_select:
@@ -281,6 +340,9 @@ input_number:
     initial: 15000
     mode: box
     unit_of_measurement: "Wh"
+  # Both surplus margins are volume thresholds for the auto strategy since 2026-09-14: they are
+  # a fraction of the remaining need (daily_energy_remain_wh) and decide at what point a buy
+  # room or a sellable surplus counts as clear.
   sessy_api_strategy_surplus_margin_charge:
     name: "Sessy API surplus margin charge"
     min: 0
@@ -297,6 +359,47 @@ input_number:
     # initial: 1
     mode: box
     unit_of_measurement: "pu"
+  sessy_api_strategy_min_buy_room_wh:
+    # Minimum free room that the remaining PV will not fill before the auto strategy may buy
+    # from the grid. Below this the buy would only push free PV out.
+    name: "Sessy API minimum buy room"
+    min: 0
+    max: 100000
+    step: 100
+    initial: 1000
+    mode: box
+    unit_of_measurement: "Wh"
+  sessy_api_strategy_pv_forecast_bias:
+    # Optimism factor on the PV forecast in the buy gate only, so that a forecast miss cannot
+    # create phantom buy room (audit 2026-09-14: 18.5 kWh forecast against 23.2 kWh real).
+    name: "Sessy API PV forecast bias"
+    min: 1
+    max: 2
+    step: 0.05
+    initial: 1.2
+    mode: box
+    unit_of_measurement: "pu"
+  sessy_pv_forecast_next_day_wh:
+    # Tomorrow's PV forecast, written by automation.sessy_pv_forecast_next_day. It is the fallback
+    # for pv_incoming_wh once today's remaining forecast is 0 (after sunset and in the stale
+    # window around midnight).
+    name: "Sessy PV forecast next day"
+    min: 0
+    max: 1000000
+    step: 100
+    initial: 0
+    mode: box
+    unit_of_measurement: "Wh"
+  sessy_api_strategy_min_sell_wh:
+    # Minimum energy above the remaining need (the night reserve included) before the auto
+    # strategy may sell; a sell can never eat into the reserve.
+    name: "Sessy API minimum sellable energy"
+    min: 0
+    max: 100000
+    step: 100
+    initial: 500
+    mode: box
+    unit_of_measurement: "Wh"
   night_energy_in_percent_of_daily_used_in_home:
     name: "Night energy in percent of daily used in home"
     min: 0
@@ -397,11 +500,14 @@ automation:
             {% set sell_pct   = states('input_number.sessy_auto_api_strategy_sell_pct') | float(100) %}
             {% set min_price_spread = states('input_number.sessy_auto_api_strategy_min_spread') | float(1) %}
 
-            {# Surplus data #}
-            {% set margin_min     = 0.001 %} {# prevent division by zero #} 
-            {% set energy_surplus = max(states('sensor.sessy_api_strategy_estimated_energy_surplus') | float(0) , margin_min) %}
-            {% set solar_surplus  = max(state_attr('sensor.sessy_api_strategy_estimated_energy_surplus','solar_surplus') | float(0) , margin_min) %}
-            {% set charge_surplus = max(state_attr('sensor.sessy_api_strategy_estimated_energy_surplus','charge_surplus') | float(0) , margin_min) %}
+            {# Surplus data as volumes in Wh, from the surplus sensor's attributes. The volume
+               decides, not a ratio: buying is only useful for the free room that the remaining
+               PV will not fill, and selling only for the part of the pack above the reserve for
+               the rest of today plus tonight (2026-09-14). #}
+            {% set remain_wh   = state_attr('sensor.sessy_api_strategy_estimated_energy_surplus','remain_wh') | float(0) %}
+            {% set buy_room_wh = state_attr('sensor.sessy_api_strategy_estimated_energy_surplus','buy_room_wh') | float(0) %}
+            {% set sellable_wh = state_attr('sensor.sessy_api_strategy_estimated_energy_surplus','sellable_wh') | float(0) %}
+            {% set soc_target  = state_attr('sensor.sessy_api_strategy_estimated_energy_surplus','soc_target') | float(100) %}
 
             {# Battery data #}
             {% set soc = states('sensor.sessy_battery_state_of_charge') | float(0) %}
@@ -409,29 +515,28 @@ automation:
             {# Settings #}
             {% set surplus_margin_charge    = states('input_number.sessy_api_strategy_surplus_margin_charge') | float(0) %}
             {% set surplus_margin_discharge = states('input_number.sessy_api_strategy_surplus_margin_discharge') | float(0) %}
+            {% set min_buy_room_wh          = states('input_number.sessy_api_strategy_min_buy_room_wh') | float(500) %}
+            {% set min_sell_wh              = states('input_number.sessy_api_strategy_min_sell_wh') | float(500) %}
 
-            {# Forced operation #}
-            {% set solar_soc       = 100*max(min( (1/solar_surplus) ,1),0) %}
-            {% set charge_soc      = 100*max(min( (1/charge_surplus) ,1),0) %}
-            {# When charging is forced, buying energy #}
-            {% set forced_charge    = (soc < solar_soc) or (soc < charge_soc) or (buying_price <= forced_buy_price) %}
-            {% set charge           = (solar_surplus < surplus_margin_charge)  or (charge_surplus < surplus_margin_charge) %}
-            {# When discharging is forced, selling energy #}
-            {% set forced_discharge = (soc > solar_soc) or (soc > charge_soc) %}
-            {% set discharge        = (solar_surplus > surplus_margin_discharge) or (charge_surplus > surplus_margin_discharge) %}
+            {# Gates #}
+            {% set forced_buy = buying_price <= forced_buy_price %}  {# negative net price: always worth it #}
+            {% set can_buy    = (buy_room_wh >= min_buy_room_wh) and (soc < soc_target - 1) %}
+            {% set can_sell   = sellable_wh >= min_sell_wh %}
+            {% set buy_big    = buy_room_wh >= surplus_margin_charge * remain_wh %}
+            {% set sell_big   = sellable_wh >= surplus_margin_discharge * remain_wh %}
 
             {# 2. Decision Logic #}
-            {% if price_spread >= min_price_spread %}    {# Spread sufficient (e.g. >22ct) -> Execute proportional trading (sell surplus only) #}
+            {% if price_spread >= min_price_spread %}    {# Spread sufficient (e.g. >25ct) -> Execute proportional trading (sell surplus only) #}
 
-              {% if price_pct > sell_pct %}  {# Price is high: Sell if expected solar will recharge the battery later, or if already full #}
-                {% if discharge or forced_discharge %}
+              {% if price_pct > sell_pct %}  {# Price is high: sell what we do not need tonight #}
+                {% if can_sell %}
                   Proportional Discharge
                 {% else %}
                   Zero on Meter
                 {% endif %}
               
               {% elif price_pct < buy_pct %}
-                {% if charge or forced_charge %}
+                {% if forced_buy or can_buy %}
                   Proportional Charge
                 {% else %}
                   Zero on Meter
@@ -441,21 +546,23 @@ automation:
                 Zero on Meter
               {% endif %}
               
-            {% else %} {# Spread is too narrow (e.g. <22ct) -> buying makes no sense #}
+            {% else %} {# Spread is too narrow (e.g. <25ct) -> buying makes no sense #}
 
-              {% if price_pct > sell_pct %}  {# Price is high: Sell if expected solar will recharge the battery later, or if already full #}
-                {% if forced_discharge and discharge %}
+              {% if price_pct > sell_pct %}  {# Price is high: only sell a clear surplus #}
+                {% if sell_big %}
                   Proportional Discharge
-                {% elif discharge %}
+                {% elif can_sell %}
                   Zero on Meter Support
                 {% else %}
                   Zero on Meter
                 {% endif %}
               
-              {% elif price_pct < buy_pct %}
-                {% if forced_charge and charge %}
+              {% elif price_pct < buy_pct %}  {# Price is low: no discharging, and buy only across a clear gap #}
+                {% if forced_buy %}
                   Proportional Charge
-                {% elif charge %}
+                {% elif can_buy and buy_big %}
+                  Proportional Charge
+                {% elif can_buy %}
                   Zero on Meter Charge
                 {% else %}
                   Zero on Meter
@@ -496,7 +603,12 @@ automation:
             {% set max_discharge_power = states('input_number.sessy_api_strategy_max_discharge_power') | float(0) %}
             {% set max_prop_charge_power = states('input_number.sessy_api_strategy_max_prop_charge_power') | float(0) %}
             {% set max_prop_discharge_power = states('input_number.sessy_api_strategy_max_prop_discharge_power') | float(0) %}
-            {% set min_prop_soc   = states('input_number.sessy_api_strategy_min_prop_soc') | float(0) %}
+            {# Charge ceiling and discharge floor from the same reserve model as the auto strategy:
+               the SoC that belongs to the rest of today plus tonight (2026-09-14). #}
+            {% set soc_target = state_attr('sensor.sessy_api_strategy_estimated_energy_surplus','soc_target') | float(100) %}
+            {% set remain_wh  = state_attr('sensor.sessy_api_strategy_estimated_energy_surplus','remain_wh') | float(0) %}
+            {% set usable_wh  = state_attr('sensor.sessy_api_strategy_estimated_energy_surplus','usable_wh') | float(0) %}
+            {% set soc_floor  = 0 if usable_wh <= 0 else 100 * remain_wh / usable_wh %}
             
             {# 3. Zero on Meter (ZOM) algorithm #}
             {% set zom_gain      = 0.5 %}
@@ -515,19 +627,20 @@ automation:
               {{ zom_charge | int }} {# no discharging for low energy prices #}
 
             {% elif strategy == 'Proportional Charge' %}
-            {# Buys energy or absorbs PV: enforces the strongest charging signal #}
-              {# No SoC limit for charging, stop at SoC=100% #}
-              {% set prop_gain = 1.0 - (soc / 100.0) %}
+            {# Buys energy or absorbs PV: never charges above soc_target, the level that is useful
+               today (the remaining need plus the room the remaining PV cannot fill). Above that
+               only free PV is worth taking. #}
+              {% set prop_gain = max(0.0, (soc_target - soc) / 100.0) %}
               {% set prop_power = -1 * (prop_gain * max_prop_charge_power) %}              
               {# Selects the highest charging request (most negative value) #}
 
               {{ min(prop_power, zom_charge) | int }}
               
             {% elif strategy == 'Proportional Discharge' %}
-            {# Sels energy or supports house: enforces the strongest discharging signal #}
-              {# No SoC limit for discharging, prevents draining the battery by energy sales to fast #}
-              {% if soc <= min_prop_soc %}
-                {{ max(zom_discharge, 0) | int }}
+            {# Sells energy or supports the house: never discharges below soc_floor, the SoC that
+               still covers the rest of today plus tonight, so a sell cannot eat into the reserve. #}
+              {% if soc <= soc_floor %}
+                {{ max(zom_discharge, 0) | int }} {# only cover the house, no export #}
               {% else %}
                 {% set prop_gain = soc / 100.0 %}
                 {% set prop_power = prop_gain * max_prop_discharge_power %}
@@ -538,3 +651,28 @@ automation:
             {% else %}
               {{ 0 | int }}
             {% endif %}
+
+
+  # Keeps tomorrow's PV forecast in a helper. After sunset (and around midnight, when the
+  # "today remaining" sensors still read 0) that value is the PV that is actually still to come,
+  # so the buy gate can see that free PV will fill the pack anyway (audit 2026-09-14).
+  - id: sessy_pv_forecast_next_day
+    alias: "Sessy PV forecast next day"
+    description: "Stores tomorrow's PV forecast for the buy gate after sunset"
+    mode: restart
+    trigger:
+      - platform: state
+        entity_id:
+          - sensor.energy_production_tomorrow_east
+          - sensor.energy_production_tomorrow_west
+        not_to:
+          - unknown
+          - unavailable
+    action:
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.sessy_pv_forecast_next_day_wh
+        data:
+          value: >-
+            {{ (states('sensor.energy_production_tomorrow_east') | float(0)
+                + states('sensor.energy_production_tomorrow_west') | float(0)) * 1000 }}
