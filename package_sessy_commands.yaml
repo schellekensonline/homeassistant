@@ -110,179 +110,79 @@ input_number:
     step: 100
     unit_of_measurement: W
     mode: box
-  # sessy_power_setpoint_inv1:
-  #   name: "Sessy power setpoint L1"
-  #   icon: mdi:transmission-tower
-  #   min: -2000  # maximum charge
-  #   max: 2000   # maximum discharge
-  #   step: 100
-  #   unit_of_measurement: W
-  #   mode: box
-  # sessy_power_setpoint_inv2:
-  #   name: "Sessy power setpoint L2"
-  #   icon: mdi:transmission-tower
-  #   min: -2000  # maximum charge
-  #   max: 2000   # maximum discharge
-  #   step: 100
-  #   unit_of_measurement: W
-  #   mode: box
-  # sessy_power_setpoint_inv3:
-  #   name: "Sessy power setpoint L3"
-  #   icon: mdi:transmission-tower
-  #   min: -2000  # maximum charge
-  #   max: 2000   # maximum discharge
-  #   step: 100
-  #   unit_of_measurement: W
-  #   mode: box
 
 automation:
   - id: sessy_set_power_auto
     alias: "Sessy set power auto"
     description: "Set power on total system for strategy API"
     mode: restart
-    trigger:
-      - platform: state
+    triggers:
+      - trigger: state
         entity_id: input_number.sessy_power_setpoint
-    condition:
+    conditions:
       - condition: template
         value_template: "{{ trigger.to_state.state not in ['unknown', 'unavailable'] }}"
-    action:
-      # A non-zero setpoint only makes sense in API mode, so switch the strategy over
+    actions:
+      # A non-zero setpoint only makes sense in API mode, so switch the strategy over first.
       - choose:
-        - conditions:
-            - condition: template
-              value_template: "{{ (trigger.to_state.state | int | abs) > 0 }}"
-          sequence:
-            - action: input_select.select_option
-              target:
-                entity_id: input_select.sessy_strategy
-              data:
-                option: "POWER_STRATEGY_API"
-            - delay: '00:00:05'
+          - conditions:
+              - condition: template
+                value_template: "{{ (trigger.to_state.state | int | abs) > 0 }}"
+            sequence:
+              - action: input_select.select_option
+                target:
+                  entity_id: input_select.sessy_strategy
+                data:
+                  option: "POWER_STRATEGY_API"
+              - delay: "00:00:05"
       - action: script.sessy_set_power
         data:
           setpoint: "{{ trigger.to_state.state | int }}"
 
-    
   - id: sessy_synchronise_active_strategy_auto
     alias: "Sessy synchronise active strategy auto"
     description: "Synchronizes input select with sessy"
     mode: restart
-    trigger:
-      - platform: state
+    triggers:
+      - trigger: state
         entity_id: sensor.sessy_active_strategy
-    condition:
+    conditions:
       - condition: template
         # Avoid errors during startup
         value_template: "{{ trigger.to_state.state not in ['unknown', 'unavailable'] }}"
       - condition: template
         # Only update the input_select when it currently differs from the sensor
         value_template: "{{ states('input_select.sessy_strategy') != trigger.to_state.state }}"
-    action:
+    actions:
       - action: input_select.select_option
         target:
           entity_id: input_select.sessy_strategy
         data:
           option: "{{ trigger.to_state.state }}"
- 
+
   - id: sessy_set_active_strategy_auto
     alias: "Sessy set active strategy auto"
     description: "Sets Sessy active strategy when input select changes"
     mode: restart
-    trigger:
-      - platform: state
+    triggers:
+      - trigger: state
         entity_id: input_select.sessy_strategy
-    condition:
+    conditions:
       - condition: template
         # Prevents the automation from firing on a Home Assistant restart (state 'unknown' or 'unavailable')
         value_template: "{{ trigger.to_state.state not in ['unknown', 'unavailable'] }}"
-    action:
+    actions:
       - action: script.sessy_set_strategy
         data:
           strategy: "{{ trigger.to_state.state }}"
       # Outside API mode the setpoint is ignored, so reset the slider to 0
       - choose:
-        - conditions:
-            - condition: template
-              value_template: "{{ not is_state('input_select.sessy_strategy','POWER_STRATEGY_API') }}"
-          sequence:
-            - action: input_number.set_value
-              target:
-                entity_id: input_number.sessy_power_setpoint
-              data:
-                value: 0
-
-    
-  # - id: sessy_set_power_inv1_auto
-  #   alias: "Sessy set power inv1 auto"
-  #   description: "Set power on inverter 1 for strategy API"
-  #   mode: restart
-  #   trigger:
-  #     - platform: state
-  #       entity_id: input_number.sessy_power_setpoint_inv1
-  #   condition:
-  #     - condition: template
-  #       value_template: "{{ trigger.to_state.state not in ['unknown', 'unavailable'] }}"
-  #   action:
-  #     - action: script.sessy_set_power_distributed
-  #       data:
-  #         # inverter: 1 
-  #         setpoint_l1: "{{ trigger.to_state.state | int }}"
-  #         setpoint_l2: "{{ states('input_number.sessy_power_setpoint_inv2') | int }}"
-  #         setpoint_l3: "{{ states('input_number.sessy_power_setpoint_inv3') | int }}"
-  #         # stop_override: >
-  #         #   {% if (trigger.to_state.state|int==0) and (states('input_number.sessy_power_setpoint_inv2')|int==0)  and (states('input_number.sessy_power_setpoint_inv3')|int==0) %} 
-  #         #       {{ true }}
-  #         #   {% else %}
-  #         #       {{ false }}
-  #         #   {% endif %}            
-
-
-  # - id: sessy_set_power_inv2_auto
-  #   alias: "Sessy set power inv2 auto"
-  #   description: "Set power on inverter 2 for strategy API"
-  #   mode: restart
-  #   trigger:
-  #     - platform: state
-  #       entity_id: input_number.sessy_power_setpoint_inv2
-  #   condition:
-  #     - condition: template
-  #       value_template: "{{ trigger.to_state.state not in ['unknown', 'unavailable'] }}"
-  #   action:
-  #     - action: script.sessy_set_power_distributed
-  #       data:
-  #         # inverter: 2 
-  #         setpoint_l1: "{{ states('input_number.sessy_power_setpoint_inv1') | int }}"
-  #         setpoint_l2: "{{ trigger.to_state.state | int }}"
-  #         setpoint_l3: "{{ states('input_number.sessy_power_setpoint_inv3') | int }}"
-  #         # stop_override: >
-  #         #   {% if (states('input_number.sessy_power_setpoint_inv1')|int==0) and (trigger.to_state.state|int==0) and (states('input_number.sessy_power_setpoint_inv3')|int==0)  %} 
-  #         #       {{ true }}
-  #         #   {% else %}
-  #         #       {{ false }}
-  #         #   {% endif %}  
-    
-
-  # - id: sessy_set_power_inv3_auto
-  #   alias: "Sessy set power inv3 auto"
-  #   description: "Set power on inverter 3 for strategy API"
-  #   mode: restart
-  #   trigger:
-  #     - platform: state
-  #       entity_id: input_number.sessy_power_setpoint_inv3
-  #   condition:
-  #     - condition: template
-  #       value_template: "{{ trigger.to_state.state not in ['unknown', 'unavailable'] }}"
-  #   action:
-  #     - action: script.sessy_set_power_distributed
-  #       data:
-  #         # inverter: 3 
-  #         setpoint_l1: "{{ states('input_number.sessy_power_setpoint_inv1') | int }}"
-  #         setpoint_l2: "{{ states('input_number.sessy_power_setpoint_inv2') | int }}"
-  #         setpoint_l3: "{{ trigger.to_state.state | int }}"
-  #         # stop_override: >
-  #         #   {% if (states('input_number.sessy_power_setpoint_inv1')|int==0) and (states('input_number.sessy_power_setpoint_inv2')|int==0) and (trigger.to_state.state|int==0) %} 
-  #         #       {{ true }}
-  #         #   {% else %}
-  #         #       {{ false }}
-  #         #   {% endif %}  
+          - conditions:
+              - condition: template
+                value_template: "{{ not is_state('input_select.sessy_strategy','POWER_STRATEGY_API') }}"
+            sequence:
+              - action: input_number.set_value
+                target:
+                  entity_id: input_number.sessy_power_setpoint
+                data:
+                  value: 0
