@@ -66,7 +66,10 @@ template:
   # ==========================================================================
   # EOL / network switch data
   # ==========================================================================
-  - variables:
+  - trigger:
+      - trigger: state
+        entity_id: sensor.sessy_eol_ns_data
+    variables:
       network_switch: "{{ state_attr('sensor.sessy_eol_ns_data', 'network_switch') | default({}, true) }}"
       inverters: "{{ state_attr('sensor.sessy_eol_ns_data', 'inverters') | default([], true) }}"
       inv1: "{{ (inverters + [{}, {}, {}])[0] }}"
@@ -409,7 +412,10 @@ template:
   # ==========================================================================
   # Power status
   # ==========================================================================
-  - variables:
+  - trigger:
+      - trigger: state
+        entity_id: sensor.sessy_power_status_data
+    variables:
       sessy: "{{ state_attr('sensor.sessy_power_status_data', 'sessy') | default({}, true) }}"
       grid: "{{ state_attr('sensor.sessy_power_status_data', 'grid') | default({}, true) }}"
     sensor:
