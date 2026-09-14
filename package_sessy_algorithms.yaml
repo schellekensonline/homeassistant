@@ -29,15 +29,15 @@ template:
           - variables:
               decay:      "{{ 1-5/(30*60) }}" # 5s update, 30min decay --> b~1-Ts/tau
               soc_state: "{{ states('sensor.sessy_battery_state_of_charge') | float(50) | round(0) }}"
-              zom_state:  "{{states('number.sessy_api_strategy_zom_state')  | round(0) }}"
-              peak_state: "{{states('number.sessy_api_strategy_zom_peak_state') | round(2) }}"
-              nom_power:  "{{states('input_number.sessy_api_strategy_inverter_nominal_power') | round(0) }}"
-              hyst_power:  "{{states('input_number.sessy_api_strategy_inverter_hysteresis_power') | round(0) }}"
-              num_active:  "{{states('number.sessy_api_strategy_active_inverters') | round(0) }}"
+              zom_state:  "{{ states('number.sessy_api_strategy_zom_state') | float(0) | round(0) }}"
+              peak_state: "{{ states('number.sessy_api_strategy_zom_peak_state') | float(0) | round(2) }}"
+              nom_power:  "{{ states('input_number.sessy_api_strategy_inverter_nominal_power') | float(1500) | round(0) }}"
+              hyst_power: "{{ states('input_number.sessy_api_strategy_inverter_hysteresis_power') | float(250) | round(0) }}"
+              num_active: "{{ states('number.sessy_api_strategy_active_inverters') | float(0) | round(0) }}"
               zom_sat:    "{{ (soc_state >= 98 and zom_state < -0.5*nom_power) or (soc_state <= 2 and zom_state > 0.5*nom_power) }}" 
               num_active_next: >-
                 {% if nom_power <= 0 %} {# prevent division by zero #}
-                  {{ 0 | int(0) }}  
+                  {{ 1 | int(0) }}
                 {% else %}
                   {% set num_up   = min( 3, 1 + ((peak_state/(nom_power+hyst_power)) | int(0)) ) | int(0) %}
                   {% set num_down = min( 3, 1 + ((peak_state/max(nom_power-hyst_power,0)) | int(0)) ) | int(0) %}
@@ -53,7 +53,7 @@ template:
                 {% if zom_sat %}
                   {{ 0 }}
                 {% else %}
-                  {{ zom_state / num_active_next }} {# divide across the target active inverters #}
+                  {{ zom_state / max(num_active_next, 1) }} {# divide across the target active inverters #}
                 {% endif %}
           # Update number of active inverters
           - action: number.set_value
@@ -193,13 +193,6 @@ template:
         unique_id: sessy_api_strategy_estimated_energy_surplus
         state_class: measurement
         unit_of_measurement: "pu"
-        # availability: >
-        #   {% set current = states('sensor.electricity_buying_price') | float("unknown") %}
-        #   {{ current|is_number }}
-        # Time left for the day #}
-        # set seconds_left   = ((now().replace(hour=0,minute=0,second=0,microsecond=0) + timedelta(days=1)) - now()).total_seconds() #}
-        # set pu_day_left    = max(seconds_left/86400, 0.05) #}  
-        # set daily_energy_remain_wh = 11000  * pu_day_left #}
         variables:
           soc:            "{{ states('sensor.sessy_battery_state_of_charge') | float(50) }}"
           batt_cap_wh:    "{{ states('input_number.sessy_auto_api_strategy_battery_capacity_wh') | float(15000) }}"
@@ -303,7 +296,7 @@ input_number:
     min: 0
     max: 50
     step: 1
-    # initial: 25
+    # initial: 20
     mode: box
     unit_of_measurement: "%"
   sessy_auto_api_strategy_sell_pct: # e-price percent to start proportional discharging (selling)
@@ -311,31 +304,31 @@ input_number:
     min: 50
     max: 100
     step: 1
-    # initial: 75
+    # initial: 70
     mode: box
     unit_of_measurement: "%"
   sessy_auto_api_strategy_min_spread: # price spread in EURO to start proportional trading, active buying
     name: "Sessy API minimum price spread"
     min: 0
-    max: 100  # Redicilous large value
+    max: 100  # Ridiculously large value
     step: 0.005
-    # initial: 0.22
+    # initial: 0.25
     mode: box
     unit_of_measurement: "€"
   sessy_auto_api_strategy_min_forced_buy_price:
     # Net buying-price threshold for forced charging. Must stay negative: buy only when the
     # price is actually negative, not merely low.
     name: "Sessy API minimum forced buy price"
-    min: -100 # Redicilous large value
+    min: -100 # Ridiculously large value
     max: -0.001
     step: 0.001
-    # initial: -0.15
+    # initial: -0.001
     mode: box
     unit_of_measurement: "€"
   sessy_auto_api_strategy_battery_capacity_wh: # Installed capacity of the battery in Wh, used to calculate remaining capacity for proportional trading
     name: "Sessy API usable Capacity"
     min: 0
-    max: 1000000 # Redicilous large value
+    max: 1000000 # Ridiculously large value
     step: 1
     initial: 15000
     mode: box
@@ -348,7 +341,7 @@ input_number:
     min: 0
     max: 10 
     step: 0.1
-    # initial: 1
+    # initial: 0.75
     mode: box
     unit_of_measurement: "pu"
   sessy_api_strategy_surplus_margin_discharge:
@@ -356,7 +349,7 @@ input_number:
     min: 0
     max: 10 
     step: 0.1
-    # initial: 1
+    # initial: 1.5
     mode: box
     unit_of_measurement: "pu"
   sessy_api_strategy_min_buy_room_wh:
@@ -411,17 +404,17 @@ input_number:
   ## Consider changing everything with max / min power to template number with template max / min based on input number! 
   # FOR API STRATEGY
   sessy_api_strategy_inverter_nominal_power:
-    name: "Sessy API inverer nominal power"
+    name: "Sessy API inverter nominal power"
     min: 0
-    max: 1000000 # Redicilous large value
+    max: 1000000 # Ridiculously large value
     step: 1
     initial: 1500 # 10% of nom_power for switching logic
     mode: box
     unit_of_measurement: "W"
   sessy_api_strategy_inverter_hysteresis_power:
-    name: "Sessy API inverer hysteresis power"
+    name: "Sessy API inverter hysteresis power"
     min: 0
-    max: 1000000 # Redicilous large value
+    max: 1000000 # Ridiculously large value
     step: 1
     initial: 250 # 10% of nom_power hysteresis in switching logic
     mode: box
@@ -429,31 +422,31 @@ input_number:
   sessy_api_strategy_max_charge_power:
     name: "Sessy API max charge power"
     min: 0
-    max: 1000000 # Redicilous large value
+    max: 1000000 # Ridiculously large value
     step: 1
-    mode: box
     # initial: 6000
+    mode: box
     unit_of_measurement: "W"
   sessy_api_strategy_max_discharge_power:
     name: "Sessy API max discharge power"
     min: 0
-    max: 1000000 # Redicilous large value
+    max: 1000000 # Ridiculously large value
     step: 1
-    # initial: 4500
+    # initial: 3000
     mode: box
     unit_of_measurement: "W"
   sessy_api_strategy_max_prop_charge_power:
     name: "Sessy API max proportional charge power"
     min: 0
-    max: 1000000 # Redicilous large value
+    max: 1000000 # Ridiculously large value
     step: 1
-    # initial: 3000
+    # initial: 6000
     mode: box
     unit_of_measurement: "W"
   sessy_api_strategy_max_prop_discharge_power:
     name: "Sessy API max proportional discharge power"
     min: 0
-    max: 1000000 # Redicilous large value
+    max: 1000000 # Ridiculously large value
     step: 1
     # initial: 3000
     mode: box
@@ -461,29 +454,22 @@ input_number:
 
 
 automation:
-# CONSIDER ADDING AN AUTOMATION WHICH SETS THE INPUT_NUMBERS DAILY AFTER MIDNIGHT BASED ON SOLAR SURPLUS
-# AND CHEAPEST ENERGY HOURS
-# TRY TO HAVE LESS THAN 4 CLEAR SETTINGS FOR THAT AUTOMATION
-# BETTER 1 OR 2 THAT SET HOW AGRESSIVE IT SELS/BUYS ENERGY
-#
-# SPEAD SHOULD BE INPUT FOR MIDNIGHT AUTO
-# 
   - id: sessy_automatic_api_strategy_auto
     alias: "Sessy automatic API Strategy auto"
     description: "Switches API strategy based on price, and remaining solar forecast"
     mode: restart
-    trigger:
-      - platform: state
+    triggers:
+      - trigger: state
         entity_id: sensor.electricity_buying_price
-      - platform: time_pattern # catch for static prices
+      - trigger: time_pattern # catch for static prices
         minutes: "/30"
-    condition:
+    conditions:
       # Only run if Sessy is in API mode and the strategy is not set to Manual
       - condition: template
         value_template: "{{ is_state('input_select.sessy_strategy','POWER_STRATEGY_API') }}"
       - condition: template
         value_template: "{{ is_state('switch.sessy_auto_api_strategy_enable','on') }}"
-    action:
+    actions:
       - action: input_select.select_option
         target:
           entity_id: input_select.sessy_api_strategy
@@ -579,15 +565,15 @@ automation:
     alias: "Sessy API Strategy auto"
     description: "Calculates applicable API setpoints and applies them when Sessy is set to POWER_STRATEGY_API"
     mode: restart
-    trigger:
-      - platform: state
+    triggers:
+      - trigger: state
         entity_id: sensor.p1_meter_3c39e72e6af0_active_power
-    condition:
+    conditions:
       - condition: template
         value_template: "{{ not is_state('input_select.sessy_api_strategy','Manual') }}"
       - condition: template
         value_template: "{{ is_state('input_select.sessy_strategy','POWER_STRATEGY_API') }}"
-    action:
+    actions:
       - action: number.set_value
         target:
           entity_id: number.sessy_api_strategy_zom_state
@@ -660,15 +646,15 @@ automation:
     alias: "Sessy PV forecast next day"
     description: "Stores tomorrow's PV forecast for the buy gate after sunset"
     mode: restart
-    trigger:
-      - platform: state
+    triggers:
+      - trigger: state
         entity_id:
           - sensor.energy_production_tomorrow_east
           - sensor.energy_production_tomorrow_west
         not_to:
           - unknown
           - unavailable
-    action:
+    actions:
       - action: input_number.set_value
         target:
           entity_id: input_number.sessy_pv_forecast_next_day_wh
