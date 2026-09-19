@@ -17,6 +17,8 @@
 /go2rtc*
 /*.conf
 /*.txt
+# PDFs: large binaries, and documents (offers, drawings) do not belong in the config repo
+/*.pdf
 
 ## INCLUDE
 # Gitignore file
