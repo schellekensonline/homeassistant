@@ -80,6 +80,38 @@ template:
             {% set prices = state_attr('sensor.electricity_buying_price', 'prices') | default([], true) %}
             {{ prices | selectattr('time', '>=', (now().date() + timedelta(days=1)).isoformat()) | list | length }}
 
+      # The building and thermal-battery parameters live in secrets.yaml (gitignored). They are
+      # exposed here as attributes because a `!secret` tag cannot be embedded inside the rest
+      # command payload: that payload is a Jinja template string, and tags only work on YAML
+      # nodes. The MPC payload builds its EMHASS `def_load_config` from these attributes.
+      - name: "Building parameters"
+        unique_id: building_parameters
+        state: "ok"
+        attributes:
+          u_value: !secret building_u_value
+          envelope_area_m2: !secret building_envelope_area_m2
+          ventilation_rate: !secret building_ventilation_rate
+          heated_volume_m3: !secret building_heated_volume_m3
+          window_area_m2: !secret building_window_area_total_m2
+          shgc: !secret building_glazing_shgc
+          internal_gains_factor: !secret building_internal_gains_factor
+          slab_volume_m3: !secret building_slab_volume_m3
+          slab_inertia_time_constant_h: !secret building_slab_inertia_time_constant_h
+          heating_supply_temperature: !secret building_supply_temperature_heating
+          heating_target_temperature: !secret building_heating_target_temperature
+          carnot_efficiency_heating: !secret building_carnot_efficiency_heating
+          slab_heating_min_temperature: !secret building_slab_heating_min_temperature
+          slab_heating_max_temperature: !secret building_slab_heating_max_temperature
+          cooling_supply_temperature: !secret building_supply_temperature_cooling
+          cooling_target_temperature: !secret building_cooling_target_temperature
+          slab_cooling_min_temperature: !secret building_slab_cooling_min_temperature
+          slab_cooling_max_temperature: !secret building_slab_cooling_max_temperature
+          dhw_volume_m3: !secret building_dhw_volume_m3
+          dhw_thermal_loss_kw: !secret building_dhw_thermal_loss_kw
+          dhw_carnot_efficiency: !secret building_dhw_carnot_efficiency
+          dhw_min_temperature: !secret building_dhw_min_temperature
+          dhw_max_temperature: !secret building_dhw_max_temperature
+
 input_number:
   # Target SoC at the end of the optimisation horizon. Passed to EMHASS via REST
   # instead of config.json, so it can be adjusted without restarting the container.
@@ -154,7 +186,9 @@ rest_command:
     # can take longer than the 10 second default of rest_command. Timing out here means
     # Home Assistant abandons a run that EMHASS keeps working on, which collides with the
     # next scheduled run (that is what broke the run just after midnight).
-    timeout: 30
+    # Raised to 90 on 2026-09-20: with the adjusted-PV correction enabled, the run that
+    # retrains that model takes ~23 s (against ~5 s normally), too close to the old 30.
+    timeout: 90
     content_type: "application/json"
     payload: >-
       {# The day-ahead plan is for tomorrow, so only send the quarters of tomorrow (and
@@ -177,8 +211,9 @@ rest_command:
   emhass_naive_mpc_optim:
     url: "http://localhost:5000/action/naive-mpc-optim"
     method: POST
-    # Same reason as the day-ahead command above: give EMHASS room to answer.
-    timeout: 30
+    # Same reason as the day-ahead command above: give EMHASS room to answer, and enough room
+    # for the run that retrains the adjusted-PV model (see there).
+    timeout: 90
     content_type: "application/json"
     payload: >-
       {% set incl = state_attr('sensor.electricity_buying_price', 'prices') %}
@@ -197,15 +232,85 @@ rest_command:
       {% set incl_rounded = incl_futur | map('round', 4) | list %}
       {% set excl_rounded = excl_futur | map('round', 4) | list %}
 
+      {# --- Thermal batteries: the DHW tank, space heating and space cooling ------------------
+         All parameters come from sensor.building_parameters (fed by secrets.yaml), so no
+         building detail is hard-coded here. The three loads share one heat pump; the
+         mutual-exclusion group that keeps them from running together is configured in EMHASS.
+         This is compute-only: nothing acts on the published p_deferrable* sensors. #}
+      {% set n = min(96, incl_rounded | length) %}
+      {% set ba = 'sensor.building_parameters' %}
+      {% set slab = state_attr(ba,'slab_volume_m3') | float(4.7) %}
+      {% set room_now = states('sensor.therma_v_room_temperature') | float(20.5) %}
+      {% set uval = state_attr(ba,'u_value') | float(0.55) %}
+      {% set env = state_attr(ba,'envelope_area_m2') | float(380) %}
+      {% set vent = state_attr(ba,'ventilation_rate') | float(0.5) %}
+      {% set vol = state_attr(ba,'heated_volume_m3') | float(300) %}
+      {% set warea = state_attr(ba,'window_area_m2') | float(32.7) %}
+      {% set shgc = state_attr(ba,'shgc') | float(0.55) %}
+      {% set igf = state_attr(ba,'internal_gains_factor') | float(0.6) %}
+      {% set tau = state_attr(ba,'slab_inertia_time_constant_h') | float(2) %}
+      {% set dhw_now = states('sensor.therma_v_dhw_temperature') | float(50) %}
+      {% set dhw_target = states('sensor.therma_v_dhw_target_temperature') | float(50) %}
+
       {
         "load_cost_forecast":  {{ incl_rounded | to_json }},
         "prod_price_forecast": {{ excl_rounded | to_json }},
         {# EMHASS requires the horizon to match the list length, and the list only reaches as
            far as Nord Pool has published (today, plus tomorrow after ~13:00). Asking for 96
            while the list is shorter made EMHASS reject the run with "length should be 96". #}
-        "prediction_horizon": {{ min(96, incl_rounded | length) }},
+        "prediction_horizon": {{ n }},
         "soc_init": {{ (states('sensor.sessy_battery_state_of_charge') | float(60) / 100) | round(3) }},
-        "soc_final": {{ (states('input_number.emhass_soc_target') | float(60) / 100) | round(3) }}
+        "soc_final": {{ (states('input_number.emhass_soc_target') | float(60) / 100) | round(3) }},
+        "def_load_config": [
+          {"thermal_battery": {
+            "volume": {{ state_attr(ba,'dhw_volume_m3') | float(0.3) }},
+            "density": 997,
+            "heat_capacity": 4.184,
+            "thermal_loss": {{ state_attr(ba,'dhw_thermal_loss_kw') | float(0.19) }},
+            "start_temperature": {{ dhw_now }},
+            "min_temperatures": {{ ([state_attr(ba,'dhw_min_temperature') | float(42)] * n) | to_json }},
+            "max_temperatures": {{ ([state_attr(ba,'dhw_max_temperature') | float(58)] * n) | to_json }},
+            "supply_temperature": {{ dhw_target }},
+            "carnot_efficiency": {{ state_attr(ba,'dhw_carnot_efficiency') | float(0.42) }},
+            "draw_off_demand": {{ ([0.005] * n) | to_json }}
+          }},
+          {"thermal_battery": {
+            "volume": {{ slab }},
+            "start_temperature": {{ room_now }},
+            "min_temperatures": {{ ([state_attr(ba,'slab_heating_min_temperature') | float(20)] * n) | to_json }},
+            "max_temperatures": {{ ([state_attr(ba,'slab_heating_max_temperature') | float(30)] * n) | to_json }},
+            "supply_temperature": {{ state_attr(ba,'heating_supply_temperature') | float(32) }},
+            "carnot_efficiency": {{ state_attr(ba,'carnot_efficiency_heating') | float(0.45) }},
+            "u_value": {{ uval }},
+            "envelope_area": {{ env }},
+            "ventilation_rate": {{ vent }},
+            "heated_volume": {{ vol }},
+            "window_area": {{ warea }},
+            "shgc": {{ shgc }},
+            "internal_gains_factor": {{ igf }},
+            "thermal_inertia_time_constant": {{ tau }},
+            "indoor_target_temperature": {{ state_attr(ba,'heating_target_temperature') | float(20.5) }},
+            "sense": "heat"
+          }},
+          {"thermal_battery": {
+            "volume": {{ slab }},
+            "start_temperature": {{ room_now }},
+            "min_temperatures": {{ ([state_attr(ba,'slab_cooling_min_temperature') | float(16.5)] * n) | to_json }},
+            "max_temperatures": {{ ([state_attr(ba,'slab_cooling_max_temperature') | float(24)] * n) | to_json }},
+            "supply_temperature": {{ state_attr(ba,'cooling_supply_temperature') | float(16) }},
+            "carnot_efficiency": {{ state_attr(ba,'carnot_efficiency_heating') | float(0.45) }},
+            "u_value": {{ uval }},
+            "envelope_area": {{ env }},
+            "ventilation_rate": {{ vent }},
+            "heated_volume": {{ vol }},
+            "window_area": {{ warea }},
+            "shgc": {{ shgc }},
+            "internal_gains_factor": {{ igf }},
+            "thermal_inertia_time_constant": {{ tau }},
+            "indoor_target_temperature": {{ state_attr(ba,'cooling_target_temperature') | float(24) }},
+            "sense": "cool"
+          }}
+        ]
       }
 
   # Publish the latest optimisation results to Home Assistant sensors.
