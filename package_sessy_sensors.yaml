@@ -535,3 +535,21 @@ template:
       #   unit_of_measurement: "W"
       #   device_class: power
       #   state_class: measurement
+
+      # Read-only mirrors of the controller's own state, used on the Utilities dashboard and for
+      # debugging the algorithm. The device value above remains the truth for what the battery
+      # actually does; these two are our own numbers. A `number` helper cannot keep statistics
+      # (Home Assistant only does that for `sensor` entities), which is why the mirrors exist.
+      - name: "Sessy ZoM state"
+        unique_id: sessy_zom_state
+        unit_of_measurement: "W"
+        device_class: power
+        state_class: measurement
+        state: "{{ states('number.sessy_api_strategy_zom_state') | float(0) }}"
+
+      - name: "Sessy ZoM peak state"
+        unique_id: sessy_zom_peak_state
+        unit_of_measurement: "W"
+        device_class: power
+        state_class: measurement
+        state: "{{ states('number.sessy_api_strategy_zom_peak_state') | float(0) }}"
