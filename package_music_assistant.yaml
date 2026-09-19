@@ -28,6 +28,110 @@ template:
             none
           {% endif %}
 
+# Single entry point for the ESP32 box: it only asks for a favourite to be selected/played.
+# If the option is already the current selection the input_select would not change, so the
+# automation below would never fire; in that case play it here. Otherwise set the select and
+# let the automation do the playing. This keeps exactly one play request per tap and keeps
+# changing the select from HA playing as well.
+script:
+  music_assistant_select_favorite:
+    alias: "Music Assistant select favourite"
+    description: >-
+      Called by the ESP32 box when a favourite radio station or album is tapped. Plays the
+      item directly when it is already the selected option, otherwise selects it so the
+      play automation takes over.
+    fields:
+      kind:
+        description: "radio or album"
+        required: true
+        selector:
+          select:
+            options:
+              - radio
+              - album
+      option:
+        description: "Name of the favourite, exactly as shown in the input_select"
+        required: true
+        selector:
+          text:
+    sequence:
+      # Ignore placeholders and unavailable values (the box filters them from its list too).
+      - condition: template
+        value_template: >-
+          {{ option not in ['Laden...', 'Geen favorieten gevonden', 'Geen albums gevonden',
+                            'unknown', 'unavailable'] }}
+      - if:
+          - condition: template
+            # Already selected: no state change, so no automation will trigger.
+            value_template: "{{ states('input_select.music_assistant_' ~ kind ~ '_select') == option }}"
+        then:
+          - action: music_assistant.play_media
+            target:
+              entity_id: media_player.esp32_s3_box_player
+            data:
+              media_id: "{{ option }}"
+              media_type: "{{ kind }}"
+        else:
+          # Changing the select fires music_assistant_play_selected_*_auto, which plays it.
+          - action: input_select.select_option
+            target:
+              entity_id: "input_select.music_assistant_{{ kind }}_select"
+            data:
+              option: "{{ option }}"
+    mode: parallel
+    max: 10
+
+  # Step to the next/previous favourite while skipping the placeholder options. The plain
+  # input_select.select_next/select_previous with cycle: true can land on
+  # "Geen favorieten gevonden" / "Geen albums gevonden", which the player then refuses to play.
+  music_assistant_step_favorite:
+    alias: "Music Assistant step favourite"
+    description: >-
+      Cycles through the real favourites of the radio or album input_select, never landing on a
+      placeholder. Called by the IR next/previous buttons.
+    fields:
+      kind:
+        description: "radio or album"
+        required: true
+        selector:
+          select:
+            options:
+              - radio
+              - album
+      direction:
+        description: "next or previous"
+        required: true
+        selector:
+          select:
+            options:
+              - next
+              - previous
+    sequence:
+      - variables:
+          placeholders: >-
+            ['Laden...', 'Geen favorieten gevonden', 'Geen albums gevonden',
+             'Geen zenders gevonden', 'unknown', 'unavailable']
+          valid: >-
+            {{ (state_attr('input_select.music_assistant_' ~ kind ~ '_select', 'options') or [])
+               | reject('in', placeholders) | list }}
+          current: "{{ states('input_select.music_assistant_' ~ kind ~ '_select') }}"
+      - condition: template
+        value_template: "{{ valid | count > 0 }}"
+      - variables:
+          target_index: >-
+            {% set n = valid | count %}
+            {% set i = valid.index(current) if current in valid else -1 %}
+            {% if i < 0 %}{{ 0 if direction == 'next' else n - 1 }}
+            {% elif direction == 'next' %}{{ (i + 1) % n }}
+            {% else %}{{ (i - 1 + n) % n }}{% endif %}
+      - action: input_select.select_option
+        target:
+          entity_id: "input_select.music_assistant_{{ kind }}_select"
+        data:
+          option: "{{ valid[target_index | int] }}"
+    mode: parallel
+    max: 10
+
 
 automation:
   - id: music_assistant_get_radiostations_auto
@@ -38,6 +142,8 @@ automation:
         event: start
       - trigger: time
         at: "04:00:00" # Daily library sync.
+      - trigger: time_pattern
+        minutes: 0 # Hourly: picks up new favourites and recovers a failed sync within the hour.
       - trigger: event
         event_type: call_service
         event_data:
@@ -49,25 +155,48 @@ automation:
           domain: homeassistant
           service: reload_all
     actions:
-    # 1. Fetch the favourite radio stations from the live Music Assistant library
-    - action: music_assistant.get_library
-      data:
-        media_type: radio
-        favorite: true
-        config_entry_id: 01KRK5PNB04Z9WV4PESRKCGJ9X
-      response_variable: mass_radio
-      # 2. Fill the Home Assistant input_select helper with the stations
-    - action: input_select.set_options
-      target:
-        entity_id: input_select.music_assistant_radio_select
-      data:
-        options: >
-          {% if mass_radio is defined and 'items' in mass_radio %}
-            {# keep the placeholder in the list, otherwise the current selection becomes invalid once the list fills up #}
-            {{ ['Geen favorieten gevonden'] + (mass_radio['items'] | map(attribute='name') | list) }}
-          {% else %}
-            {{ ['Geen favorieten gevonden'] | list }}
-          {% endif %}
+      # Music Assistant may not be ready yet right after an HA start (and an MA update restarts
+      # it), so retry a few times. An empty answer must never wipe the current options: replacing
+      # them with only the placeholder would invalidate the current selection, Home Assistant
+      # would reset it to that placeholder, and the Harmony "Listen to Radio" activity would
+      # then send "Geen favorieten gevonden" as a station name, which Music Assistant
+      # fuzzy-matches to a totally different station (seen 2026-09-19).
+      - repeat:
+          count: 3
+          sequence:
+            # 1. Fetch the favourite radio stations from the live Music Assistant library
+            - variables:
+                mass_radio: {}
+            - action: music_assistant.get_library
+              continue_on_error: true
+              data:
+                media_type: radio
+                favorite: true
+                config_entry_id: 01KRK5PNB04Z9WV4PESRKCGJ9X
+              response_variable: mass_radio
+            - if:
+                - condition: template
+                  value_template: >-
+                    {{ mass_radio is mapping and mass_radio.get('items')
+                       and mass_radio['items'] | count > 0 }}
+              then:
+                # 2. Fill the helper. Keep the placeholder as the first option, that is what
+                # keeps a future set_options from invalidating the current selection.
+                - action: input_select.set_options
+                  target:
+                    entity_id: input_select.music_assistant_radio_select
+                  data:
+                    options: >
+                      {{ ['Geen favorieten gevonden']
+                         + (mass_radio['items'] | map(attribute='name') | list) }}
+                - stop: "radio list filled"
+              else:
+                - if:
+                    - condition: template
+                      value_template: "{{ repeat.index < 3 }}"
+                  then:
+                    - delay:
+                        minutes: 1
     mode: restart
 
   - id: music_assistant_play_selected_station_auto
@@ -80,6 +209,13 @@ automation:
       # Do not try to play when the list is empty or still loading.
       - condition: template
         value_template: "{{ trigger.to_state.state not in ['Laden...', 'Geen favorieten gevonden', 'Geen zenders gevonden', 'unknown', 'unavailable'] }}"
+      # set_options (the library sync) fires a state_changed event even when only the options
+      # attribute changes. Only play when the selected value itself really changed, otherwise
+      # an hourly sync would restart the stream every hour.
+      - condition: template
+        value_template: >-
+          {{ trigger.from_state is not none
+             and trigger.from_state.state != trigger.to_state.state }}
     actions:
       - action: music_assistant.play_media
         target:
@@ -97,6 +233,8 @@ automation:
         event: start
       - trigger: time
         at: "04:00:00" # Daily library sync.
+      - trigger: time_pattern
+        minutes: 0 # Hourly: picks up new favourites and recovers a failed sync within the hour.
       - trigger: event
         event_type: call_service
         event_data:
@@ -108,25 +246,42 @@ automation:
           domain: homeassistant
           service: reload_all
     actions:
-    # 1. Fetch the favourite albums from the live Music Assistant library
-    - action: music_assistant.get_library
-      data:
-        media_type: album
-        favorite: true
-        config_entry_id: 01KRK5PNB04Z9WV4PESRKCGJ9X
-      response_variable: mass_album
-      # 2. Fill the Home Assistant input_select helper with the albums
-    - action: input_select.set_options
-      target:
-        entity_id: input_select.music_assistant_album_select
-      data:
-        options: >
-          {% if mass_album is defined and 'items' in mass_album %}
-            {# keep the placeholder in the list, otherwise the current selection becomes invalid once the list fills up #}
-            {{ ['Geen albums gevonden'] + (mass_album['items'] | map(attribute='name') | list) }}
-          {% else %}
-            {{ ['Geen albums gevonden'] | list }}
-          {% endif %}
+      # Same retry and placeholder protection as the radio list above.
+      - repeat:
+          count: 3
+          sequence:
+            # 1. Fetch the favourite albums from the live Music Assistant library
+            - variables:
+                mass_album: {}
+            - action: music_assistant.get_library
+              continue_on_error: true
+              data:
+                media_type: album
+                favorite: true
+                config_entry_id: 01KRK5PNB04Z9WV4PESRKCGJ9X
+              response_variable: mass_album
+            - if:
+                - condition: template
+                  value_template: >-
+                    {{ mass_album is mapping and mass_album.get('items')
+                       and mass_album['items'] | count > 0 }}
+              then:
+                # 2. Fill the helper, placeholder first (see the radio list above).
+                - action: input_select.set_options
+                  target:
+                    entity_id: input_select.music_assistant_album_select
+                  data:
+                    options: >
+                      {{ ['Geen albums gevonden']
+                         + (mass_album['items'] | map(attribute='name') | list) }}
+                - stop: "album list filled"
+              else:
+                - if:
+                    - condition: template
+                      value_template: "{{ repeat.index < 3 }}"
+                  then:
+                    - delay:
+                        minutes: 1
     mode: restart
 
   - id: music_assistant_play_selected_album_auto
@@ -139,6 +294,11 @@ automation:
       # Do not try to play when the list is empty or still loading.
       - condition: template
         value_template: "{{ trigger.to_state.state not in ['Laden...', 'Geen favorieten gevonden', 'Geen albums gevonden', 'unknown', 'unavailable'] }}"
+      # Same guard as the radio automation: ignore attribute-only changes from the sync.
+      - condition: template
+        value_template: >-
+          {{ trigger.from_state is not none
+             and trigger.from_state.state != trigger.to_state.state }}
     actions:
       - action: music_assistant.play_media
         target:
@@ -160,12 +320,27 @@ automation:
       - action: light.turn_on
         target:
           entity_id: light.esp32_s3_box_player_backlight
-      - action: music_assistant.play_media
-        target:
-          entity_id: media_player.esp32_s3_box_player
-        data:
-          media_id: "{{ states('input_select.music_assistant_radio_select') }}"
-          media_type: radio
+      # Never send the placeholder as a station name: Music Assistant fuzzy-matches it.
+      # 2026-09-19: "Geen favorieten gevonden" resolved to the classical "Geen dag zonder Bach"
+      # (Concertzender), which is what played when the select had been reset to the placeholder.
+      - if:
+          - condition: template
+            value_template: >-
+              {{ states('input_select.music_assistant_radio_select') not in
+                 ['Laden...', 'Geen favorieten gevonden', 'Geen zenders gevonden',
+                  'unknown', 'unavailable'] }}
+        then:
+          - action: music_assistant.play_media
+            target:
+              entity_id: media_player.esp32_s3_box_player
+            data:
+              media_id: "{{ states('input_select.music_assistant_radio_select') }}"
+              media_type: radio
+        else:
+          # No valid favourite selected: resume what the player already has loaded.
+          - action: media_player.media_play
+            target:
+              entity_id: media_player.esp32_s3_box_player
 
   - id: listen_albums_harmony_auto
     alias: "Listen to albums from Harmony hub auto"
@@ -179,21 +354,42 @@ automation:
       - action: light.turn_on
         target:
           entity_id: light.esp32_s3_box_player_backlight
-      - action: music_assistant.play_media
-        target:
-          entity_id: media_player.esp32_s3_box_player
-        data:
-          media_id: "{{ states('input_select.music_assistant_album_select') }}"
-          media_type: album
+      # Same guard as the radio activity above, for the album list.
+      - if:
+          - condition: template
+            value_template: >-
+              {{ states('input_select.music_assistant_album_select') not in
+                 ['Laden...', 'Geen favorieten gevonden', 'Geen albums gevonden',
+                  'unknown', 'unavailable'] }}
+        then:
+          - action: music_assistant.play_media
+            target:
+              entity_id: media_player.esp32_s3_box_player
+            data:
+              media_id: "{{ states('input_select.music_assistant_album_select') }}"
+              media_type: album
+        else:
+          - action: media_player.media_play
+            target:
+              entity_id: media_player.esp32_s3_box_player
 
   - id: standby_player_from_harmony_auto
     alias: "Standby player from Harmony hub auto"
+    description: >-
+      Pauses the box player and turns its backlight off as soon as the active Harmony activity is
+      no longer a listening activity. This used to trigger on PowerOff only, so switching from
+      "Listen to Radio"/"Listen to Albums" to e.g. "Watch TV" or "Watch DVD" left the player
+      running.
     triggers:
       - trigger: state
         entity_id: remote.living_room
     conditions:
+      # Anything except the two listening activities, but ignore a hub that reports no activity
+      # at all (reconnect/unknown), otherwise a hub hiccup would stop the music.
       - condition: template
-        value_template: '{{ trigger.to_state.attributes.current_activity == "PowerOff" }}'
+        value_template: >-
+          {{ (trigger.to_state.attributes.current_activity | default('unknown', true)) not in
+             ['unknown', 'unavailable', '', 'Listen to Radio', 'Listen to Albums'] }}
     actions:
       - action: light.turn_off
         target:
@@ -313,11 +509,10 @@ automation:
                         attribute: current_activity
                         state: "Listen to Radio"
                     sequence:
-                      - action: input_select.select_previous
+                      - action: script.music_assistant_step_favorite
                         data:
-                          cycle: true
-                        target:
-                          entity_id: input_select.music_assistant_radio_select
+                          kind: radio
+                          direction: previous
                   # In album mode, step to the previous album.
                   - conditions:
                       - condition: state
@@ -325,11 +520,10 @@ automation:
                         attribute: current_activity
                         state: "Listen to Albums"
                     sequence:
-                      - action: input_select.select_previous
+                      - action: script.music_assistant_step_favorite
                         data:
-                          cycle: true
-                        target:
-                          entity_id: input_select.music_assistant_album_select
+                          kind: album
+                          direction: previous
                 # Default action when there is NO radio or album activity
                 default:
                   - action: media_player.media_previous_track
@@ -349,11 +543,10 @@ automation:
                         attribute: current_activity
                         state: "Listen to Radio"
                     sequence:
-                      - action: input_select.select_next
+                      - action: script.music_assistant_step_favorite
                         data:
-                          cycle: true
-                        target:
-                          entity_id: input_select.music_assistant_radio_select 
+                          kind: radio
+                          direction: next
                   # In album mode, step to the next album.
                   - conditions:
                       - condition: state
@@ -361,11 +554,10 @@ automation:
                         attribute: current_activity
                         state: "Listen to Albums"
                     sequence:
-                      - action: input_select.select_next
+                      - action: script.music_assistant_step_favorite
                         data:
-                          cycle: true
-                        target:
-                          entity_id: input_select.music_assistant_album_select 
+                          kind: album
+                          direction: next
                 # Default action when there is NO radio or album activity
                 default:
                   - action: media_player.media_next_track
