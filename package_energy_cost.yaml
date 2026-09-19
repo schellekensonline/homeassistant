@@ -208,6 +208,9 @@ template:
       name: Electricity selling price
       unique_id: electricity_selling_price
       unit_of_measurement: "€/kWh"
+      # Keep long-term statistics for the selling price, like the buying price has. Without
+      # this the raw states disappear after purge_keep_days and price history is lost.
+      state_class: measurement
       availability: "{{ states('sensor.nord_pool_nl_current_price') | is_number }}"
       state: >
         {% set price    = states('sensor.nord_pool_nl_current_price') | float(0) %}

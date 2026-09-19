@@ -246,6 +246,10 @@ modbus:
         precision: 1
         scale: 0.1
         device_class: temperature
+        # state_class makes Home Assistant keep long-term statistics forever, instead of only
+        # the 60 days of raw states the recorder holds. The DHW/heat model needs months of
+        # tank temperature.
+        state_class: measurement
         unit_of_measurement: "°C"
 
       - name: "Therma V room temperature"
@@ -257,6 +261,9 @@ modbus:
         precision: 1
         scale: 0.1
         device_class: temperature
+        # Same reason as the DHW temperature: the house thermal model needs a whole heating
+        # season, and long-term statistics are the only history that outlives purge_keep_days.
+        state_class: measurement
         unit_of_measurement: "°C"
 
       - name: "Therma V water flow rate"
