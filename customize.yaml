@@ -1,0 +1,66 @@
+# Attribute overrides for entities that cannot carry the setting in their own YAML.
+#
+# Why this file exists: Home Assistant keeps long-term statistics (the rollups that survive the
+# recorder's `purge_keep_days`) only for entities that report a `state_class`. Integration
+# entities (Forecast.Solar) and helpers (`input_number`, `number`) cannot set that in the YAML
+# that defines them, so it is set here instead.
+#
+# Rules for this file:
+# - entities from our own packages get their `state_class` in their own definition, not here;
+# - only series that add information are listed: no mirrors of sensors that already record
+#   statistics, and no phone, tablet or vacuum sensors;
+# - statistics start at the moment this is applied, there is no retroactive history;
+# - reload with Developer tools > Actions > `homeassistant.reload_core_config` (no restart).
+
+# --- Forecast.Solar: the PV forecast ---------------------------------------------------------
+# The Sessy algorithm compares this forecast with the real production through
+# `input_number.sessy_api_strategy_pv_forecast_bias`. Without statistics the forecast history is
+# purged after 60 days, so that bias could never be checked over a season. These are forecast
+# values per hour and per day, so `measurement` is the right class - they are not cumulative
+# counters, which is why `total_increasing` would be wrong here.
+sensor.energy_current_hour_east:
+  state_class: measurement
+sensor.energy_current_hour_west:
+  state_class: measurement
+sensor.energy_next_hour_east:
+  state_class: measurement
+sensor.energy_next_hour_west:
+  state_class: measurement
+sensor.energy_production_today_east:
+  state_class: measurement
+sensor.energy_production_today_west:
+  state_class: measurement
+sensor.energy_production_today_remaining_east:
+  state_class: measurement
+sensor.energy_production_today_remaining_west:
+  state_class: measurement
+sensor.energy_production_tomorrow_east:
+  state_class: measurement
+sensor.energy_production_tomorrow_west:
+  state_class: measurement
+
+# --- Deliberately not listed here ------------------------------------------------------------
+# `number.*` and `input_number.*`: Home Assistant only compiles long-term statistics for
+#   `sensor` entities. A `state_class` added here does show up on the entity's state, but no
+#   statistics are written for it - checked on 2026-09-19 with
+#   `number.sessy_api_strategy_zom_state` and `input_number.dhw_setpoint_state`: both kept
+#   reporting zero 5-minute statistics while the Forecast.Solar sensors produced points in the
+#   same period. A mirror template sensor would work, but the rule is that the device value is
+#   the truth: `sensor.therma_v_dhw_target_temperature` already records the real DHW setpoint,
+#   and `sensor.sessy_grid_total_power` already records what the battery really does (the setpoint
+#   itself is only in the REST attributes, and only adds the tracking difference). Helpers stay without history on purpose;
+#   `input_number.dhw_setpoint_state` is only memory to put the old setpoint back after a
+#   disinfection cycle. Only mirror a helper when the device reports nothing comparable.
+# `sensor.nord_pool_nl_*` (4): the raw market-price sensors. Our own
+#   `sensor.electricity_buying_price` and `sensor.electricity_selling_price` record the same
+#   prices, already with statistics.
+# `sensor.emhass_pv_power`, `sensor.emhass_pv_forecast`, `sensor.emhass_battery_power`,
+#   `sensor.emhass_battery_soc`: template mirrors of sensors that already record statistics.
+#   Note that EMHASS reads raw history, not statistics, so this would not add anything for
+#   EMHASS itself either.
+# `sensor.emhass_price_horizon`: a diagnostic counter, not a measurement.
+# `sensor.iphone_*`, `sensor.jans_ipad_*`, `sensor.sheldon_s_*`: phone, tablet and vacuum
+#   sensors; nothing here uses them.
+# The remaining `input_number` / `number` helpers are settings (energy fees, price thresholds,
+# fan speeds, hysteresis, reserve percentages). Their history has no use for the models, so
+# they stay out of the statistics to keep the database and the backups lean.

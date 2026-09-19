@@ -61,6 +61,10 @@ homeassistant:
   customize_domain:
     switch:
       assumed_state: false
+# Attribute overrides for entities that cannot set them in their own YAML (integration
+# entities and helpers). See the comments in customize.yaml; reload with
+# homeassistant.reload_core_config, no restart needed.
+  customize: !include customize.yaml
 
 # Packages with bundles for automations
   packages:
