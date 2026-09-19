@@ -93,6 +93,20 @@ input_number:
     mode: slider
     unit_of_measurement: "%"
 
+  # Training window for the ML load model: how many days of history EMHASS retrieves when
+  # the weekly fit runs. Ramp it up as the clean history grows (7 -> 14 -> 30 -> 60). The
+  # official comparison against naive/typical (POST /action/forecast-calibration) needs at
+  # least 60 usable days and opens around 2026-10-28, because
+  # sensor.emhass_house_power_no_def_loads only has history since 2026-08-29.
+  emhass_ml_days_to_retrieve:
+    name: "EMHASS ML days to retrieve"
+    icon: mdi:calendar-range
+    min: 2
+    max: 60
+    step: 1
+    initial: 14
+    mode: box
+
 input_datetime:
   # Date the day-ahead plan was last built for successfully. Set by the day-ahead automation
   # after EMHASS answered, so the automation can retry until tomorrow's plan really exists
@@ -117,10 +131,20 @@ binary_sensor:
     timeout: 10
 
 rest_command:
-  # Train the machine-learning load forecast model on Home Assistant history.
+  # Train the machine-learning load forecast model on Home Assistant history. EMHASS reads
+  # runtime parameters from the JSON body only - query-string parameters are silently
+  # ignored - so the window and the backtest flag go in the payload. The window comes from
+  # input_number.emhass_ml_days_to_retrieve so it can grow without editing this file.
+  # Training takes a few seconds, but ask for more than the 10 second default anyway.
   emhass_fit_load_model:
-    url: "http://localhost:5000/action/forecast-model-fit?model_type=load"
+    url: "http://localhost:5000/action/forecast-model-fit"
     method: POST
+    timeout: 120
+    content_type: "application/json"
+    payload: >-
+      {"model_type": "load_forecast",
+       "historic_days_to_retrieve": {{ states('input_number.emhass_ml_days_to_retrieve') | int(14) }},
+       "perform_backtest": true}
 
   # Day-ahead optimisation over the next 24 hours; runs once a day when new prices arrive.
   emhass_dayahead_optim:
@@ -274,29 +298,66 @@ script:
         response_variable: guard_response
 
 automation:
-# Weekly ML training is disabled until the house power sensor has enough clean history.
-# Ramp historic_days_to_retrieve up gradually (2 -> 7 -> 14 -> 60) so the model only learns
-# from clean data. The load forecast method is currently "naive"; switch it to
-# "mlforecaster" once forecast-calibration shows it actually beats persistence.
+# Weekly ML training, so the model keeps up with the growing history. This only trains and
+# overwrites load_forecast_mlf.pkl; the planner keeps using load_forecast_method (currently
+# "typical") until forecast-calibration shows that "mlforecaster" really beats persistence.
+  - id: emhass_weekly_machine_learning_training_auto
+    alias: "EMHASS weekly Machine Learning training auto"
+    description: >-
+      Retrains the load forecast model weekly on Home Assistant history, over the window in
+      input_number.emhass_ml_days_to_retrieve. The R2 score of the fit lands in EMHASS's own
+      action log; the live forecast method is unchanged.
+    mode: single
+    trigger:
+      - platform: time
+        at: "01:00:00"
+    condition:
+      # Only run on Sunday night.
+      - condition: time
+        weekday:
+          - sun
+    action:
+      - action: rest_command.emhass_fit_load_model
+        data: {}
+        response_variable: fit_response
+        continue_on_error: true
+      - action: system_log.write
+        data:
+          message: >-
+            EMHASS: weekly ML load model fit ran over
+            {{ states('input_number.emhass_ml_days_to_retrieve') }} days of history
+            (HTTP {{ fit_response.status | default('no answer') }}). Check the R2 score in
+            docker/appdata/emhass/data/action_logs.txt before switching
+            load_forecast_method to mlforecaster.
+          level: info
+          logger: emhass.ml
 
-  # - id: emhass_weekly_machine_learning_training_auto
-  #   alias: "EMHASS weekly Machine Learning training auto"
-  #   description: "Retrains the load forecast model weekly on Home Assistant history."
-  #   mode: single
-  #   trigger:
-  #     - platform: time
-  #       at: "01:00:00"
-  #   condition:
-  #     # Only run on Sunday night
-  #     - condition: time
-  #       weekday:
-  #         - sun
-  #   action:
-  #     - action: rest_command.emhass_fit_load_model
-  #       data: {}
-  #     - delay:
-  #         seconds: 30
-
+  # Keep the ML training window in step with the clean history. The load sensor was broken
+  # until 2026-09-12 (mostly negative values, so the model learned nonsense), the usable
+  # history starts 2026-09-13. This grows the window by a day per day up to the 60 days the
+  # recorder keeps, and never shrinks it.
+  - id: emhass_ml_days_to_retrieve_ramp_auto
+    alias: "EMHASS ML training window ramp auto"
+    description: >-
+      Grows input_number.emhass_ml_days_to_retrieve with the clean history of the EMHASS load
+      sensor.
+    mode: single
+    trigger:
+      - platform: time
+        at: "00:05:00"
+      - platform: homeassistant
+        event: start
+    action:
+      - variables:
+          clean_days: "{{ (now().date() - as_datetime('2026-09-13').date()).days }}"
+          target: "{{ [ clean_days | int(2), 60 ] | min }}"
+      - condition: template
+        value_template: "{{ target | int(0) > states('input_number.emhass_ml_days_to_retrieve') | float(0) }}"
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.emhass_ml_days_to_retrieve
+        data:
+          value: "{{ target }}"
 
   - id: emhass_execute_mpc_optimization_auto
     alias: "EMHASS execute MPC optimization auto"
