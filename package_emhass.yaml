@@ -102,8 +102,18 @@ template:
           carnot_efficiency_heating: !secret building_carnot_efficiency_heating
           slab_heating_min_temperature: !secret building_slab_heating_min_temperature
           slab_heating_max_temperature: !secret building_slab_heating_max_temperature
+          heating_curve_slope: !secret building_heating_curve_slope
+          heating_curve_offset: !secret building_heating_curve_offset
+          heating_curve_min_supply: !secret building_heating_curve_min_supply
+          heating_curve_max_supply: !secret building_heating_curve_max_supply
+          floor_return_drop_c: !secret building_floor_return_drop_c
+          floor_min_temperature: !secret building_floor_min_temperature
+          floor_max_temperature: !secret building_floor_max_temperature
+          floor_curve_min_supply: !secret building_floor_curve_min_supply
+          floor_curve_max_supply: !secret building_floor_curve_max_supply
           cooling_supply_temperature: !secret building_supply_temperature_cooling
           cooling_target_temperature: !secret building_cooling_target_temperature
+          room_comfort_margin_c: !secret building_room_comfort_margin_c
           slab_cooling_min_temperature: !secret building_slab_cooling_min_temperature
           slab_cooling_max_temperature: !secret building_slab_cooling_max_temperature
           dhw_volume_m3: !secret building_dhw_volume_m3
@@ -138,6 +148,44 @@ input_number:
     step: 1
     initial: 14
     mode: box
+
+  # Room temperature setpoints for the thermal house model. These are the comfort values the
+  # model steers to; they are not the heat pump's water temperature (that is the actuator, and
+  # it lives on climate.therma_v_heating_cooling). The payload clamps the target into the
+  # model's band, so a value outside the band cannot make the optimisation infeasible.
+  room_setpoint_heating:
+    name: "Room setpoint heating"
+    icon: mdi:home-thermometer
+    min: 15
+    max: 24
+    step: 0.5
+    initial: 20
+    mode: box
+    unit_of_measurement: "C"
+
+  room_setpoint_cooling:
+    name: "Room setpoint cooling"
+    icon: mdi:snowflake-thermometer
+    min: 20
+    max: 30
+    step: 0.5
+    initial: 24
+    mode: box
+    unit_of_measurement: "C"
+
+  # Integrating controller knob (Jan, 2026-09-20): the offset of the heating curve is trimmed so
+  # the room lands on input_number.room_setpoint_heating. This helper carries the correction; the
+  # control loop that updates it from the room error still has to be built (nothing writes it yet).
+  # Range +-10 K around building_heating_curve_offset.
+  heating_curve_offset_correction:
+    name: "Heating curve offset correction"
+    icon: mdi:chart-bell-curve-cumulative
+    min: -10
+    max: 10
+    step: 0.5
+    initial: 0
+    mode: box
+    unit_of_measurement: "K"
 
 input_datetime:
   # Date the day-ahead plan was last built for successfully. Set by the day-ahead automation
@@ -250,7 +298,61 @@ rest_command:
       {% set igf = state_attr(ba,'internal_gains_factor') | float(0.6) %}
       {% set tau = state_attr(ba,'slab_inertia_time_constant_h') | float(2) %}
       {% set dhw_now = states('sensor.therma_v_dhw_temperature') | float(50) %}
-      {% set dhw_target = states('sensor.therma_v_dhw_target_temperature') | float(50) %}
+      {# DHW target: the setpoint of the existing DHW climate entity (register 8), so a
+         disinfection cycle that raises the target travels into the model by itself. #}
+      {% set dhw_target = state_attr('climate.therma_v_dhw','temperature')
+                          | float(0) or states('sensor.therma_v_dhw_target_temperature') | float(50) %}
+      {# Comfort bands. The start temperature is clamped into its band in the payload below:
+         EMHASS treats a start outside min/max as infeasible, which is what cost us 11 hours on
+         2026-09-20 when the DHW tank sat above its old 58 C ceiling after the disinfection. #}
+      {% set dhw_min = state_attr(ba,'dhw_min_temperature') | float(42) %}
+      {% set dhw_max = state_attr(ba,'dhw_max_temperature') | float(68) %}
+      {% set heat_min = state_attr(ba,'slab_heating_min_temperature') | float(20) %}
+      {% set heat_max = state_attr(ba,'slab_heating_max_temperature') | float(30) %}
+      {% set cool_min = state_attr(ba,'slab_cooling_min_temperature') | float(22) %}
+      {% set cool_max = state_attr(ba,'slab_cooling_max_temperature') | float(25) %}
+      {# Which season the house model should plan. The heat pump's own HVAC mode decides:
+         'cool' is the cooling season, 'heat' and 'auto' are the heating season (auto is a
+         heating curve with a delta, it never cools), 'off' means neither. The out-of-season
+         load stays in the payload with a band so wide that nothing can force it to run, so the
+         number of loads always matches what EMHASS expects. #}
+      {% set pump_mode = states('climate.therma_v_heating_cooling') %}
+      {% set heat_season = pump_mode in ['heat', 'auto'] %}
+      {% set cool_season = pump_mode == 'cool' %}
+      {% set sp_heat = states('input_number.room_setpoint_heating') | float(20) %}
+      {% set sp_cool = states('input_number.room_setpoint_cooling') | float(24) %}
+      {% set margin = state_attr(ba,'room_comfort_margin_c') | float(1) %}
+      {# Comfort window of +-1 C around the setpoint (Jan, 2026-09-20), stretched to the current
+         room temperature while the house sits outside it: the bound never forbids where the
+         house already is, so a transient cannot make the run infeasible, and the target always
+         lies inside the band by construction. #}
+      {% set cool_floor = [sp_cool - margin, room_now] | min %}
+      {% set cool_ceil  = [sp_cool + margin, room_now] | max %}
+      {# An out-of-season load cannot simply be given a wide band: EMHASS still forces it to run
+         for the building's own demand (the cooling side in particular ran 15-20 kWh a day with
+         a 5-45 C band on 2026-09-20). Parking it as a zero-draw water tank whose temperature is
+         pinned to the current room temperature really does switch it off - tested against
+         EMHASS directly, 0.0 kWh. The number of loads stays 3, which EMHASS requires. #}
+      {% set parked = ([states('sensor.therma_v_room_temperature') | float(20.5)] * n) | to_json %}
+      {# --- Floor model (Jan, 2026-09-20) ------------------------------------------------------
+         The thermal store is the FLOOR, not the room: EMHASS's slab model wants the floor
+         temperature, and our heat pump regulates the return (= floor) temperature. So the store
+         starts on the return sensor and the weather-compensated curves live on the water side:
+         `heating_curve` sets the supply temperature, `min_temperature_curve` sets the floor the
+         slab must respect, and their offset carries input_number.heating_curve_offset_correction
+         - the knob of the integrating controller that has to hold the room on its setpoint.
+         The room setpoint +-1 C is therefore no longer an EMHASS band but the controller's target. #}
+      {% set floor_now = states('sensor.therma_v_inlet_temperature') | float(room_now) %}
+      {% set curve_slope = state_attr(ba,'heating_curve_slope') | float(1.0) %}
+      {% set curve_offset = (state_attr(ba,'heating_curve_offset') | float(30))
+                            + (states('input_number.heating_curve_offset_correction') | float(0)) %}
+      {% set curve_min_supply = state_attr(ba,'heating_curve_min_supply') | float(25) %}
+      {% set curve_max_supply = state_attr(ba,'heating_curve_max_supply') | float(40) %}
+      {% set floor_drop = state_attr(ba,'floor_return_drop_c') | float(4) %}
+      {% set floor_min_abs = [state_attr(ba,'floor_min_temperature') | float(20), floor_now] | min %}
+      {% set floor_max_abs = [state_attr(ba,'floor_max_temperature') | float(28), floor_now] | max %}
+      {% set floor_curve_min = state_attr(ba,'floor_curve_min_supply') | float(22) %}
+      {% set floor_curve_max = state_attr(ba,'floor_curve_max_supply') | float(32) %}
 
       {
         "load_cost_forecast":  {{ incl_rounded | to_json }},
@@ -267,19 +369,23 @@ rest_command:
             "density": 997,
             "heat_capacity": 4.184,
             "thermal_loss": {{ state_attr(ba,'dhw_thermal_loss_kw') | float(0.19) }},
-            "start_temperature": {{ dhw_now }},
-            "min_temperatures": {{ ([state_attr(ba,'dhw_min_temperature') | float(42)] * n) | to_json }},
-            "max_temperatures": {{ ([state_attr(ba,'dhw_max_temperature') | float(58)] * n) | to_json }},
+            "start_temperature": {{ [[dhw_now, dhw_min] | max, dhw_max] | min }},
+            "min_temperatures": {{ ([dhw_min] * n) | to_json }},
+            "max_temperatures": {{ ([dhw_max] * n) | to_json }},
             "supply_temperature": {{ dhw_target }},
             "carnot_efficiency": {{ state_attr(ba,'dhw_carnot_efficiency') | float(0.42) }},
             "draw_off_demand": {{ ([0.005] * n) | to_json }}
           }},
           {"thermal_battery": {
             "volume": {{ slab }},
-            "start_temperature": {{ room_now }},
-            "min_temperatures": {{ ([state_attr(ba,'slab_heating_min_temperature') | float(20)] * n) | to_json }},
-            "max_temperatures": {{ ([state_attr(ba,'slab_heating_max_temperature') | float(30)] * n) | to_json }},
-            "supply_temperature": {{ state_attr(ba,'heating_supply_temperature') | float(32) }},
+            "start_temperature": {{ floor_now if heat_season else room_now }},
+            "min_temperatures": {{ ([floor_min_abs] * n) | to_json if heat_season else parked }},
+            "max_temperatures": {{ ([floor_max_abs] * n) | to_json if heat_season else parked }},
+            {% if heat_season %}
+            "heating_curve": {"slope": {{ curve_slope }}, "offset": {{ curve_offset }},
+                              "min_supply": {{ curve_min_supply }}, "max_supply": {{ curve_max_supply }}},
+            "min_temperature_curve": {"slope": {{ curve_slope }}, "offset": {{ curve_offset - floor_drop }},
+                                      "min_supply": {{ floor_curve_min }}, "max_supply": {{ floor_curve_max }}},
             "carnot_efficiency": {{ state_attr(ba,'carnot_efficiency_heating') | float(0.45) }},
             "u_value": {{ uval }},
             "envelope_area": {{ env }},
@@ -289,14 +395,23 @@ rest_command:
             "shgc": {{ shgc }},
             "internal_gains_factor": {{ igf }},
             "thermal_inertia_time_constant": {{ tau }},
-            "indoor_target_temperature": {{ state_attr(ba,'heating_target_temperature') | float(20.5) }},
+            "indoor_target_temperature": {{ sp_heat }},
             "sense": "heat"
+            {% else %}
+            "density": 997,
+            "heat_capacity": 4.184,
+            "thermal_loss": 0.0,
+            "supply_temperature": {{ state_attr(ba,'heating_supply_temperature') | float(32) }},
+            "carnot_efficiency": {{ state_attr(ba,'carnot_efficiency_heating') | float(0.45) }},
+            "draw_off_demand": {{ ([0.0] * n) | to_json }}
+            {% endif %}
           }},
           {"thermal_battery": {
             "volume": {{ slab }},
             "start_temperature": {{ room_now }},
-            "min_temperatures": {{ ([state_attr(ba,'slab_cooling_min_temperature') | float(16.5)] * n) | to_json }},
-            "max_temperatures": {{ ([state_attr(ba,'slab_cooling_max_temperature') | float(24)] * n) | to_json }},
+            "min_temperatures": {{ ([cool_floor] * n) | to_json if cool_season else parked }},
+            "max_temperatures": {{ ([cool_ceil] * n) | to_json if cool_season else parked }},
+            {% if cool_season %}
             "supply_temperature": {{ state_attr(ba,'cooling_supply_temperature') | float(16) }},
             "carnot_efficiency": {{ state_attr(ba,'carnot_efficiency_heating') | float(0.45) }},
             "u_value": {{ uval }},
@@ -307,8 +422,16 @@ rest_command:
             "shgc": {{ shgc }},
             "internal_gains_factor": {{ igf }},
             "thermal_inertia_time_constant": {{ tau }},
-            "indoor_target_temperature": {{ state_attr(ba,'cooling_target_temperature') | float(24) }},
+            "indoor_target_temperature": {{ sp_cool }},
             "sense": "cool"
+            {% else %}
+            "density": 997,
+            "heat_capacity": 4.184,
+            "thermal_loss": 0.0,
+            "supply_temperature": {{ state_attr(ba,'cooling_supply_temperature') | float(16) }},
+            "carnot_efficiency": {{ state_attr(ba,'carnot_efficiency_heating') | float(0.45) }},
+            "draw_off_demand": {{ ([0.0] * n) | to_json }}
+            {% endif %}
           }}
         ]
       }
