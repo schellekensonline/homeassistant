@@ -1,0 +1,93 @@
+# EMHASS MPC watchdog (2026-09-26).
+#
+# Why: `sensor.optim_status` changed exactly once in the week of 19-09 (to "Optimal") while the
+# MPC published nothing for 11.5 hours on 20-09 and 45-53 minutes on three nights (21-09 twice,
+# 25-09 once). The status sensor cannot see a failed or skipped run; the *age* of the published
+# forecast can, because every completed run publishes sensor.p_load_forecast.
+#
+# This package adds:
+#   - sensor.emhass_forecast_age: minutes since the last publication,
+#   - binary_sensor.emhass_forecast_fresh: on while that is under 35 minutes (two missed cycles),
+#   - two automations: an alert when it goes stale and an all-clear when it recovers.
+#
+# The alert mentions whether EMHASS itself is reachable, because "the planner is down" and "the
+# planner runs but keeps failing" need different follow-up. The fallback retry without the thermal
+# models lives in package_emhass.yaml, in the MPC automation itself.
+
+template:
+  - sensor:
+      - name: "EMHASS forecast age"
+        unique_id: emhass_forecast_age
+        unit_of_measurement: "min"
+        state_class: measurement
+        state: >-
+          {% set s = states['sensor.p_load_forecast'] | default(none) %}
+          {% if s is none %}unknown
+          {% else %}{{ ((now() - s.last_updated).total_seconds() / 60) | round(0) }}{% endif %}
+  - binary_sensor:
+      - name: "EMHASS forecast fresh"
+        unique_id: emhass_forecast_fresh
+        state: >-
+          {% set s = states['sensor.p_load_forecast'] | default(none) %}
+          {% if s is none %}unknown
+          {% else %}{{ (now() - s.last_updated) < timedelta(minutes=35) }}{% endif %}
+        delay_off: "00:05:00"
+
+automation:
+  - id: emhass_watchdog_stale
+    alias: "EMHASS watchdog: no fresh forecast"
+    description: "The MPC has not published a plan for over 35 minutes"
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.emhass_forecast_fresh
+        to: "off"
+        for: "00:10:00"
+    actions:
+      - variables:
+          age: "{{ states('sensor.emhass_forecast_age') }}"
+          online: "{{ states('binary_sensor.emhass_online') }}"
+          status: "{{ states('sensor.optim_status') }}"
+      - action: persistent_notification.create
+        data:
+          title: "EMHASS publiceert niet meer"
+          notification_id: emhass_stale
+          message: >-
+            De laatste MPC-publicatie is {{ age }} minuten oud (verwacht: elke 15 minuten).
+            EMHASS online: {{ online }}, laatste optim_status: {{ status }}.
+            Bekende gevallen: een onmogelijke constraint (20-09, DHW-band) of de nachtelijke
+            runs rond 01:00-03:00 - zie de notities bij "How runs fail".
+      - action: notify.mobile_app_iphone_jan
+        data:
+          title: "EMHASS publiceert niet meer"
+          message: >-
+            Laatste plan is {{ age }} minuten oud, EMHASS online: {{ online }}.
+      - action: logbook.log
+        data:
+          name: EMHASS
+          message: >-
+            no fresh forecast for {{ age }} min (online={{ online }}, status={{ status }})
+
+  - id: emhass_watchdog_recovered
+    alias: "EMHASS watchdog: fresh again"
+    description: "The MPC is publishing again after a gap"
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.emhass_forecast_fresh
+        from: "off"
+        to: "on"
+    actions:
+      - variables:
+          minutes: "{{ ((now() - trigger.from_state.last_changed).total_seconds() / 60) | round(0) }}"
+      - action: persistent_notification.dismiss
+        data:
+          notification_id: emhass_stale
+      - action: notify.mobile_app_iphone_jan
+        data:
+          title: "EMHASS publiceert weer"
+          message: "Er is weer een vers plan, na {{ minutes }} minuten zonder publicaties."
+      - action: logbook.log
+        data:
+          name: EMHASS
+          message: "fresh forecast again after {{ minutes }} min"

@@ -1,0 +1,159 @@
+# Sessy watchdog and firmware watch (2026-09-26).
+#
+# Why: the Sessy REST sensors drop out for tens of minutes to hours at a time (2026-09-23: 161,
+# 82 and 50 minutes, with 11:00 and 12:00 missing entirely). This is a development prototype, so
+# the device may be flashing new firmware or crash; Jan wants to know when that happens so he can
+# report it back to the Sessy developers.
+#
+# This adds two slow REST sensors (firmware + software version), a binary sensor that says
+# whether the API answers (derived from the existing 15 s power sensor, so no extra requests) and
+# four automations: API down, API back (with duration), firmware changed, OTA active.
+# Notifications go to Jan's phone and to a persistent notification, so there is always a record.
+
+sensor:
+  - platform: rest
+    name: "Sessy firmware"
+    unique_id: sessy_firmware_version
+    resource: !secret sessy_url_ota_status
+    value_template: "{{ value_json.self.installed_firmware.version }}"
+    json_attributes:
+      - self
+      - serial
+    scan_interval: 1800
+    timeout: 15
+  - platform: rest
+    name: "Sessy software"
+    unique_id: sessy_software_version
+    resource: !secret sessy_url_system_info
+    value_template: "{{ value_json.version }}"
+    json_attributes:
+      - self_revision
+      - cores
+      - external_mem_available
+    scan_interval: 1800
+    timeout: 15
+
+template:
+  - binary_sensor:
+      - name: "Sessy API bereikbaar"
+        unique_id: sessy_api_reachable
+        device_class: connectivity
+        state: >-
+          {{ states('sensor.sessy_power_status_data') not in ['unknown', 'unavailable', 'none', ''] }}
+        delay_on: "00:00:30"
+        delay_off: "00:02:00"
+
+automation:
+  - id: sessy_api_unreachable_alert
+    alias: "Sessy API unreachable"
+    description: "Notify when the Sessy stops answering, so it can be reported to the developers"
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.sessy_api_bereikbaar
+        to: "off"
+    actions:
+      - action: persistent_notification.create
+        data:
+          title: "Sessy niet bereikbaar"
+          notification_id: sessy_api_down
+          message: >-
+            De Sessy-API antwoordt niet meer sinds {{ now().strftime('%d-%m %H:%M') }}.
+            Firmware op dat moment: {{ states('sensor.sessy_firmware') }}.
+      - action: notify.mobile_app_iphone_jan
+        data:
+          title: "Sessy niet bereikbaar"
+          message: >-
+            Sessy antwoordt niet sinds {{ now().strftime('%H:%M') }}
+            (firmware {{ states('sensor.sessy_firmware') }})
+      - action: logbook.log
+        data:
+          name: Sessy
+          message: >-
+            API unreachable since {{ now().strftime('%Y-%m-%d %H:%M') }},
+            firmware {{ states('sensor.sessy_firmware') }}
+
+  - id: sessy_api_back_alert
+    alias: "Sessy API back"
+    description: "Report the outage length and the firmware it came back on"
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.sessy_api_bereikbaar
+        from: "off"
+        to: "on"
+    actions:
+      - variables:
+          down_since: "{{ trigger.from_state.last_changed }}"
+          minutes: "{{ ((now() - trigger.from_state.last_changed).total_seconds() / 60) | round(0) }}"
+      - action: persistent_notification.dismiss
+        data:
+          notification_id: sessy_api_down
+      - action: persistent_notification.create
+        data:
+          title: "Sessy weer bereikbaar"
+          notification_id: sessy_api_up
+          message: >-
+            De Sessy antwoordt weer. Storing duurde {{ minutes }} minuten
+            (van {{ down_since.strftime('%d-%m %H:%M') }} tot {{ now().strftime('%d-%m %H:%M') }}).
+            Firmware nu: {{ states('sensor.sessy_firmware') }} ({{ states('sensor.sessy_software') }}).
+      - action: notify.mobile_app_iphone_jan
+        data:
+          title: "Sessy weer bereikbaar"
+          message: >-
+            Storing duurde {{ minutes }} minuten, firmware {{ states('sensor.sessy_firmware') }}
+      - action: logbook.log
+        data:
+          name: Sessy
+          message: >-
+            API back after {{ minutes }} minutes
+            ({{ down_since.strftime('%Y-%m-%d %H:%M') }} .. {{ now().strftime('%Y-%m-%d %H:%M') }}),
+            firmware {{ states('sensor.sessy_firmware') }}
+
+  - id: sessy_firmware_changed_alert
+    alias: "Sessy firmware changed"
+    description: "A firmware update was pushed or rolled back - worth reporting"
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: sensor.sessy_firmware
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ trigger.from_state.state not in ['unknown', 'unavailable', 'none', '']
+             and trigger.to_state.state not in ['unknown', 'unavailable', 'none', '']
+             and trigger.from_state.state != trigger.to_state.state }}
+    actions:
+      - action: notify.mobile_app_iphone_jan
+        data:
+          title: "Sessy firmware gewijzigd"
+          message: >-
+            Van {{ trigger.from_state.state }} naar {{ trigger.to_state.state }}
+            ({{ now().strftime('%d-%m %H:%M') }})
+      - action: logbook.log
+        data:
+          name: Sessy
+          message: >-
+            Firmware changed from {{ trigger.from_state.state }} to {{ trigger.to_state.state }}
+            at {{ now().strftime('%Y-%m-%d %H:%M') }}
+
+  - id: sessy_ota_active_alert
+    alias: "Sessy OTA active"
+    description: "Firmware update in progress on the Sessy"
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: sensor.sessy_firmware
+        attribute: self
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ state_attr('sensor.sessy_firmware', 'self') is mapping
+             and state_attr('sensor.sessy_firmware', 'self').get('state', 'OTA_INACTIVE') != 'OTA_INACTIVE' }}
+    actions:
+      - action: notify.mobile_app_iphone_jan
+        data:
+          title: "Sessy firmware-update"
+          message: >-
+            OTA-status: {{ state_attr('sensor.sessy_firmware', 'self').get('state') }}
+            ({{ state_attr('sensor.sessy_firmware', 'self').get('update_progress') }}%)

@@ -87,4 +87,6 @@ homeassistant:
     sessy_sensors_pack:         !include package_sessy_sensors.yaml
     sessy_commands_pack:        !include package_sessy_commands.yaml
     sessy_algorithms_pack:      !include package_sessy_algorithms.yaml
+    sessy_monitor_pack:         !include package_sessy_monitor.yaml
     emhass_pack:                !include package_emhass.yaml
+    emhass_watchdog_pack:       !include package_emhass_watchdog.yaml
