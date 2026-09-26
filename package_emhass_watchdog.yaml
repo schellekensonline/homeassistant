@@ -55,8 +55,9 @@ automation:
           message: >-
             De laatste MPC-publicatie is {{ age }} minuten oud (verwacht: elke 15 minuten).
             EMHASS online: {{ online }}, laatste optim_status: {{ status }}.
-            Bekende gevallen: een onmogelijke constraint (20-09, DHW-band) of de nachtelijke
-            runs rond 01:00-03:00 - zie de notities bij "How runs fail".
+            Bekende gevallen: een onmogelijke constraint (20-09, DHW-band), de nachtelijke gaten
+            rond 03:00-05:15 (21-09 en 25-09, vermoedelijk containerupdates) of een EMHASS die
+            zelf niet antwoordt - zie de notities bij "How runs fail".
       - action: notify.mobile_app_iphone_jan
         data:
           title: "EMHASS publiceert niet meer"
