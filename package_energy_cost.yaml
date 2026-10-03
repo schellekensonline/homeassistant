@@ -230,15 +230,29 @@ template:
              else [] %}
           {% set fresh = today + tomorrow %}
           {# Build from a fresh fetch when there is one; on a failed fetch keep the last
-             known list untouched instead of re-parsing it with the raw-price keys. #}
+             known list untouched instead of re-parsing it with the raw-price keys.
+             A *partial* fetch happens too (2026-10-03 14:00: today came back, tomorrow did not,
+             and the rebuild silently dropped tomorrow - which then starves the MPC horizon and
+             the 23:50 day-plan run), so keep the future quarters we already had that the fresh
+             fetch does not mention. Day-ahead prices for a quarter do not change once published,
+             so re-using them is safe; anything in the past is dropped so the list stays bounded. #}
           {% if fresh | count > 0 %}
-            {% set ns = namespace(list=[]) %}
+            {% set ns = namespace(list=[], times=[]) %}
             {% for entry in fresh %}
               {% set start = entry.get('start') if entry is mapping else none %}
               {% if start is not none %}
                 {% set time  = (start | as_datetime | as_local).isoformat() %}
                 {% set price = (((entry.get('price', 0) | float(0)) / 1000) + sell_fee) * (1 + VAT) %}
                 {% set ns.list = ns.list + [{'time': time, 'price': price}] %}
+                {% set ns.times = ns.times + [time] %}
+              {% endif %}
+            {% endfor %}
+            {% for entry in previous %}
+              {% set time = entry.get('time') if entry is mapping else none %}
+              {% if time is not none and time not in ns.times
+                    and (time | as_datetime) > now() %}
+                {% set ns.list = ns.list + [{'time': time, 'price': entry.get('price')}] %}
+                {% set ns.times = ns.times + [time] %}
               {% endif %}
             {% endfor %}
             {{ ns.list }}
