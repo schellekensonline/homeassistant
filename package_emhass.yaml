@@ -963,14 +963,10 @@ automation:
       The 23:55 check reports when the day's plan is still missing.
     mode: single
     trigger:
-      # The scheduled run: right after the 23:45 MPC, so the plan starts at that quarter and covers
-      # the coming day. Jan's design (2026-10-03): the day-ahead runs when the new prices are in,
-      # which by then they are (they arrive ~13:00), and always before 00:00.
-      - platform: time
-        at: "23:50:00"
-        id: "einde_dag"
-      # A couple of retries inside the same window, in case EMHASS is busy or just restarted. The
-      # condition keeps them to 23:45-23:59 and stops them once the plan is in.
+      # The scheduled run: after the 23:45 MPC has published, so the plan starts at 23:45, covers
+      # the coming day, and never runs at the same instant as an MPC run (the condition below keeps
+      # it out of the 23:45:00 slot). Jan's design (2026-10-03): the day-ahead runs when the new
+      # prices are in - which by then they are, they arrive ~13:00 - and always before 00:00.
       - platform: time_pattern
         hours: "23"
         minutes: "/5"
@@ -997,7 +993,10 @@ automation:
           {% set marker = states('input_datetime.emhass_dayahead_plan_date') %}
           {% set today = now().date().isoformat() %}
           {% if trigger.id | default('') in ['einde_dag', 'retry'] %}
-            {{ now().minute >= 45
+            {# Not before 23:50: the 23:45 MPC is still running at 23:45:00, and two EMHASS
+               optimisations at once is the collision class from 2026-09-13. The window is still
+               wide enough for a retry at 23:55. #}
+            {{ now().minute >= 50
                and marker != today
                and state_attr('sensor.emhass_price_horizon', 'covers_tomorrow') | bool(false) }}
           {% elif trigger.id | default('') == '' %}

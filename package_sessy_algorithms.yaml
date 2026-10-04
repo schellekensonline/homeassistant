@@ -1,23 +1,4 @@
 template:
-  - switch:
-      - name: "Sessy Auto API strategy enable"
-        unique_id: sessy_auto_api_strategy_enable
-        turn_on:
-          - action: input_select.select_option
-            target:
-              entity_id: input_select.sessy_strategy
-            data:
-              option: "POWER_STRATEGY_API"
-        turn_off:
-          - action: input_select.select_option
-            target:
-              entity_id: input_select.sessy_api_strategy
-            data:
-              option: "Manual"
-          - action: script.sessy_set_power
-            data:
-              setpoint: "{{ 0 | int }}"
-
   - number:
       - name: "Sessy API strategy zom state"  # State of ZoM integration algorithm
         unique_id: sessy_api_strategy_zom_state
@@ -278,6 +259,23 @@ template:
               
 
 input_select:
+  # Who picks the API strategy automatically (2026-10-04, replaces
+  # switch.sessy_auto_api_strategy_enable). sessy_api_strategy stays leading: this only decides
+  # whether the heuristic picks that item for you.
+  #   Off      - no automatic picking: whatever sessy_api_strategy holds is used (Manual = you
+  #              drive it with the setpoint slider, or one of the ZoM/proportional items);
+  #   Heuristic- the price/surplus selector writes the item (the old switch-on behaviour);
+  #   EMHASS   - reserved for the EMHASS plan; until that actuator exists this mode keeps the
+  #              battery at 0 and logs it, so it can never leave a stale setpoint running.
+  sessy_auto_api_control_strategy:
+    name: "Sessy auto API control strategy"
+    icon: mdi:auto-mode
+    options:
+      - "Off"
+      - "Heuristic"
+      - "EMHASS"
+    # initial: "Heuristic"
+
   sessy_api_strategy:
     name: "Sessy API Strategy"
     icon: mdi:battery-cog
@@ -468,7 +466,9 @@ automation:
       - condition: template
         value_template: "{{ is_state('input_select.sessy_strategy','POWER_STRATEGY_API') }}"
       - condition: template
-        value_template: "{{ is_state('switch.sessy_auto_api_strategy_enable','on') }}"
+        # Only the Heuristic mode picks the API strategy for you; Off leaves your own choice in
+        # sessy_api_strategy alone and EMHASS has its own controller (2026-10-04).
+        value_template: "{{ is_state('input_select.sessy_auto_api_control_strategy','Heuristic') }}"
     actions:
       - action: input_select.select_option
         target:
@@ -570,7 +570,11 @@ automation:
         entity_id: sensor.p1_meter_3c39e72e6af0_active_power
     conditions:
       - condition: template
-        value_template: "{{ not is_state('input_select.sessy_api_strategy','Manual') }}"
+        # Manual writes 0, so the setpoint slider is the only writer then; EMHASS belongs to the
+        # plan-driven controller (2026-10-04), so the heuristic stays away from the device there.
+        value_template: >-
+          {{ not is_state('input_select.sessy_api_strategy','Manual')
+             and not is_state('input_select.sessy_auto_api_control_strategy','EMHASS') }}
       - condition: template
         value_template: "{{ is_state('input_select.sessy_strategy','POWER_STRATEGY_API') }}"
     actions:
@@ -638,6 +642,38 @@ automation:
               {{ 0 | int }}
             {% endif %}
 
+
+  # EMHASS mode is reserved for the plan-driven controller, which does not exist yet (the items in
+  # sessy_api_strategy for it still have to be designed with Jan). Selecting it must not leave the
+  # last setpoint running - the Sessy would happily keep charging or discharging - so it goes to
+  # 0 W and says so once in the log (2026-10-04).
+  - id: sessy_emhass_mode_idle_auto
+    alias: "Sessy EMHASS mode idle auto"
+    description: "Holds the battery at 0 while EMHASS control is selected but not built yet"
+    mode: restart
+    triggers:
+      - trigger: state
+        entity_id: input_select.sessy_auto_api_control_strategy
+        to: "EMHASS"
+    actions:
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.sessy_power_setpoint
+        data:
+          value: 0
+      - action: script.sessy_set_power_distributed
+        data:
+          setpoint_l1: 0
+          setpoint_l2: 0
+          setpoint_l3: 0
+      - action: system_log.write
+        data:
+          message: >-
+            Sessy control switched to EMHASS, but the EMHASS actuator is not built yet: the
+            setpoint is held at 0 W so no stale setpoint keeps running. Use Heuristic (our
+            algorithm) or Off (your own choice in sessy_api_strategy).
+          level: warning
+          logger: sessy.mode
 
   # Keeps tomorrow's PV forecast in a helper. After sunset (and around midnight, when the
   # "today remaining" sensors still read 0) that value is the PV that is actually still to come,
