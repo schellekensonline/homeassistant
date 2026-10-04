@@ -686,9 +686,22 @@ automation:
   # The deadband decides what counts as "~ 0". Anywhere else - Off, Heuristic, or a stale plan -
   # the floor is 0, so the ZoM items behave as they always did; a stale plan also resets the item to
   # plain ZoM once, so nothing from the plan lingers.
-  - id: sessy_emhass_zom_floor_auto
-    alias: "Sessy EMHASS ZoM floor auto"
-    description: "Picks the ZoM item and the power floor from the EMHASS plan's intent"
+  # The mode layer (Jan's design, 2026-10-04). Two jobs:
+  #  1. handover - our layer needs the Sessy in API mode, so any mode change puts it there (the old
+  #     enable switch did the same). Off is hand control: item Manual and the setpoint at 0, so the
+  #     last automatic setpoint cannot keep running. Heuristic asks the price selector for its item
+  #     right away instead of at its next 30-minute run. EMHASS is left to the plan logic below.
+  #  2. the EMHASS intent - the plan picks the ZoM item and the power floor from two signals, the
+  #     planned battery power and the planned grid flow (p_grid_forecast is the plan's own balance,
+  #     so "charging without importing" means PV):
+  #       battery ~ 0                     -> Zero on Meter,         floor 0 (cover the house)
+  #       discharging and exporting       -> Zero on Meter Support, floor = P_batt (sell)
+  #       charging and importing          -> Zero on Meter Charge,  floor = P_batt (buy)
+  #       charging without importing (PV) -> Zero on Meter,         floor 0 (take the surplus only)
+  #     with the deadband deciding what counts as "~ 0".
+  - id: sessy_api_control_mode_auto
+    alias: "Sessy API control mode auto"
+    description: "Hands the battery over per control mode and feeds the EMHASS plan's intent"
     mode: restart
     triggers:
       - trigger: state
@@ -705,6 +718,7 @@ automation:
         id: "floor"
     actions:
       - variables:
+          mode: "{{ states('input_select.sessy_auto_api_control_strategy') }}"
           on_emhass: "{{ is_state('input_select.sessy_auto_api_control_strategy','EMHASS') }}"
           fresh: "{{ is_state('binary_sensor.emhass_forecast_fresh','on') }}"
           band: "{{ states('input_number.sessy_emhass_mode_deadband') | float(250) }}"
@@ -712,6 +726,39 @@ automation:
           grid: "{{ states('sensor.p_grid_forecast') | float(0) }}"
           sell: "{{ batt > band and grid < -band }}"
           buy: "{{ batt < -band and grid > band }}"
+      # Handover when the dropdown changes.
+      - if:
+          - condition: template
+            value_template: "{{ trigger.id | default('') == 'mode' }}"
+        then:
+          - action: input_select.select_option
+            target:
+              entity_id: input_select.sessy_strategy
+            data:
+              option: "POWER_STRATEGY_API"
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ mode == 'Off' }}"
+                sequence:
+                  - action: input_select.select_option
+                    target:
+                      entity_id: input_select.sessy_api_strategy
+                    data:
+                      option: "Manual"
+                  # Let the API switch land, then take the setpoint to 0 so what ran before the
+                  # handover cannot keep going.
+                  - delay: "00:00:02"
+                  - action: script.sessy_set_power
+                    data:
+                      setpoint: 0
+              - conditions:
+                  - condition: template
+                    value_template: "{{ mode == 'Heuristic' }}"
+                sequence:
+                  - action: automation.trigger
+                    target:
+                      entity_id: automation.sessy_automatic_api_strategy_auto
       # Outside EMHASS the floor is not a control at all: any write (by hand, or a leftover from a
       # previous session) is put back to 0 right away, so the helper is only ever non-zero while
       # EMHASS is in charge. Inside EMHASS the plan owns it: a value written by hand is replaced by
@@ -726,9 +773,8 @@ automation:
             data:
               value: 0
           - stop: "floor zeroed outside EMHASS"
-      # The item is only ours while EMHASS is in charge; when the dropdown moves away from EMHASS
-      # we hand it back once with the neutral item (the heuristic's own selector takes over on its
-      # next run), and we leave it alone on every other trigger.
+      # The item is only ours while EMHASS is in charge. In Heuristic the price selector owns it, in
+      # Off the user does (Manual), so we leave it alone there.
       - if:
           - condition: template
             value_template: "{{ on_emhass }}"
@@ -742,16 +788,6 @@ automation:
                 {% elif sell %}Zero on Meter Support
                 {% elif buy %}Zero on Meter Charge
                 {% else %}Zero on Meter{% endif %}
-        else:
-          - if:
-              - condition: template
-                value_template: "{{ trigger.id | default('') == 'mode' }}"
-            then:
-              - action: input_select.select_option
-                target:
-                  entity_id: input_select.sessy_api_strategy
-                data:
-                  option: "Zero on Meter"
       - action: input_number.set_value
         target:
           entity_id: input_number.sessy_zom_power_floor
