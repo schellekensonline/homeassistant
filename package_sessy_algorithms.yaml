@@ -288,6 +288,34 @@ input_select:
       - "Proportional Charge"
 
 input_number:
+  # Deadband for the EMHASS mode choice (2026-10-04): inside this band around 0 the plan counts as
+  # "just covering the house" (plain ZoM, floor 0) instead of buying or selling. The plan's numbers
+  # are never exactly zero, and without a band the mode would flip every quarter hour.
+  sessy_emhass_mode_deadband:
+    name: "Sessy EMHASS mode deadband"
+    icon: mdi:approximately-equal
+    min: 0
+    max: 2000
+    step: 10
+    unit_of_measurement: W
+    mode: box
+    initial: 250
+
+  # The floor EMHASS asks for in the current quarter, in W (+ = discharge, the same sign as P_batt
+  # and the Sessy setpoint). Jan's design (2026-10-04): the automation below copies the plan's
+  # value in here while the control strategy is EMHASS and puts it back to 0 otherwise, so a value
+  # from an earlier session can never linger. The three ZoM items take it into their min/max maths:
+  # the plan sets the floor, ZoM may go further when the house or the surplus asks for it.
+  sessy_zom_power_floor:
+    name: "Sessy ZoM power floor"
+    icon: mdi:battery-sync
+    min: -6000
+    max: 6000
+    step: 1
+    unit_of_measurement: W
+    mode: box
+    initial: 0
+
   # FOR AUTO API STRATEGY 
   sessy_auto_api_strategy_buy_pct: # e-price percent to start proportional charging (solar / buying)
     name: "Sessy API buy threshold (Price %)"
@@ -406,7 +434,7 @@ input_number:
     min: 0
     max: 1000000 # Ridiculously large value
     step: 1
-    initial: 1500 # 10% of nom_power for switching logic
+    initial: 1500 # nom_power inverter for switching logic
     mode: box
     unit_of_measurement: "W"
   sessy_api_strategy_inverter_hysteresis_power:
@@ -570,11 +598,10 @@ automation:
         entity_id: sensor.p1_meter_3c39e72e6af0_active_power
     conditions:
       - condition: template
-        # Manual writes 0, so the setpoint slider is the only writer then; EMHASS belongs to the
-        # plan-driven controller (2026-10-04), so the heuristic stays away from the device there.
-        value_template: >-
-          {{ not is_state('input_select.sessy_api_strategy','Manual')
-             and not is_state('input_select.sessy_auto_api_control_strategy','EMHASS') }}
+        # Manual writes 0, so the setpoint slider is the only writer then. In EMHASS mode this
+        # layer keeps running on purpose: it is the ZoM part that executes the plan's wish
+        # (input_number.sessy_zom_power_floor) - see the EMHASS automation below.
+        value_template: "{{ not is_state('input_select.sessy_api_strategy','Manual') }}"
       - condition: template
         value_template: "{{ is_state('input_select.sessy_strategy','POWER_STRATEGY_API') }}"
     actions:
@@ -605,16 +632,22 @@ automation:
             {% set zom           = min(max(zom_state + (zom_gain*p1_power), -max_charge_power), max_discharge_power) %}
             {% set zom_discharge = max(zom, 0) %}
             {% set zom_charge    = min(zom, 0) %}
-            
+            {# The floor EMHASS asks for this quarter, 0 outside EMHASS mode: with it the plan sets
+               a floor in the direction it wants, and the house may still pull more out of the pack
+               (Jan, 2026-10-04). Zero keeps every mode exactly as it was. #}
+            {% set zom_floor     = states('input_number.sessy_zom_power_floor') | float(0) %}
+            {% set zom_planned   = max(zom_discharge, zom_floor) if zom_floor > 0
+                                   else (min(zom_charge, zom_floor) if zom_floor < 0 else zom) %}
+
             {# 4. Strategy selection and calculation #}
             {% if strategy == 'Zero on Meter' %}
-                {{ zom | int }} 
+                {{ zom_planned | int }}
 
             {% elif strategy == 'Zero on Meter Support' %}
-              {{ zom_discharge | int }} {# no charging for high energy prices #}
+              {{ max(zom_discharge, zom_floor) | int }} {# no charging for high energy prices #}
 
             {% elif strategy == 'Zero on Meter Charge' %}
-              {{ zom_charge | int }} {# no discharging for low energy prices #}
+              {{ min(zom_charge, zom_floor) | int }} {# no discharging for low energy prices #}
 
             {% elif strategy == 'Proportional Charge' %}
             {# Buys energy or absorbs PV: never charges above soc_target, the level that is useful
@@ -643,37 +676,87 @@ automation:
             {% endif %}
 
 
-  # EMHASS mode is reserved for the plan-driven controller, which does not exist yet (the items in
-  # sessy_api_strategy for it still have to be designed with Jan). Selecting it must not leave the
-  # last setpoint running - the Sessy would happily keep charging or discharging - so it goes to
-  # 0 W and says so once in the log (2026-10-04).
-  - id: sessy_emhass_mode_idle_auto
-    alias: "Sessy EMHASS mode idle auto"
-    description: "Holds the battery at 0 while EMHASS control is selected but not built yet"
+  # EMHASS mode (Jan's design, 2026-10-04): the plan's intent for this quarter picks both the ZoM
+  # item and the floor, from two signals - the planned battery power and the planned grid flow
+  # (p_grid_forecast is the plan's own balance, so "charging without importing" means PV):
+  #   battery ~ 0                     -> Zero on Meter,        floor 0  (cover the house)
+  #   discharging and exporting       -> Zero on Meter Support, floor = P_batt (sell at least that)
+  #   charging and importing          -> Zero on Meter Charge,  floor = P_batt (buy at least that)
+  #   charging without importing (PV) -> Zero on Meter,        floor 0  (only take the surplus)
+  # The deadband decides what counts as "~ 0". Anywhere else - Off, Heuristic, or a stale plan -
+  # the floor is 0, so the ZoM items behave as they always did; a stale plan also resets the item to
+  # plain ZoM once, so nothing from the plan lingers.
+  - id: sessy_emhass_zom_floor_auto
+    alias: "Sessy EMHASS ZoM floor auto"
+    description: "Picks the ZoM item and the power floor from the EMHASS plan's intent"
     mode: restart
     triggers:
       - trigger: state
         entity_id: input_select.sessy_auto_api_control_strategy
-        to: "EMHASS"
+        id: "mode"
+      - trigger: state
+        entity_id: sensor.p_batt_forecast
+      - trigger: state
+        entity_id: sensor.p_grid_forecast
+      - trigger: state
+        entity_id: binary_sensor.emhass_forecast_fresh
+      - trigger: state
+        entity_id: input_number.sessy_zom_power_floor
+        id: "floor"
     actions:
+      - variables:
+          on_emhass: "{{ is_state('input_select.sessy_auto_api_control_strategy','EMHASS') }}"
+          fresh: "{{ is_state('binary_sensor.emhass_forecast_fresh','on') }}"
+          band: "{{ states('input_number.sessy_emhass_mode_deadband') | float(250) }}"
+          batt: "{{ states('sensor.p_batt_forecast') | float(0) }}"
+          grid: "{{ states('sensor.p_grid_forecast') | float(0) }}"
+          sell: "{{ batt > band and grid < -band }}"
+          buy: "{{ batt < -band and grid > band }}"
+      # Outside EMHASS the floor is not a control at all: any write (by hand, or a leftover from a
+      # previous session) is put back to 0 right away, so the helper is only ever non-zero while
+      # EMHASS is in charge. Inside EMHASS the plan owns it: a value written by hand is replaced by
+      # the plan's value (or 0) on the next run, which is seconds later (2026-10-04).
+      - if:
+          - condition: template
+            value_template: "{{ trigger.id | default('') == 'floor' and not on_emhass }}"
+        then:
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.sessy_zom_power_floor
+            data:
+              value: 0
+          - stop: "floor zeroed outside EMHASS"
+      # The item is only ours while EMHASS is in charge; when the dropdown moves away from EMHASS
+      # we hand it back once with the neutral item (the heuristic's own selector takes over on its
+      # next run), and we leave it alone on every other trigger.
+      - if:
+          - condition: template
+            value_template: "{{ on_emhass }}"
+        then:
+          - action: input_select.select_option
+            target:
+              entity_id: input_select.sessy_api_strategy
+            data:
+              option: >-
+                {% if not fresh %}Zero on Meter
+                {% elif sell %}Zero on Meter Support
+                {% elif buy %}Zero on Meter Charge
+                {% else %}Zero on Meter{% endif %}
+        else:
+          - if:
+              - condition: template
+                value_template: "{{ trigger.id | default('') == 'mode' }}"
+            then:
+              - action: input_select.select_option
+                target:
+                  entity_id: input_select.sessy_api_strategy
+                data:
+                  option: "Zero on Meter"
       - action: input_number.set_value
         target:
-          entity_id: input_number.sessy_power_setpoint
+          entity_id: input_number.sessy_zom_power_floor
         data:
-          value: 0
-      - action: script.sessy_set_power_distributed
-        data:
-          setpoint_l1: 0
-          setpoint_l2: 0
-          setpoint_l3: 0
-      - action: system_log.write
-        data:
-          message: >-
-            Sessy control switched to EMHASS, but the EMHASS actuator is not built yet: the
-            setpoint is held at 0 W so no stale setpoint keeps running. Use Heuristic (our
-            algorithm) or Off (your own choice in sessy_api_strategy).
-          level: warning
-          logger: sessy.mode
+          value: "{{ (batt | round(0)) if (on_emhass and fresh and (sell or buy)) else 0 }}"
 
   # Keeps tomorrow's PV forecast in a helper. After sunset (and around midnight, when the
   # "today remaining" sensors still read 0) that value is the PV that is actually still to come,
