@@ -169,18 +169,6 @@ template:
           dhw_max_temperature: !secret building_dhw_max_temperature
 
 input_number:
-  # Target SoC at the end of the optimisation horizon. Passed to EMHASS via REST
-  # instead of config.json, so it can be adjusted without restarting the container.
-  emhass_soc_target:
-    name: "EMHASS battery SoC target"
-    icon: mdi:battery-charging-60
-    min: 0
-    max: 100
-    step: 1
-    initial: 60
-    mode: slider
-    unit_of_measurement: "%"
-
   # Training window for the ML load model: how many days of history EMHASS retrieves when
   # the weekly fit runs. Ramp it up as the clean history grows (7 -> 14 -> 30 -> 60). The
   # official comparison against naive/typical (POST /action/forecast-calibration) needs at
