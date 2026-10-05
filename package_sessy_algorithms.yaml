@@ -258,6 +258,47 @@ template:
             {{ soc_target | round(1) }}
               
 
+  # ZoM input power: the P1 meter minus the heat pump when the switch is on (Jan, 2026-10-05).
+  # The switch has one meaning - "the heat pump is EMHASS's" - and gates both this measured side and
+  # the plan side in `sessy_api_control_mode_auto`. Triggered on P1 so the value is sampled on the
+  # P1 clock (P1 already contains the HP, so a HP change moves P1); the HP meter is only a
+  # correction and falls back to 0 when it is unknown/unavailable. Attributes are diagnostics only.
+  - trigger:
+      - trigger: state
+        entity_id: sensor.p1_meter_3c39e72e6af0_active_power
+      - trigger: state
+        entity_id: input_boolean.sessy_zom_exclude_heat_pump
+      - trigger: homeassistant
+        event: start
+    sensor:
+      - name: "Sessy ZoM input power"
+        unique_id: sessy_zom_input_power
+        unit_of_measurement: "W"
+        device_class: power
+        state_class: measurement
+        state: >-
+          {% set p1 = states('sensor.p1_meter_3c39e72e6af0_active_power') | float(0) %}
+          {% set hp = states('sensor.kwh_meter_heat_pump_active_power') | float(0) %}
+          {% if is_state('input_boolean.sessy_zom_exclude_heat_pump','on') %}
+            {{ p1 - hp }}
+          {% else %}
+            {{ p1 }}
+          {% endif %}
+        attributes:
+          p1_power: "{{ states('sensor.p1_meter_3c39e72e6af0_active_power') | float(0) }}"
+          heat_pump_power: "{{ states('sensor.kwh_meter_heat_pump_active_power') | float(0) }}"
+          excluded: "{{ is_state('input_boolean.sessy_zom_exclude_heat_pump','on') }}"
+          fallback: "{{ not (states('sensor.kwh_meter_heat_pump_active_power') | is_number) }}"
+
+input_boolean:
+  # One switch for "the heat pump belongs to EMHASS" (Jan, 2026-10-05): gates the measured side
+  # (ZoM sees P1 minus the HP) and the plan side (the mode logic reads p_grid_forecast minus the HP
+  # deferrables). Off = today's behaviour. Starts off until the HP actually follows EMHASS.
+  sessy_zom_exclude_heat_pump:
+    name: "Sessy ZoM exclude heat pump"
+    icon: mdi:heat-pump
+    initial: false
+
 input_select:
   # Who picks the API strategy automatically (2026-10-04, replaces
   # switch.sessy_auto_api_strategy_enable). sessy_api_strategy stays leading: this only decides
@@ -307,7 +348,7 @@ input_number:
   # from an earlier session can never linger. The three ZoM items take it into their min/max maths:
   # the plan sets the floor, ZoM may go further when the house or the surplus asks for it.
   sessy_zom_power_floor:
-    name: "Sessy ZoM power floor"
+    name: "EMHASS battery power request (floor)"
     icon: mdi:battery-sync
     min: -6000
     max: 6000
@@ -594,8 +635,11 @@ automation:
     description: "Calculates applicable API setpoints and applies them when Sessy is set to POWER_STRATEGY_API"
     mode: restart
     triggers:
+      # Runs on the corrected meter's clock: `sensor.sessy_zom_input_power` is itself triggered by
+      # P1 (and by the exclude switch), so the P1 cadence is kept while the value for that same P1
+      # update is read - no one-cycle staleness from a separate template update.
       - trigger: state
-        entity_id: sensor.p1_meter_3c39e72e6af0_active_power
+        entity_id: sensor.sessy_zom_input_power
     conditions:
       - condition: template
         # Manual writes 0, so the setpoint slider is the only writer then. In EMHASS mode this
@@ -612,7 +656,10 @@ automation:
           value: >-
             {# 1. Get relevant input data  #}
             {% set strategy     = states('input_select.sessy_api_strategy') %}
-            {% set p1_power     = states('sensor.p1_meter_3c39e72e6af0_active_power') | float(0) %}
+            {# The ZoM input: P1, or P1 minus the heat pump when the exclude switch is on. Fall
+               back to raw P1 when the template sensor is not ready yet (right after a reload), so
+               the calculation never sees an unknown and cannot drift. #}
+            {% set p1_power     = states('sensor.sessy_zom_input_power') | float(states('sensor.p1_meter_3c39e72e6af0_active_power') | float(0)) %}
             {% set zom_state    = states('number.sessy_api_strategy_zom_state') | float(0) %}
             {% set soc          = states('sensor.sessy_battery_state_of_charge') | float(0) %}
             {# 2. Get relevant settings #}
@@ -716,6 +763,8 @@ automation:
       - trigger: state
         entity_id: input_number.sessy_zom_power_floor
         id: "floor"
+      - trigger: state
+        entity_id: input_boolean.sessy_zom_exclude_heat_pump
     actions:
       - variables:
           mode: "{{ states('input_select.sessy_auto_api_control_strategy') }}"
@@ -723,7 +772,17 @@ automation:
           fresh: "{{ is_state('binary_sensor.emhass_forecast_fresh','on') }}"
           band: "{{ states('input_number.sessy_emhass_mode_deadband') | float(250) }}"
           batt: "{{ states('sensor.p_batt_forecast') | float(0) }}"
-          grid: "{{ states('sensor.p_grid_forecast') | float(0) }}"
+          # Plan grid in the non-heat-pump domain when the exclude switch is on (Jan, 2026-10-05):
+          # the three deferrables are the heat pump loads, so removing them lets the same sell/buy
+          # cases read the plan's intent correctly - a planned HP-covering discharge then becomes
+          # Support with floor = p_batt instead of falling into else/floor 0. Gated by the same
+          # switch as the measured side, so "off" is exactly today's behaviour.
+          grid: >-
+            {% set hp = (states('sensor.p_deferrable0') | float(0)
+                         + states('sensor.p_deferrable1') | float(0)
+                         + states('sensor.p_deferrable2') | float(0))
+                        if is_state('input_boolean.sessy_zom_exclude_heat_pump','on') else 0 %}
+            {{ (states('sensor.p_grid_forecast') | float(0)) - hp }}
           sell: "{{ batt > band and grid < -band }}"
           buy: "{{ batt < -band and grid > band }}"
       # Handover when the dropdown changes.

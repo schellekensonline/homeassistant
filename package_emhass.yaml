@@ -25,6 +25,51 @@ template:
           {# clamp at 0: brief P1 transients can momentarily make the balance negative, which is physically impossible #}
           {{ [ (tot_p1 + tot_pv + tot_bat - tot_hp), 0 ] | max | round(2) }}
 
+      # The day plan's value for the *current* quarter, so it can go on a history graph next to
+      # the quarter-hour plan. The day-ahead mirror itself only changes when a new plan is
+      # published, so its state would be a flat line all day; this one walks the horizon that
+      # rides in its `battery_scheduled_power` attribute (2026-10-04).
+      - name: "EMHASS day plan battery power now"
+        unique_id: emhass_dayahead_p_batt_now
+        unit_of_measurement: "W"
+        device_class: power
+        state_class: measurement
+        # No plan in the attribute (restart, or the mirror not published yet) -> unknown, so the
+        # history graph shows a gap instead of a fake 0 W.
+        availability: >-
+          {{ state_attr('sensor.dayahead_p_batt_forecast','battery_scheduled_power') | count > 0 }}
+        state: >-
+          {% set plan = state_attr('sensor.dayahead_p_batt_forecast','battery_scheduled_power') or [] %}
+          {% set ns = namespace(value=none) %}
+          {% for entry in plan %}
+            {% if as_timestamp(entry.date) <= as_timestamp(now()) %}
+              {% set ns.value = entry.dayahead_p_batt_forecast | float(0) %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.value if ns.value is not none else (plan[0].dayahead_p_batt_forecast | float(0) if plan else 0) }}
+
+      # Planned electric power of the heat pump: the sum of the three deferrable loads EMHASS
+      # schedules (0 = DHW tank, 1 = floor heating, 2 = cooling). This is the plan's *wish*, not a
+      # measurement - the thermal blocks are still compute-only, so nothing acts on it yet. The full
+      # 96-quarter horizon rides in each p_deferrableN sensor's `deferrables_schedule` attribute.
+      - name: "EMHASS HP plan power"
+        unique_id: emhass_hp_plan_power
+        unit_of_measurement: "W"
+        device_class: power
+        state_class: measurement
+        availability: >-
+          {{ states('sensor.p_deferrable0') | is_number
+             and states('sensor.p_deferrable1') | is_number
+             and states('sensor.p_deferrable2') | is_number }}
+        state: >-
+          {{ (states('sensor.p_deferrable0') | float(0)
+              + states('sensor.p_deferrable1') | float(0)
+              + states('sensor.p_deferrable2') | float(0)) | round(0) }}
+        attributes:
+          dhw_power: "{{ states('sensor.p_deferrable0') | float(0) | round(0) }}"
+          floor_heating_power: "{{ states('sensor.p_deferrable1') | float(0) | round(0) }}"
+          cooling_power: "{{ states('sensor.p_deferrable2') | float(0) | round(0) }}"
+
       # Map the existing sensors onto the entity ids used in the EMHASS config.
       - name: "EMHASS PV Power"
         unit_of_measurement: "W"
@@ -488,6 +533,14 @@ script:
               "load_cost_forecast": {{ incl_rounded | to_json }},
               "prod_price_forecast": {{ excl_rounded | to_json }},
               "prediction_horizon": {{ n }},
+              {# Battery power limits, coupled to the Sessy API strategy helpers (Jan, 2026-10-05):
+                 these are the same knobs the ZoM layer clips its setpoint with, and now they also
+                 cap what EMHASS may plan, so the plan cannot ask for power the actuator is not
+                 allowed to deliver. They travel as runtime parameters (associations.csv maps both
+                 to plant_conf), so the shared builder gives them to the MPC and the day-ahead
+                 alike; changing a helper takes effect on the next quarter-hour plan. #}
+              "battery_charge_power_max": {{ states('input_number.sessy_api_strategy_max_charge_power') | int(6000) }},
+              "battery_discharge_power_max": {{ states('input_number.sessy_api_strategy_max_discharge_power') | int(3000) }},
               "soc_init": {{ (states('sensor.sessy_battery_state_of_charge') | float(60) / 100) | round(3) }},
               "soc_final": {{ reserve_soc | round(3) }}{% if day_ahead %},
               {# Keep the day-ahead plan out of the MPC's sensors (2026-10-03): the run saves its
