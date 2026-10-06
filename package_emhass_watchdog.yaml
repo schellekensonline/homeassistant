@@ -1,18 +1,35 @@
-# EMHASS MPC watchdog (2026-09-26).
+# EMHASS MPC watchdog (2026-09-26; heartbeat rebuilt 2026-10-07).
 #
 # Why: `sensor.optim_status` changed exactly once in the week of 19-09 (to "Optimal") while the
 # MPC published nothing for 11.5 hours on 20-09 and 45-53 minutes on three nights (21-09 twice,
-# 25-09 once). The status sensor cannot see a failed or skipped run; the *age* of the published
-# forecast can, because every completed run publishes sensor.p_load_forecast.
+# 25-09 once). Neither the status sensor nor the published forecast is a usable heartbeat: on
+# 2026-10-07 the age based on `sensor.p_load_forecast` reported a 45-minute "gap" on 05-10 while
+# EMHASS had run normally the whole time. Home Assistant drops a REST post whose state *and*
+# attributes are identical (proven with a scratch entity), so a repeated publication leaves
+# `last_updated` frozen - that morning the plan, SoC, price and cost sensors all moved at 07:16
+# and 07:31 while only p_load_forecast stood still.
+#
+# So the heartbeat is explicit now: the MPC automation stamps `input_datetime.emhass_last_mpc`
+# when a run answers HTTP 200, and the two sensors below read that. That measures what we want to
+# know ("has the planner run?"), and it also catches a run that is *answered and rejected* - which
+# the old age could not see, because the failure path republished the previous plan.
 #
 # This package adds:
-#   - sensor.emhass_forecast_age: minutes since the last publication,
+#   - input_datetime.emhass_last_mpc: stamped by the MPC automation in package_emhass.yaml,
+#   - sensor.emhass_forecast_age: minutes since that stamp,
 #   - binary_sensor.emhass_forecast_fresh: on while that is under 35 minutes (two missed cycles),
 #   - two automations: an alert when it goes stale and an all-clear when it recovers.
 #
 # The alert mentions whether EMHASS itself is reachable, because "the planner is down" and "the
 # planner runs but keeps failing" need different follow-up. The fallback retry without the thermal
 # models lives in package_emhass.yaml, in the MPC automation itself.
+
+input_datetime:
+  emhass_last_mpc:
+    name: "EMHASS last successful MPC run"
+    icon: mdi:clock-check
+    has_date: true
+    has_time: true
 
 template:
   - sensor:
@@ -21,22 +38,22 @@ template:
         unit_of_measurement: "min"
         state_class: measurement
         state: >-
-          {% set s = states['sensor.p_load_forecast'] | default(none) %}
-          {% if s is none %}unknown
-          {% else %}{{ ((now() - s.last_updated).total_seconds() / 60) | round(0) }}{% endif %}
+          {% set t = states('input_datetime.emhass_last_mpc') %}
+          {% if t in ['unknown', 'unavailable', 'none', ''] or as_timestamp(t, none) is none %}unknown
+          {% else %}{{ ((now().timestamp() - as_timestamp(t)) / 60) | round(0) }}{% endif %}
   - binary_sensor:
       - name: "EMHASS forecast fresh"
         unique_id: emhass_forecast_fresh
         state: >-
-          {% set s = states['sensor.p_load_forecast'] | default(none) %}
-          {% if s is none %}unknown
-          {% else %}{{ (now() - s.last_updated) < timedelta(minutes=35) }}{% endif %}
+          {% set t = states('input_datetime.emhass_last_mpc') %}
+          {% if t in ['unknown', 'unavailable', 'none', ''] or as_timestamp(t, none) is none %}unknown
+          {% else %}{{ (now().timestamp() - as_timestamp(t)) < 35 * 60 }}{% endif %}
         delay_off: "00:05:00"
 
 automation:
   - id: emhass_watchdog_stale
     alias: "EMHASS watchdog: no fresh forecast"
-    description: "The MPC has not published a plan for over 35 minutes"
+    description: "The MPC has not completed a run for over 35 minutes"
     mode: single
     triggers:
       - trigger: state
@@ -53,21 +70,21 @@ automation:
           title: "EMHASS publiceert niet meer"
           notification_id: emhass_stale
           message: >-
-            De laatste MPC-publicatie is {{ age }} minuten oud (verwacht: elke 15 minuten).
+            De laatste geslaagde MPC-run is {{ age }} minuten oud (verwacht: elke 15 minuten).
             EMHASS online: {{ online }}, laatste optim_status: {{ status }}.
-            Bekende gevallen: een onmogelijke constraint (20-09, DHW-band), de nachtelijke gaten
-            rond 03:00-05:15 (21-09 en 25-09, vermoedelijk containerupdates) of een EMHASS die
-            zelf niet antwoordt - zie de notities bij "How runs fail".
+            Bekende gevallen: een onmogelijke constraint of een afgewezen payload (de stempel
+            blijft dan staan), een EMHASS die zelf niet antwoordt, of een containerherstart -
+            zie de notities bij "How runs fail".
       - action: notify.mobile_app_iphone_jan
         data:
           title: "EMHASS publiceert niet meer"
           message: >-
-            Laatste plan is {{ age }} minuten oud, EMHASS online: {{ online }}.
+            Laatste geslaagde MPC-run is {{ age }} minuten oud, EMHASS online: {{ online }}.
       - action: logbook.log
         data:
           name: EMHASS
           message: >-
-            no fresh forecast for {{ age }} min (online={{ online }}, status={{ status }})
+            no successful MPC run for {{ age }} min (online={{ online }}, status={{ status }})
 
   - id: emhass_watchdog_recovered
     alias: "EMHASS watchdog: fresh again"
@@ -87,8 +104,8 @@ automation:
       - action: notify.mobile_app_iphone_jan
         data:
           title: "EMHASS publiceert weer"
-          message: "Er is weer een vers plan, na {{ minutes }} minuten zonder publicaties."
+          message: "Er is weer een geslaagde MPC-run, na {{ minutes }} minuten zonder."
       - action: logbook.log
         data:
           name: EMHASS
-          message: "fresh forecast again after {{ minutes }} min"
+          message: "successful MPC run again after {{ minutes }} min"
