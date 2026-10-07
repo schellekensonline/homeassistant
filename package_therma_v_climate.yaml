@@ -1,269 +1,188 @@
-# LG Therma V climate entity, built on the HACS climate_template integration:
-# https://github.com/jcwillox/hass-template-climate
+# LG Therma V climate entities on Home Assistant's own template climate platform (core, new in HA
+# 2026.10). Converted on 2026-10-08 from the HACS climate_template integration
+# (jcwillox/hass-template-climate v1.4.1) - that one still loaded on 2026.10, but it merges core's
+# old voluptuous template schema into its own PLATFORM_SCHEMA and core moved those schemas to
+# probatio, so a future HACS/core change could have taken the entities down at any moment. See
+# notes_dockers_hass.md, "Template climate: HACS -> core"; the previous version of this file is in
+# git history. The entity ids did not change: the two old registry entries were removed and these
+# two took their ids, so the packages, the EMHASS payload, the disinfection automations and the
+# dashboard needed no changes.
 #
-# It wraps the heat pump's Modbus registers into a regular climate entity. Non-auto modes
-# write the target water temperature (address 2, degrees x 10); auto mode writes a delta
+# What it is: it wraps the heat pump's Modbus registers into a regular climate entity. Non-auto
+# modes write the target water temperature (address 2, degrees x 10); auto mode writes a delta
 # (address 4, signed 16-bit, hence the +65536 for negative values).
-climate:
-  - platform: climate_template
-    name: "Therma V heating/cooling"
-    unique_id: therma_v_heating_cooling
-    temp_step: 1
-    availability_template: >-
-      {{ has_value('switch.therma_v_heating_cooling_on_off')
-         and has_value('sensor.therma_v_operation_mode')
-         and has_value('sensor.therma_v_control_mode')
-         and has_value('sensor.therma_v_room_temperature')
-         and has_value('sensor.therma_v_target_temperature_circuit_1') }}
-    max_temp_template: >
-      {% if is_state('sensor.therma_v_operation_mode', '3') %}  {# auto mode #}
-        {{ 5 }}
-      {% elif states('sensor.therma_v_control_mode') | int(-1) < 2 %}   {# water temp. control, inlet or outlet #}
-      {%   if is_state('sensor.therma_v_operation_mode', '4') %}  {# heat #}
-             {{ 40 }}
-      {%   else %}
-             {{ 30 }}
-      {%   endif %}
-      {% else %}                                                {# probably room temp. control#}
-        {{ 25 }}
-      {% endif %}
-    min_temp_template: >
-      {% if is_state('sensor.therma_v_operation_mode', '3') %}  {# auto mode #}
-        {{ -5 }}
-      {% elif states('sensor.therma_v_control_mode') | int(-1) < 2 %}   {# water temp. control, inlet or outlet #}
-      {%   if is_state('sensor.therma_v_operation_mode', '4') %}  {# heat #}
-             {{ 10 }}
-      {%   else %}
-             {{ 10 }}
-      {%   endif %}
-      {% else %}                                                {# probably room temp. control #}
-        {{ 15 }}
-      {% endif %}
-    # Room temperature is deliberate: the climate card should show the value the room control
-    # loop works with. The water inlet/outlet variants are not used here.
-    current_temperature_template: "{{ states('sensor.therma_v_room_temperature') }}"
-    target_temperature_template: >
-      {% if is_state('sensor.therma_v_operation_mode', '3') %} {# auto mode thus delta register #}
-        {{ states('sensor.therma_v_auto_mode_target_temperature_delta_circuit_1') }}
-      {% else %} {# other modes in regular register #}
-        {{ states('sensor.therma_v_target_temperature_circuit_1') }}
-      {% endif %}
-    set_temperature:  # receives: temperature, target_temp_high, target_temp_low, hvac_mode
-      - choose:     
-        - conditions:
-            - "{{ is_state('sensor.therma_v_operation_mode', '3') }}" # auto mode 
-          sequence:
-            - action: modbus.write_register
-              data:
-                address: 4
-                slave: 1
-                hub: modbus_gateway_therma_v
-                value: >
-                  {% if temperature | int(0) < 0 %}
-                    {{ temperature | int + 65536 }}
-                  {% else %}
-                    {{ temperature | int }}
-                  {% endif %}
-        default: # not auto mode   
+#
+# Mapping from the HACS keys, checked against the 2026.10 sources:
+#   * the `_template` suffix is gone: availability, current_temperature, target_temperature,
+#     hvac_mode;
+#   * `modes` -> `hvac_modes`, a template that renders a *list*; `temp_step` ->
+#     `target_temperature_step`; `min_temp`/`max_temp` -> `min_temperature`/`max_temperature`;
+#   * min_temperature/max_temperature cannot be templates here (plain floats, and min_temp/max_temp
+#     are in the blocked-attribute list of the `attributes` option). They are static below, wide
+#     enough for both regimes, and the mode-dependent limits the HACS version had live on as a
+#     clamp inside `set_temperature` - so the Modbus registers still never see a delta outside
+#     -5..5 or a water temperature outside 10..40;
+#   * the script variables are the same as before: `set_temperature` gets temperature,
+#     target_temp_high, target_temp_low and hvac_mode, `set_hvac_mode` gets hvac_mode.
+
+template:
+  - climate:
+      - name: "Therma V heating/cooling"
+        unique_id: therma_v_heating_cooling
+        target_temperature_step: 1
+        # Static range: it has to fit the auto-mode delta (-5..5) and the water temperatures
+        # (10..40). The platform clamps the *rendered* target into this range and rejects a service
+        # call outside it, so it may not be narrower than either regime.
+        min_temperature: -5
+        max_temperature: 40
+        availability: >-
+          {{ has_value('switch.therma_v_heating_cooling_on_off')
+             and has_value('sensor.therma_v_operation_mode')
+             and has_value('sensor.therma_v_control_mode')
+             and has_value('sensor.therma_v_room_temperature')
+             and has_value('sensor.therma_v_target_temperature_circuit_1') }}
+        # Room temperature is deliberate: the climate card should show the value the room control
+        # loop works with. The water inlet/outlet variants are not used here.
+        current_temperature: "{{ states('sensor.therma_v_room_temperature') }}"
+        target_temperature: >-
+          {% if is_state('sensor.therma_v_operation_mode', '3') %}
+          {{ states('sensor.therma_v_auto_mode_target_temperature_delta_circuit_1') }}
+          {% else %}
+          {{ states('sensor.therma_v_target_temperature_circuit_1') }}
+          {% endif %}
+        hvac_modes: "{{ ['off', 'cool', 'heat', 'auto'] }}"
+        hvac_mode: >-
+          {% if is_state('switch.therma_v_heating_cooling_on_off', 'off') %}
+          off
+          {% elif is_state('sensor.therma_v_operation_mode', '0') %}
+          cool
+          {% elif is_state('sensor.therma_v_operation_mode', '4') %}
+          heat
+          {% elif is_state('sensor.therma_v_operation_mode', '3') %}
+          auto
+          {% endif %}
+        set_temperature:
+          # The HACS entity had these as min_temp_template / max_temp_template; here they are a
+          # clamp on the value that goes to the Modbus register. `temperature` is the requested
+          # value from the service call.
+          - variables:
+              mode: "{{ states('sensor.therma_v_operation_mode') }}"
+              water_control: "{{ states('sensor.therma_v_control_mode') | int(-1) < 2 }}"
+              temp_lo: >-
+                {% if mode == '3' %}-5
+                {% elif water_control %}10
+                {% else %}15{% endif %}
+              temp_hi: >-
+                {% if mode == '3' %}5
+                {% elif water_control %}{% if mode == '4' %}40{% else %}30{% endif %}
+                {% else %}25{% endif %}
+              target: "{{ [[temperature | float(0), temp_lo | float(0)] | max, temp_hi | float(40)] | min }}"
+          - choose:
+              - conditions:
+                  - "{{ mode == '3' }}"  # auto mode: the delta register
+                sequence:
+                  - action: modbus.write_register
+                    data:
+                      address: 4
+                      slave: 1
+                      hub: modbus_gateway_therma_v
+                      value: >
+                        {% if target | int(0) < 0 %}
+                          {{ target | int + 65536 }}
+                        {% else %}
+                          {{ target | int }}
+                        {% endif %}
+            default:  # not auto mode: the water temperature register
+              - action: modbus.write_register
+                data:
+                  address: 2
+                  slave: 1
+                  hub: modbus_gateway_therma_v
+                  value: "{{ ((target | float(0)) * 10) | int }}"
+        set_hvac_mode:
+          - choose:
+              - conditions:
+                  - "{{ hvac_mode == 'off' }}"
+                sequence:
+                  - action: switch.turn_off  # turn the unit off
+                    target:
+                      entity_id: switch.therma_v_heating_cooling_on_off
+              - conditions:
+                  - "{{ hvac_mode == 'cool' }}"
+                sequence:
+                  - action: switch.turn_on  # turn the unit on
+                    target:
+                      entity_id: switch.therma_v_heating_cooling_on_off
+                  - action: modbus.write_register
+                    data:
+                      address: 0
+                      slave: 1
+                      hub: modbus_gateway_therma_v
+                      value: 0
+              - conditions:
+                  - "{{ hvac_mode == 'heat' }}"
+                sequence:
+                  - action: switch.turn_on
+                    target:
+                      entity_id: switch.therma_v_heating_cooling_on_off
+                  - action: modbus.write_register
+                    data:
+                      address: 0
+                      slave: 1
+                      hub: modbus_gateway_therma_v
+                      value: 4
+              - conditions:
+                  - "{{ hvac_mode == 'auto' }}"
+                sequence:
+                  - action: switch.turn_on
+                    target:
+                      entity_id: switch.therma_v_heating_cooling_on_off
+                  - action: modbus.write_register
+                    data:
+                      address: 0
+                      slave: 1
+                      hub: modbus_gateway_therma_v
+                      value: 3
+            default:
+              - action: switch.turn_on
+                target:
+                  entity_id: switch.therma_v_heating_cooling_on_off
+
+      - name: "Therma V DHW"
+        unique_id: therma_v_dhw
+        min_temperature: 40
+        max_temperature: 70
+        target_temperature_step: 1
+        availability: >-
+          {{ has_value('switch.therma_v_dhw_on_off')
+             and has_value('sensor.therma_v_dhw_temperature')
+             and has_value('sensor.therma_v_dhw_target_temperature') }}
+        current_temperature: "{{ states('sensor.therma_v_dhw_temperature') }}"
+        target_temperature: "{{ states('sensor.therma_v_dhw_target_temperature') }}"
+        hvac_modes: "{{ ['off', 'auto'] }}"
+        hvac_mode: "{{ 'off' if is_state('switch.therma_v_dhw_on_off', 'off') else 'auto' }}"
+        set_temperature:
           - action: modbus.write_register
             data:
-              address: 2
+              address: 8
               slave: 1
               hub: modbus_gateway_therma_v
               value: "{{ ((temperature | float(0)) * 10) | int }}"
-    modes: ["off","cool","heat","auto"]
-    hvac_mode_template: >
-      {% if is_state('switch.therma_v_heating_cooling_on_off', 'off') %}
-        {{'off'}}
-      {% elif is_state('sensor.therma_v_operation_mode', '0') %}
-        {{'cool'}}
-      {% elif is_state('sensor.therma_v_operation_mode', '4') %}
-        {{'heat'}}
-      {% elif is_state('sensor.therma_v_operation_mode', '3') %}
-        {{'auto'}}
-      {% endif %}
-    set_hvac_mode: # variable hvac_mode
-      - choose:     
-        - conditions:
-            - "{{ hvac_mode == 'off'}}"
-          sequence:
-            - action: switch.turn_off # Turn off unit
-              target:
-                entity_id: switch.therma_v_heating_cooling_on_off
-        - conditions:
-            - "{{ hvac_mode == 'cool'}}"
-          sequence:
-            - action: switch.turn_on # Turn on unit
-              target:
-                entity_id: switch.therma_v_heating_cooling_on_off
-            - action: modbus.write_register
-              data:
-                address: 0
-                slave: 1
-                hub: modbus_gateway_therma_v
-                value: 0
-        - conditions:
-            - "{{ hvac_mode == 'heat'}}"
-          sequence:
-            - action: switch.turn_on # Turn on unit
-              target:
-                entity_id: switch.therma_v_heating_cooling_on_off
-            - action: modbus.write_register
-              data:
-                address: 0
-                slave: 1
-                hub: modbus_gateway_therma_v
-                value: 4
-        - conditions:
-            - "{{ hvac_mode == 'auto'}}"
-          sequence:
-            - action: switch.turn_on # Turn on unit
-              target:
-                entity_id: switch.therma_v_heating_cooling_on_off
-            - action: modbus.write_register
-              data:
-                address: 0
-                slave: 1
-                hub: modbus_gateway_therma_v
-                value: 3
-        default:
-          - action: switch.turn_on # Turn on unit
-            target:
-              entity_id: switch.therma_v_heating_cooling_on_off
-
-
-  - platform: climate_template
-    name: "Therma V DHW"
-    unique_id: therma_v_dhw
-    max_temp: 70
-    min_temp: 40
-    temp_step: 1
-    availability_template: >-
-      {{ has_value('switch.therma_v_dhw_on_off')
-         and has_value('sensor.therma_v_dhw_temperature')
-         and has_value('sensor.therma_v_dhw_target_temperature') }}
-    current_temperature_template: "{{ states('sensor.therma_v_dhw_temperature') }}"
-    target_temperature_template: "{{ states('sensor.therma_v_dhw_target_temperature') }}"
-    set_temperature:
-      - action: modbus.write_register
-        data:
-          address: 8
-          slave: 1
-          hub: modbus_gateway_therma_v
-          value: "{{ (( temperature | float(0) )*10) | int }}"      
-    modes: ["off","auto"]
-    hvac_mode_template: >
-      {% if is_state('switch.therma_v_dhw_on_off','off') %}
-        {{"off"}}
-      {% else %}  
-        {{"auto"}}
-      {% endif %}
-    set_hvac_mode: # variable hvac_mode
-      - choose:
-        - conditions:
-            - "{{ hvac_mode == 'off'}}"
-          sequence:
-            - action: switch.turn_off # Turn off unit
-              target:
-                entity_id: switch.therma_v_dhw_on_off
-        - conditions:
-            - "{{ hvac_mode == 'auto'}}"
-          sequence:
-            - action: switch.turn_on # Turn on unit
-              target:
-                entity_id: switch.therma_v_dhw_on_off
-
-
-
-# # Same as on the wired remote controller (RMC).
-# # In case of Air+Water first set water control mode (0 or 1) then set to Air+Water (2)
-# #       - "Water outlet temperature"  # 0
-# #       - "Water inlet temperature"   # 1
-# #       - "Room temperature"          # 2
-# input_select:
-#   therma_v_temperature_control_mode:
-#     name: "Therma V temperature control mode"
-#     options:
-#       - "Water"
-#       - "Air + Water"
-#   therma_v_water_control_mode:
-#     name: "Therma V water control mode"
-#     options:
-#       - "Water Inlet"
-#       - "Water Outlet"
-#       - "Unknown"
-
-# automation:  ## work in progress, deliberately left disabled
-#   - id: "therma_v_control_mode_update_auto"
-#     alias: "Therma V control mode update auto"
-#     description: "Updates the control mode based on input numbers and modbus"
-#     mode: single
-#     triggers:
-#       - trigger: state
-#         entity_id: input_select.therma_v_temperature_control_mode
-#         id: ctrl_select_trig1
-#       - trigger: state
-#         entity_id: input_select.therma_v_water_control_mode
-#         id: ctrl_select_trig2
-#       # - trigger: state
-#       #   entity_id: sensor.therma_v_control_mode
-#       #   id: ctrl_modbus_trig
-#       # # when inconsistent for x run default
-#       # - trigger: template
-#       #   value_template: "{{ ( (states('sensor.therma_v_control_mode') | round(0)) - (states('sensor.therma_v_target_temperature_circuit_1') | round(0)) ) | abs > 0 }}"
-#       #   for: "00:02:00"
-#       #   id: auto_catch_trig
-#     condition: []
-#     actions:
-#       - choose:
-#           - conditions:
-#           # Don't use this trigger for room control since inlet / outlet will be unknown, now the last state is kept
-#                 - condition: trigger
-#                   id: ctrl_modbus_trig1 
-#             sequence:
-#               - action: input_select.select_option
-#                 target:
-#                   entity_id: input_select.therma_v_water_control_mode
-#                 data:
-#                   option: >
-#                     {% set idx = trigger.to_state.state | int(0) %}
-#                     {% if idx < 2 %}
-#                       {{ state_attr("input_therma_v_water_control_mode", "options")[ idx ] }}
-#                     {% endif %}
-#               - action: input_select.select_option
-#                 target:
-#                   entity_id: input_select.therma_v_temperature_control_mode
-#                 data:
-#                   option: >
-#                     {% set idx = trigger.to_state.state | int(0) %}
-#                     {% if idx < 2 %}
-#                       {{ state_attr("input_select.therma_v_temperature_control_mode", "options")[ 0 ] }}
-#                     {% else %} {# some form of room control so inlet outlet unknown #}
-#                       {{ state_attr("input_select.therma_v_temperature_control_mode", "options")[ 1 ] }}
-#                     {% endif %}
-#         default:
-#           - variables:
-#               temp_ctrl_mode: "{{state_attr('input_select.therma_v_temperature_control_mode','options').index(input_select.therma_v_temperature_control_mode) | int(0)}}"
-#               watr_ctrl_mode: "{{state_attr('input_select.therma_v_water_control_mode','options').index(input_select.therma_v_water_control_mode) | int(0)}}" 
-#           - action: modbus.write_register
-#             data_template:
-#               address: 1
-#               slave: 1
-#               hub: modbus_gateway_therma_v
-#               value: "{{ watr_ctrl_mode }}"
-#           - choose:
-
-
-#         # - action: modbus.write_register
-#         #   data_template:
-#         #     address: 1
-#         #     slave: 1
-#         #     hub: modbus_gateway_therma_v
-#         #     value: >
-#         #       {% set idx = state_attr('input_select.therma_v_control_mode','options').index(states('input_select.therma_v_control_mode')) %}
-#         #       {% if idx < 3 %}
-#         #         {{ idx }}
-#         #       {% else %}
-#         #         {{ room }}
-#         #       {% endif %}
-#         #     # - delay: '00:00:01' # prevent retriggering on write event
+        set_hvac_mode:
+          - choose:
+              - conditions:
+                  - "{{ hvac_mode == 'off' }}"
+                sequence:
+                  - action: switch.turn_off
+                    target:
+                      entity_id: switch.therma_v_dhw_on_off
+              - conditions:
+                  - "{{ hvac_mode == 'auto' }}"
+                sequence:
+                  - action: switch.turn_on
+                    target:
+                      entity_id: switch.therma_v_dhw_on_off
+            default:
+              - action: switch.turn_on
+                target:
+                  entity_id: switch.therma_v_dhw_on_off
