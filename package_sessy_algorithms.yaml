@@ -3,6 +3,10 @@ template:
       - name: "Sessy API strategy zom state"  # State of ZoM integration algorithm
         unique_id: sessy_api_strategy_zom_state
         unit_of_measurement: "W"
+        # The range is the overarching limit: the hardware pair the EMHASS plan is capped on. It
+        # bounds every write into this number, a manual one from the dashboard included, and the
+        # automation clamps its own result to the same pair - a strategy limit set too high can
+        # therefore never lead to a rejected write (which is what the 05-10 failure was).
         min: "{{ -1 * (states('input_number.sessy_api_strategy_max_charge_power')    | int) }}"
         max: "{{       states('input_number.sessy_api_strategy_max_discharge_power') | int  }}"
         step: 1
@@ -122,6 +126,7 @@ template:
         unique_id: sessy_api_strategy_zom_peak_state
         unit_of_measurement: "W"
         min: 0
+        # Tracks |zom_state| of the number above, so the overarching pair is the bound.
         max: "{{ max(states('input_number.sessy_api_strategy_max_discharge_power') | int, states('input_number.sessy_api_strategy_max_charge_power') | int) }}"
         step: 0.01
         set_value: []
@@ -297,7 +302,7 @@ input_boolean:
   sessy_zom_exclude_heat_pump:
     name: "Sessy ZoM exclude heat pump"
     icon: mdi:heat-pump
-    initial: false
+    # initial: false
 
 input_select:
   # Who picks the API strategy automatically (2026-10-04, replaces
@@ -518,6 +523,33 @@ input_number:
     # initial: 3000
     mode: box
     unit_of_measurement: "W"
+  # The ZoM clip gets its own pair (Jan, 2026-10-07). Until then the ZoM controller clipped on
+  # sessy_api_strategy_max_charge/discharge_power, and those two are also what the EMHASS payload
+  # sends as battery_charge/discharge_power_max - one knob for two layers, so tuning the heuristic
+  # silently moved the planner's ceiling and the other way round. From here:
+  #   * sessy_api_strategy_max_zom_*_power  -> how much the ZoM controller may pull or push itself;
+  #   * sessy_api_strategy_max_*_power      -> the hardware / plan cap (6 kW continuous, the EMHASS
+  #                                            payload keeps reading these).
+  # In EMHASS mode the plan's floor overrides the clip, so these two only bound the heuristic's own
+  # contribution. No active `initial`: the values are dashboard knobs and are restored after a
+  # restart. Create and set both helpers *before* the automation starts reading them (reload, then
+  # set a value, then the automation), or the clip reads `float(0)` and the heuristic sits still.
+  sessy_api_strategy_max_zom_charge_power:
+    name: "Sessy API max ZoM charge power"
+    min: 0
+    max: 1000000 # Ridiculously large value
+    step: 1
+    # initial: 6000
+    mode: box
+    unit_of_measurement: "W"
+  sessy_api_strategy_max_zom_discharge_power:
+    name: "Sessy API max ZoM discharge power"
+    min: 0
+    max: 1000000 # Ridiculously large value
+    step: 1
+    # initial: 6000
+    mode: box
+    unit_of_measurement: "W"
 
 
 automation:
@@ -667,6 +699,11 @@ automation:
             {% set max_discharge_power = states('input_number.sessy_api_strategy_max_discharge_power') | float(0) %}
             {% set max_prop_charge_power = states('input_number.sessy_api_strategy_max_prop_charge_power') | float(0) %}
             {% set max_prop_discharge_power = states('input_number.sessy_api_strategy_max_prop_discharge_power') | float(0) %}
+            {# The ZoM clip has its own limits since 2026-10-07, the siblings of the prop pair; the
+               pair above stays the overarching limit (and the plan cap). No fallback on purpose:
+               see the deploy order at the helpers in the input_number block. #}
+            {% set max_zom_charge_power    = states('input_number.sessy_api_strategy_max_zom_charge_power') | float(0) %}
+            {% set max_zom_discharge_power = states('input_number.sessy_api_strategy_max_zom_discharge_power') | float(0) %}
             {# Charge ceiling and discharge floor from the same reserve model as the auto strategy:
                the SoC that belongs to the rest of today plus tonight (2026-09-14). #}
             {% set soc_target = state_attr('sensor.sessy_api_strategy_estimated_energy_surplus','soc_target') | float(100) %}
@@ -676,7 +713,7 @@ automation:
             
             {# 3. Zero on Meter (ZOM) algorithm #}
             {% set zom_gain      = 0.5 %}
-            {% set zom           = min(max(zom_state + (zom_gain*p1_power), -max_charge_power), max_discharge_power) %}
+            {% set zom           = min(max(zom_state + (zom_gain*p1_power), -max_zom_charge_power), max_zom_discharge_power) %}
             {% set zom_discharge = max(zom, 0) %}
             {% set zom_charge    = min(zom, 0) %}
             {# The floor EMHASS asks for this quarter, 0 outside EMHASS mode: with it the plan sets
@@ -687,40 +724,47 @@ automation:
                                    else (min(zom_charge, zom_floor) if zom_floor < 0 else zom) %}
 
             {# 4. Strategy selection and calculation #}
-            {% if strategy == 'Zero on Meter' %}
-                {{ zom_planned | int }}
+            {% set setpoint %}
+              {% if strategy == 'Zero on Meter' %}
+                  {{ zom_planned }}
 
-            {% elif strategy == 'Zero on Meter Support' %}
-              {{ max(zom_discharge, zom_floor) | int }} {# no charging for high energy prices #}
+              {% elif strategy == 'Zero on Meter Support' %}
+                {{ max(zom_discharge, zom_floor) }} {# no charging for high energy prices #}
 
-            {% elif strategy == 'Zero on Meter Charge' %}
-              {{ min(zom_charge, zom_floor) | int }} {# no discharging for low energy prices #}
+              {% elif strategy == 'Zero on Meter Charge' %}
+                {{ min(zom_charge, zom_floor) }} {# no discharging for low energy prices #}
 
-            {% elif strategy == 'Proportional Charge' %}
-            {# Buys energy or absorbs PV: never charges above soc_target, the level that is useful
-               today (the remaining need plus the room the remaining PV cannot fill). Above that
-               only free PV is worth taking. #}
-              {% set prop_gain = max(0.0, (soc_target - soc) / 100.0) %}
-              {% set prop_power = -1 * (prop_gain * max_prop_charge_power) %}              
-              {# Selects the highest charging request (most negative value) #}
+              {% elif strategy == 'Proportional Charge' %}
+              {# Buys energy or absorbs PV: never charges above soc_target, the level that is useful
+                 today (the remaining need plus the room the remaining PV cannot fill). Above that
+                 only free PV is worth taking. #}
+                {% set prop_gain = max(0.0, (soc_target - soc) / 100.0) %}
+                {% set prop_power = -1 * (prop_gain * max_prop_charge_power) %}
+                {# Selects the highest charging request (most negative value) #}
 
-              {{ min(prop_power, zom_charge) | int }}
-              
-            {% elif strategy == 'Proportional Discharge' %}
-            {# Sells energy or supports the house: never discharges below soc_floor, the SoC that
-               still covers the rest of today plus tonight, so a sell cannot eat into the reserve. #}
-              {% if soc <= soc_floor %}
-                {{ max(zom_discharge, 0) | int }} {# only cover the house, no export #}
+                {{ min(prop_power, zom_charge) }}
+
+              {% elif strategy == 'Proportional Discharge' %}
+              {# Sells energy or supports the house: never discharges below soc_floor, the SoC that
+                 still covers the rest of today plus tonight, so a sell cannot eat into the reserve. #}
+                {% if soc <= soc_floor %}
+                  {{ max(zom_discharge, 0) }} {# only cover the house, no export #}
+                {% else %}
+                  {% set prop_gain = soc / 100.0 %}
+                  {% set prop_power = prop_gain * max_prop_discharge_power %}
+                  {# Selects the highest discharging request (highest positive value) #}
+                  {{ max(prop_power, zom_discharge) }}
+                {% endif %}
+
               {% else %}
-                {% set prop_gain = soc / 100.0 %}
-                {% set prop_power = prop_gain * max_prop_discharge_power %}
-                {# Selects the highest discharging request (highest positive value) #}
-                {{ max(prop_power, zom_discharge) | int }}
+                0
               {% endif %}
-              
-            {% else %}
-              {{ 0 | int }}
-            {% endif %}
+            {% endset %}
+            {# 5. The overarching saturation (Jan, 2026-10-07): whatever a strategy asks, the
+               setpoint stays inside the hardware / plan limits. It is the same pair as the range of
+               the number this feeds, so a strategy limit set above it (or a plan floor that does
+               not fit) can never lead to a rejected write - which is what happened on 05-10. #}
+            {{ max(min(setpoint | float(0), max_discharge_power), -max_charge_power) | int }}
 
 
   # EMHASS mode (Jan's design, 2026-10-04): the plan's intent for this quarter picks both the ZoM
