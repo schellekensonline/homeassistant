@@ -1,0 +1,261 @@
+# EMHASS package: the day plan (split out of package_emhass.yaml on 2026-10-07).
+# rest_command.emhass_dayahead_optim plus automation.emhass_execute_day_ahead_optimization_auto
+# build and publish it, with the two checks around it: tomorrow's prices arriving late and no day
+# plan before midnight.
+rest_command:
+  # Day-ahead optimisation over the next 24 hours; runs once a day when new prices arrive.
+  emhass_dayahead_optim:
+    url: "http://localhost:5000/action/dayahead-optim"
+    method: POST
+    # EMHASS asks Home Assistant for the recent history before it can optimise, so a run
+    # can take longer than the 10 second default of rest_command. Timing out here means
+    # Home Assistant abandons a run that EMHASS keeps working on, which collides with the
+    # next scheduled run (that is what broke the run just after midnight).
+    # Raised to 90 on 2026-09-20: with the adjusted-PV correction enabled, the run that
+    # retrains that model takes ~23 s (against ~5 s normally), too close to the old 30.
+    timeout: 90
+    content_type: "application/json"
+    payload: >-
+      {# The body is built by script.emhass_build_payload (plan: dayahead, tomorrow from
+         00:00), so both optimisations send the same house. `emhass_payload` arrives as service
+         data; the default below is a deliberate error body so a caller that forgets to pass it
+         fails loudly in EMHASS instead of sending an empty request. #}
+      {%- set body = emhass_payload | default({'error': 'emhass_payload was not passed by the caller'}) -%}
+      {{ body if body is string else body | to_json }}
+
+automation:
+  - id: emhass_execute_day_ahead_optimization_auto    
+    alias: "EMHASS execute Day-Ahead optimization auto"
+    description: >-
+      Builds the day plan once a day, after the last MPC quarter of the day (23:50), so that the
+      window EMHASS optimises - 24 h from the run time - is the coming calendar day. The plan is
+      published on the sensor.dayahead_* entities; the quarter-hour MPCs correct it from 00:00 on.
+      The 23:55 check reports when the day's plan is still missing.
+    mode: single
+    trigger:
+      # The scheduled run: after the 23:45 MPC has published, so the plan starts at 23:45, covers
+      # the coming day, and never runs at the same instant as an MPC run (the condition below keeps
+      # it out of the 23:45:00 slot). Jan's design (2026-10-03): the day-ahead runs when the new
+      # prices are in - which by then they are, they arrive ~13:00 - and always before 00:00.
+      - platform: time_pattern
+        hours: "23"
+        minutes: "/5"
+        id: "retry"
+      - platform: homeassistant
+        event: start
+        id: "ha_start"
+      # Same as the MPC: EMHASS answering again is its own trigger, so a restart rebuilds a missing
+      # plan as soon as it can.
+      - platform: state
+        entity_id: binary_sensor.emhass_online
+        to: "on"
+        id: "emhass_up"
+    condition:
+      # Two paths, deliberately:
+      #  * the scheduled run (and its retries) only happens in the 23:45-23:59 window, with
+      #    tomorrow's prices in, and only once a day - the helper remembers the day it last ran;
+      #  * a restart rebuilds the plan only when there is no plan for the *current* day at all
+      #    (marker older than yesterday): yesterday's 23:50 run covers today, so a restart during
+      #    the day normally leaves it alone. Triggering it by hand at any other moment is free -
+      #    the window simply starts then (that is what makes the automation safe to test).
+      - condition: template
+        value_template: >-
+          {% set marker = states('input_datetime.emhass_dayahead_plan_date') %}
+          {% set today = now().date().isoformat() %}
+          {% if trigger.id | default('') in ['einde_dag', 'retry'] %}
+            {# Not before 23:50: the 23:45 MPC is still running at 23:45:00, and two EMHASS
+               optimisations at once is the collision class from 2026-09-13. The window is still
+               wide enough for a retry at 23:55. #}
+            {{ now().minute >= 50
+               and marker != today
+               and state_attr('sensor.emhass_price_horizon', 'covers_tomorrow') | bool(false) }}
+          {% elif trigger.id | default('') == '' %}
+            {# Hand-triggered (a test): always allowed; the guard decides what the prices allow. #}
+            true
+          {% else %}
+            {# Restart: repair only when there is no plan for the current day at all. Yesterday's
+               23:50 run covers today, so a marker of yesterday means we are fine. #}
+            {{ marker < (now().date() - timedelta(days=1)).isoformat() }}
+          {% endif %}
+    action:
+      # Same guard as the MPC, but with the question that fits the path: the scheduled evening run
+      # needs tomorrow's prices (it plans the coming day), while a restart rebuild just needs
+      # enough horizon left to be useful. The guard only skips when there is no price data at all.
+      - if:
+          - condition: template
+            value_template: "{{ trigger.id | default('') in ['einde_dag', 'retry'] }}"
+        then:
+          - action: script.emhass_price_guard
+            data:
+              label: "Day plan"
+              require_tomorrow: true
+              warn_below: 96
+            response_variable: price_guard
+        else:
+          - action: script.emhass_price_guard
+            data:
+              label: "Day plan (restart or test)"
+              warn_below: 24
+            response_variable: price_guard
+      - if:
+          - condition: template
+            # 'run' unless the guard explicitly says otherwise (see the MPC automation).
+            value_template: "{{ price_guard.decision | default('run') != 'run' }}"
+        then:
+          - stop: "EMHASS day-ahead skipped by the price guard"
+      # Same body builder as the MPC, with plan: dayahead - that only routes the result to the
+      # sensor.dayahead_* entities (entity_save + publish_prefix) instead of the shared sensors.
+      - action: script.emhass_build_payload
+        data:
+          plan: dayahead
+        response_variable: dayahead_payload
+      # The MPC action, not the day-ahead action: its `prediction_horizon` is honoured, so the run
+      # works at any moment (it shortens the window when tomorrow's prices are not in yet) - that
+      # is what keeps this automation safe to trigger by hand. The day-ahead action would insist on
+      # a full 24 h of prices and reject the run outside the ~13:00-23:45 window.
+      - action: rest_command.emhass_naive_mpc_optim
+        data:
+          emhass_payload: "{{ dayahead_payload.body }}"
+        # Same as the MPC: no answer, or an answer without status 200, means the run failed.
+        response_variable: dayahead_response
+        continue_on_error: true
+      - if:
+          - condition: template
+            value_template: >-
+              {{ dayahead_response is not defined or dayahead_response.status | default(0) | int(0) != 200 }}
+        then:
+          - action: system_log.write
+            data:
+              message: >-
+                EMHASS: the day plan run failed
+                (HTTP {{ dayahead_response.status | default('no answer') }}); retrying without
+                the thermal models.
+              level: error
+              logger: emhass.prices
+          # Fallback (2026-09-26, same trade-off as the MPC): the thermal blocks are the usual
+          # reason EMHASS rejects a run - on 2026-09-20 they made every run infeasible. Now that
+          # the day-ahead carries them too, a rejection would otherwise cost the whole day's plan,
+          # so retry once without them: a plan without the heat pump beats no plan. If that fails
+          # as well, the /30 retry in the trigger picks it up again.
+          - action: script.emhass_build_payload
+            data:
+              plan: dayahead
+              thermal: false
+            response_variable: dayahead_payload_fallback
+          - action: rest_command.emhass_naive_mpc_optim
+            data:
+              emhass_payload: "{{ dayahead_payload_fallback.body }}"
+            response_variable: dayahead_retry
+            continue_on_error: true
+          - if:
+              - condition: template
+                value_template: >-
+                  {{ dayahead_retry is not defined or dayahead_retry.status | default(0) | int(0) != 200 }}
+            then:
+              - action: system_log.write
+                data:
+                  message: >-
+                    EMHASS: the day plan run failed twice
+                    (first {{ dayahead_response.status | default('no answer') }}, fallback
+                    without the thermal models
+                    {{ dayahead_retry.status | default('no answer') }}); the automation retries
+                    at the next 5-minute slot inside the 23:45-23:59 window.
+                  level: error
+                  logger: emhass.prices
+              - stop: "EMHASS day-ahead failed"
+          - action: logbook.log
+            data:
+              name: EMHASS
+              message: >-
+                Day plan built without the thermal models (first attempt failed with
+                {{ dayahead_response.status | default('no answer') }})
+          - action: persistent_notification.create
+            data:
+              title: "EMHASS day-ahead: terugval gebruikt"
+              notification_id: emhass_dayahead_fallback
+              message: >-
+                De normale day-plan run mislukte (status
+                {{ dayahead_response.status | default('geen antwoord') }}), maar de run zonder
+                warmtemodellen slaagde. Het dagplan mist dus de warmtepomp - de
+                aanleiding staat in het logboek.
+          - action: notify.mobile_app_iphone_jan
+            data:
+              title: "EMHASS: terugval gebruikt"
+              message: >-
+                Dagplan zonder warmtemodellen gebouwd (de run mislukte met
+                {{ dayahead_response.status | default('-') }}). Het plan voor de komende dag is
+                er wel.
+      # Remember the day this plan was built. Only the scheduled evening run (and its retries)
+      # writes it: a restart rebuild is a repair of the current day's plan, and a hand-triggered
+      # test is a test - neither may stop tonight's 23:50 run from happening.
+      - if:
+          - condition: template
+            value_template: "{{ trigger.id | default('') in ['einde_dag', 'retry'] }}"
+        then:
+          - action: input_datetime.set_datetime
+            target:
+              entity_id: input_datetime.emhass_dayahead_plan_date
+            data:
+              date: "{{ now().date().isoformat() }}"
+      - delay:
+          seconds: 15
+      # Publish the saved day-ahead entities (sensor.dayahead_*) instead of the shared sensors, so
+      # sensor.p_batt_forecast and friends keep carrying the MPC plan (2026-10-03).
+      - action: rest_command.emhass_publish
+        data:
+          publish_prefix: "dayahead_"
+
+  # Early warning when tomorrow's prices are late. Normally they are published around 13:00
+  # and our price sensor picks them up within minutes; without them the day-ahead plan for
+  # tomorrow is never built, so this makes the cause visible at 14:00 already.
+  - id: emhass_tomorrow_prices_late_warning_auto
+    alias: "EMHASS warn when tomorrow prices are late"
+    description: "Logs a warning when our price data still does not cover tomorrow at 14:00."
+    mode: single
+    trigger:
+      - platform: time
+        at: "14:00:00"
+    condition:
+      - condition: template
+        value_template: "{{ not state_attr('sensor.emhass_price_horizon', 'covers_tomorrow') | bool(false) }}"
+    action:
+      - action: system_log.write
+        data:
+          message: >-
+            EMHASS: our price data does not cover tomorrow at 14:00
+            ({{ state_attr('sensor.emhass_price_horizon', 'quarters_tomorrow') }} quarters of
+            tomorrow known; Nord Pool's tomorrow-price sensor is
+            {{ states('binary_sensor.uilities_nord_pool_nl_tomorrow_price_available') }}).
+            The day-ahead plan for tomorrow will not be built until that fetch succeeds;
+            check the Nord Pool integration.
+          level: warning
+          logger: emhass.prices
+
+  # Safety net in the other direction: the day plan for the coming day should exist before
+  # midnight. If it does not, say so - with the reason, so the log tells whether the prices
+  # never arrived or EMHASS kept failing.
+  - id: emhass_dayahead_missing_check_auto
+    alias: "EMHASS check the day plan before midnight"
+    description: "Logs an error at 23:55 when no day plan was built today."
+    mode: single
+    trigger:
+      - platform: time
+        at: "23:55:00"
+    action:
+      - if:
+          - condition: template
+            value_template: >-
+              {{ states('input_datetime.emhass_dayahead_plan_date') != now().date().isoformat() }}
+        then:
+          - action: system_log.write
+            data:
+              message: >-
+                EMHASS: no day plan was built today, so the coming day
+                ({{ (now().date() + timedelta(days=1)).isoformat() }}) has none. Tomorrow's prices
+                {{ 'are in' if state_attr('sensor.emhass_price_horizon', 'covers_tomorrow') else 'are NOT in' }}
+                ({{ state_attr('sensor.emhass_price_horizon', 'quarters_tomorrow') }} quarters
+                known), the plan was last built on
+                {{ states('input_datetime.emhass_dayahead_plan_date') }}. Check the Nord Pool
+                integration and the day-plan automation.
+              level: error
+              logger: emhass.prices

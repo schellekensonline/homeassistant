@@ -15,14 +15,14 @@
 # the old age could not see, because the failure path republished the previous plan.
 #
 # This package adds:
-#   - input_datetime.emhass_last_mpc: stamped by the MPC automation in package_emhass.yaml,
+#   - input_datetime.emhass_last_mpc: stamped by the MPC automation in package_emhass_mpc.yaml,
 #   - sensor.emhass_forecast_age: minutes since that stamp,
 #   - binary_sensor.emhass_forecast_fresh: on while that is under 35 minutes (two missed cycles),
 #   - two automations: an alert when it goes stale and an all-clear when it recovers.
 #
 # The alert mentions whether EMHASS itself is reachable, because "the planner is down" and "the
 # planner runs but keeps failing" need different follow-up. The fallback retry without the thermal
-# models lives in package_emhass.yaml, in the MPC automation itself.
+# models lives in package_emhass_mpc.yaml, in the MPC automation itself.
 
 input_datetime:
   emhass_last_mpc:

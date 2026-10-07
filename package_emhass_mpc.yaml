@@ -1,0 +1,256 @@
+# EMHASS package: the quarter-hour MPC (split out of package_emhass.yaml on 2026-10-07).
+# rest_command.emhass_naive_mpc_optim is the HTTP layer, automation.emhass_execute_mpc_optimization_auto
+# runs it every 15 minutes and publishes the result.
+rest_command:
+  # Short-horizon MPC optimisation, run every 15 minutes.
+  emhass_naive_mpc_optim:
+    url: "http://localhost:5000/action/naive-mpc-optim"
+    method: POST
+    # Same reason as the day-ahead command (package_emhass_dayahead.yaml): give EMHASS room to
+    # answer, and enough room for the run that retrains the adjusted-PV model (see there).
+    timeout: 90
+    content_type: "application/json"
+    payload: >-
+      {# The body is built by script.emhass_build_payload (plan: mpc, from the current quarter
+         hour), so both optimisations send the same house. See the day-ahead command above for
+         the `emhass_payload` contract. #}
+      {%- set body = emhass_payload | default({'error': 'emhass_payload was not passed by the caller'}) -%}
+      {{ body if body is string else body | to_json }}
+
+automation:
+  - id: emhass_execute_mpc_optimization_auto
+    alias: "EMHASS execute MPC optimization auto"
+    description: "Triggers EMHASS every 15 minutes for realtime correction and fetches the plan. Also runs right after a Home Assistant restart."
+    mode: single
+    trigger:
+      - platform: time_pattern
+        minutes: "/15"
+        id: interval
+      - platform: homeassistant
+        event: start
+        id: ha_start
+      # EMHASS coming back is its own event (2026-09-26): after the weekly backup or any other
+      # restart, HA can be up minutes before EMHASS answers. Triggering on the health sensor
+      # means the first run happens within a minute of EMHASS being ready instead of waiting for
+      # the next quarter-hour slot - the difference between a 5-minute gap and an hour.
+      - platform: state
+        entity_id: binary_sensor.emhass_online
+        to: "on"
+        id: emhass_up
+    condition: []
+    action:
+      # After a restart: wait until EMHASS answers and the load sensor has real data.
+      # EMHASS's published sensors (p_load_forecast and friends) do not survive a
+      # Home Assistant restart, so this run recreates them immediately.
+      - if:
+          - condition: trigger
+            id:
+              - ha_start
+              - emhass_up
+        then:
+          - wait_template: "{{ is_state('binary_sensor.emhass_online', 'on') }}"
+            timeout: "00:03:00"
+            continue_on_timeout: true
+          - wait_template: "{{ states('sensor.emhass_house_power_no_def_loads') not in ['unknown', 'unavailable', 'none', ''] }}"
+            timeout: "00:02:00"
+            continue_on_timeout: true
+          # Republish EMHASS's previous result straight away, so the plan sensors are back
+          # within a minute of the restart even if the optimisation below has to wait. It is the
+          # plan from before the stop, not a new one - the run that follows replaces it.
+          - action: rest_command.emhass_publish
+            data: {}
+            continue_on_error: true
+      # Shared price guard: it logs the problem and returns 'run' or 'skip'.
+      - action: script.emhass_price_guard
+        data:
+          label: "MPC"
+        response_variable: price_guard
+      - if:
+          - condition: template
+            # 'run' unless the guard explicitly says otherwise, so a guard that fails to
+            # answer does not silently stop the optimisation.
+            value_template: "{{ price_guard.decision | default('run') != 'run' }}"
+        then:
+          - stop: "EMHASS MPC skipped by the price guard"
+      # The body comes from script.emhass_build_payload, so both optimisations send the same
+      # house; the rest_command itself is only the HTTP layer.
+      - action: script.emhass_build_payload
+        data:
+          plan: mpc
+        response_variable: mpc_payload
+      - action: rest_command.emhass_naive_mpc_optim
+        data:
+          emhass_payload: "{{ mpc_payload.body }}"
+        # The response variable is only set when the call succeeded, so an undefined
+        # variable means the call never got an answer; an answer with a status other than
+        # 200 (EMHASS rejecting the payload) is a failure too. Both get one retry.
+        response_variable: mpc_response
+        continue_on_error: true
+      - delay:
+          seconds: 60
+      # Failure path (added 2026-09-26 with the watchdog): log what came back, then retry once
+      # with a body *without* the thermal models (script.emhass_build_payload with thermal:
+      # false). Those blocks are the usual reason EMHASS rejects a run (2026-09-20: the DHW band
+      # made every run infeasible) and a degraded plan beats no plan at all. Either outcome is
+      # reported instead of failing silently.
+      - if:
+          - condition: template
+            value_template: >-
+              {{ mpc_response is not defined or mpc_response.status | default(0) | int(0) != 200 }}
+        then:
+          - action: system_log.write
+            data:
+              level: warning
+              message: >-
+                {% set c = mpc_response.content | default('') %}EMHASS MPC failed:
+                status={{ mpc_response.status | default('no answer') }}
+                body={{ (c if c is string else c | tojson)[:200] }}
+          # Two kinds of failure, two different retries (2026-09-26):
+          #  - no answer at all: EMHASS was restarting or busy (a container update does that).
+          #    Wait for it to answer again and retry the normal payload - a planned restart
+          #    then costs a few minutes instead of a gap of an hour.
+          #  - an answer with a non-200 status: EMHASS rejected the payload, which is almost
+          #    always one of the thermal models. Retry without them.
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ mpc_response is not defined }}"
+                sequence:
+                  - wait_template: "{{ is_state('binary_sensor.emhass_online', 'on') }}"
+                    timeout: "00:05:00"
+                    continue_on_timeout: true
+                  - action: rest_command.emhass_naive_mpc_optim
+                    data:
+                      emhass_payload: "{{ mpc_payload.body }}"
+                    response_variable: mpc_retry
+                    continue_on_error: true
+              - conditions:
+                  - condition: template
+                    value_template: >-
+                      {{ mpc_response is defined
+                         and mpc_response.status | default(0) | int(0) != 200 }}
+                sequence:
+                  - action: script.emhass_build_payload
+                    data:
+                      plan: mpc
+                      thermal: false
+                    response_variable: mpc_payload_fallback
+                  - action: rest_command.emhass_naive_mpc_optim
+                    data:
+                      emhass_payload: "{{ mpc_payload_fallback.body }}"
+                    response_variable: mpc_retry
+                    continue_on_error: true
+          - delay:
+              seconds: 20
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: >-
+                      {{ mpc_retry is not defined or mpc_retry.status | default(0) | int(0) != 200 }}
+                sequence:
+                  # Patient retries (2026-09-26): after a restart EMHASS can take minutes to
+                  # become usable again (containers coming up, caches loading). Try up to three
+                  # more times, two minutes apart, and publish immediately when one succeeds -
+                  # a restart then costs minutes instead of an hour, which is the whole point.
+                  - repeat:
+                      count: 3
+                      sequence:
+                        - delay:
+                            seconds: 120
+                        - action: rest_command.emhass_naive_mpc_optim
+                          data:
+                            emhass_payload: "{{ mpc_payload.body }}"
+                          response_variable: mpc_retry
+                          continue_on_error: true
+                        - if:
+                            - condition: template
+                              value_template: >-
+                                {{ mpc_retry is defined
+                                   and mpc_retry.status | default(0) | int(0) == 200 }}
+                          then:
+                            - action: rest_command.emhass_publish
+                              data: {}
+                              continue_on_error: true
+                            - action: logbook.log
+                              data:
+                                name: EMHASS
+                                message: "MPC succeeded on a later attempt (restart recovery)"
+                            # Heartbeat for the watchdog (2026-10-07): a late success is still a
+                            # success, so stamp it before this branch stops the automation.
+                            - action: input_datetime.set_datetime
+                              target:
+                                entity_id: input_datetime.emhass_last_mpc
+                              data:
+                                timestamp: "{{ now().timestamp() | int }}"
+                            - stop: "MPC recovered on a later attempt"
+                  - action: persistent_notification.create
+                    data:
+                      title: "EMHASS MPC mislukt"
+                      notification_id: emhass_mpc_failed
+                      message: >-
+                        {% set c1 = mpc_response.content | default('') %}
+                        {% set c2 = mpc_retry.content | default('') %}
+                        De kwartierrun is twee keer mislukt.
+                        Eerste poging: {{ mpc_response.status | default('geen antwoord') }}
+                        ({{ (c1 if c1 is string else c1 | tojson)[:200] }}).
+                        Tweede poging zonder warmtemodellen:
+                        {{ mpc_retry.status | default('geen antwoord') }}
+                        ({{ (c2 if c2 is string else c2 | tojson)[:200] }}).
+                  - action: logbook.log
+                    data:
+                      name: EMHASS
+                      message: >-
+                        MPC failed twice (first {{ mpc_response.status | default('no answer') }},
+                        retry {{ mpc_retry.status | default('no answer') }})
+                  - if:
+                      - condition: template
+                        # EMHASS offline means it is (re)starting: the weekly backup does
+                        # `dockers down all` + `up all`, so every stack stops. That is expected,
+                        # and the watchdog is the one that warns when the gap gets too long - no
+                        # phone notification from the run itself in that case.
+                        value_template: "{{ is_state('binary_sensor.emhass_online', 'on') }}"
+                    then:
+                      - action: notify.mobile_app_iphone_jan
+                        data:
+                          title: "EMHASS MPC mislukt"
+                          message: >-
+                            Twee mislukte runs ({{ mpc_response.status | default('-') }} en
+                            {{ mpc_retry.status | default('-') }}). Details in de melding in HA.
+            default:
+              - action: persistent_notification.create
+                data:
+                  title: "EMHASS MPC: terugval gebruikt"
+                  notification_id: emhass_mpc_failed
+                  message: >-
+                    De normale run mislukte (status
+                    {{ mpc_response.status | default('geen antwoord') }}), maar de run zonder
+                    warmtemodellen slaagde. Er is dus een plan, alleen zonder het DHW- en
+                    warmtemodel - de aanleiding staat in het logboek.
+              - action: notify.mobile_app_iphone_jan
+                data:
+                  title: "EMHASS: terugval gebruikt"
+                  message: >-
+                    Normale run mislukt ({{ mpc_response.status | default('-') }}), terugval
+                    zonder warmtemodellen werkte. Plan is er, wel gedegradeerd.
+      # Heartbeat for the watchdog (2026-10-07): stamp the last *successful* run, so the age
+      # measures what we want to know instead of an indirect publication (see the header of
+      # package_emhass_watchdog.yaml). The recovered-on-a-later-attempt branch above stamps and
+      # stops itself, so this covers the first attempt and the thermal-free fallback.
+      - if:
+          - condition: template
+            value_template: >-
+              {{ (mpc_response is defined and mpc_response.status | default(0) | int(0) == 200)
+                 or (mpc_retry is defined and mpc_retry.status | default(0) | int(0) == 200) }}
+        then:
+          - action: input_datetime.set_datetime
+            target:
+              entity_id: input_datetime.emhass_last_mpc
+            data:
+              timestamp: "{{ now().timestamp() | int }}"
+      - delay:
+          seconds: 5
+      - action: rest_command.emhass_publish
+        data: {}
+        # Publishing the previous result is better than aborting the whole run.
+        continue_on_error: true
+  

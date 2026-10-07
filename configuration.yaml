@@ -88,5 +88,12 @@ homeassistant:
     sessy_commands_pack:        !include package_sessy_commands.yaml
     sessy_algorithms_pack:      !include package_sessy_algorithms.yaml
     sessy_monitor_pack:         !include package_sessy_monitor.yaml
+    # The EMHASS package is split along its workflows (2026-10-07): the core/shared part, the
+    # shared payload builder, the quarter-hour MPC, the day plan, the ML load model and the
+    # watchdog. Home Assistant merges them all the same way.
     emhass_pack:                !include package_emhass.yaml
+    emhass_payload_pack:        !include package_emhass_payload.yaml
+    emhass_mpc_pack:            !include package_emhass_mpc.yaml
+    emhass_dayahead_pack:       !include package_emhass_dayahead.yaml
+    emhass_ml_pack:             !include package_emhass_ml.yaml
     emhass_watchdog_pack:       !include package_emhass_watchdog.yaml

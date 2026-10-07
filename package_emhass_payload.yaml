@@ -1,0 +1,362 @@
+# EMHASS package: the shared optimisation body (split out of package_emhass.yaml on 2026-10-07).
+# script.emhass_build_payload turns the live sensors, the prices and the three thermal batteries
+# into the JSON body for *both* optimisations, so the MPC (package_emhass_mpc.yaml) and the
+# day-ahead (package_emhass_dayahead.yaml) always describe the same house;
+# script.emhass_price_guard decides whether a run makes sense at all.
+script:
+  # Build the JSON body for the two EMHASS optimisations. One script for both, so the MPC (every
+  # 15 minutes) and the day-ahead (once a day, when tomorrow's prices arrive) always describe the
+  # same house: the same window from the current quarter hour, the same prices, the same night
+  # reserve and the same three thermal batteries. Until 2026-09-26 those thermal blocks lived only
+  # in the MPC payload, so the day-ahead plan silently ignored the heat pump; until 2026-10-03 the
+  # day-ahead sent only tomorrow's prices, which EMHASS mapped positionally from "now" and so
+  # shifted by ~11 h.
+  emhass_build_payload:
+    alias: "EMHASS build optimisation payload"
+    description: >-
+      Returns { body: <json string> }. plan: 'mpc' and 'dayahead' both start at the current
+      quarter hour; 'dayahead' only adds entity_save/publish_prefix so its plan lands on the
+      sensor.dayahead_* entities. thermal: false drops the thermal batteries - the fallback both
+      automations use when EMHASS rejects the blocks.
+    mode: parallel
+    max: 4
+    fields:
+      plan:
+        name: "Which plan"
+        description: >-
+          "'mpc' or 'dayahead' - both plan from the current quarter hour; 'dayahead' only adds
+          entity_save/publish_prefix so its plan lands on the sensor.dayahead_* entities. EMHASS
+          starts a day-ahead horizon at the run time, so it is a 24 h plan from ~13:00, not the
+          calendar day tomorrow."
+        default: "mpc"
+        selector:
+          select:
+            options: ["mpc", "dayahead"]
+      thermal:
+        name: "Send the thermal batteries"
+        description: "Off for the fallback run; the blocks are the usual reason EMHASS rejects a payload."
+        default: true
+        selector:
+          boolean:
+    sequence:
+      - variables:
+          body: >-
+            {% set day_ahead = plan | default('mpc', true) == 'dayahead' %}
+            {% set send_thermal = thermal | default(true, true) | bool(true) %}
+            {# Both plans start at the current quarter hour, rounded down so the filter is stable
+               within it: EMHASS's day-ahead horizon starts at the run time too
+               (`get_forecast_dates` floors "now") and it applies a passed price *list* positionally
+               from that start. Sending only tomorrow's quarters therefore shifted the whole price
+               curve by the run-time-to-midnight gap - measured 10:45 on a 13:15 run on 2026-10-03,
+               all 96 values wrong (see the notes). Send from now, like the MPC. #}
+            {% set minute = now().minute %}
+            {% set kwarter_start = now().replace(minute=(minute - (minute % 15)), second=0, microsecond=0).isoformat() %}
+            {% set incl = state_attr('sensor.electricity_buying_price', 'prices') | selectattr('time', '>=', kwarter_start) | map(attribute='price') | list %}
+            {% set excl = state_attr('sensor.electricity_selling_price', 'prices') | selectattr('time', '>=', kwarter_start) | map(attribute='price') | list %}
+            {# Round to 4 decimals; EMHASS expects plain floats in the JSON body, and the horizon
+               may never exceed the list length: Nord Pool only publishes tomorrow after ~13:00, so
+               asking for 96 quarters while the list is shorter gets the run rejected with
+               "length should be 96". #}
+            {% set incl_rounded = incl | map('round', 4) | list %}
+            {% set excl_rounded = excl | map('round', 4) | list %}
+            {% set n = min(96, incl_rounded | length) %}
+            {# Terminal target: the night reserve, not a fixed 60 %. Preferred basis (Jan,
+               2026-09-26): the model's own load forecast over one full night window (22:00-07:00),
+               which *derives* the night share instead of assuming the Sessy's flat 25 % of the
+               daily average, plus a 10 % margin for forecast error and for the gap between
+               sunrise and real PV surplus. Falls back to that 25 % rule when the forecast does
+               not cover a complete window (right after a restart, or before the first run of the
+               day). Clamped to 5-90 %. #}
+            {% set fc = state_attr('sensor.p_load_forecast', 'forecasts') or [] %}
+            {% set acc = namespace(wh=0.0, n=0, started=False) %}
+            {% for x in fc %}
+              {% set hh = x.date[11:13] | int %}
+              {% if hh >= 22 or hh < 7 %}
+                {% set acc.started = True %}
+                {% set acc.wh = acc.wh + (x.p_load_forecast | float(0)) * 0.25 %}
+                {% set acc.n = acc.n + 1 %}
+              {% elif acc.started %}
+                {% break %}
+              {% endif %}
+            {% endfor %}
+            {% set avg_wh = (states('input_number.night_energy_in_percent_of_daily_used_in_home') | float(25) / 100)
+                            * (states('sensor.average_daily_energy_used_in_home') | float(0)) * 1000 %}
+            {# The forecast only sees the house, never the heat pump, so the reserve carries both a
+               factor on the forecast and a fixed allowance: see input_number.emhass_reserve_*. #}
+            {% set reserve_margin = states('input_number.emhass_reserve_margin') | float(1.15) %}
+            {% set reserve_fixed_wh = states('input_number.emhass_reserve_fixed_wh') | float(2000) %}
+            {% set reserve_wh = (acc.wh if acc.n >= 30 else avg_wh) * reserve_margin + reserve_fixed_wh %}
+            {% set reserve_soc = [ [ reserve_wh / 15960, 0.05 ] | max, 0.90 ] | min %}
+            {# --- Thermal batteries: the DHW tank, space heating and space cooling -----------------
+               Batch 2026-09-26. All parameters come from sensor.building_parameters (fed by
+               secrets.yaml) plus live sensors, so no building detail is hard-coded. The three
+               loads share one heat pump; the mutual-exclusion group that keeps them from running
+               together lives in the EMHASS config. This is compute-only: nothing acts on the
+               published p_deferrable* sensors. #}
+            {% set ba = 'sensor.building_parameters' %}
+            {% set slab = state_attr(ba,'slab_volume_m3') | float(4.7) %}
+            {% set room_now = states('sensor.therma_v_room_temperature') | float(20.5) %}
+            {% set uval = state_attr(ba,'u_value') | float(0.55) %}
+            {% set env = state_attr(ba,'envelope_area_m2') | float(380) %}
+            {% set vent = state_attr(ba,'ventilation_rate') | float(0.5) %}
+            {% set vol = state_attr(ba,'heated_volume_m3') | float(300) %}
+            {% set warea = state_attr(ba,'window_area_m2') | float(32.7) %}
+            {% set shgc = state_attr(ba,'shgc') | float(0.55) %}
+            {% set igf = state_attr(ba,'internal_gains_factor') | float(0.6) %}
+            {% set tau = state_attr(ba,'slab_inertia_time_constant_h') | float(2) %}
+            {% set dhw_now = states('sensor.therma_v_dhw_temperature') | float(50) %}
+            {# DHW target: the setpoint of the existing DHW climate entity (register 8), so a
+               disinfection cycle that raises the target travels into the model by itself. #}
+            {% set dhw_target = state_attr('climate.therma_v_dhw','temperature')
+                                | float(0) or states('sensor.therma_v_dhw_target_temperature') | float(50) %}
+            {# Comfort bands. The start temperature is clamped into its band in the body below:
+               EMHASS treats a start outside min/max as infeasible, which is what cost us 11 hours
+               on 2026-09-20 when the DHW tank sat above its old 58 C ceiling after the
+               disinfection. #}
+            {% set dhw_min = state_attr(ba,'dhw_min_temperature') | float(42) %}
+            {% set dhw_max = state_attr(ba,'dhw_max_temperature') | float(68) %}
+            {# Which season the house model should plan. The heat pump's own HVAC mode decides:
+               'cool' is the cooling season, 'heat' and 'auto' are the heating season (auto is a
+               heating curve with a delta, it never cools), 'off' means neither. The out-of-season
+               load stays in the body with a band so wide that nothing can force it to run, so the
+               number of loads always matches what EMHASS expects. #}
+            {% set pump_mode = states('climate.therma_v_heating_cooling') %}
+            {% set heat_season = pump_mode in ['heat', 'auto'] %}
+            {% set cool_season = pump_mode == 'cool' %}
+            {# Who owns the heat pump (2026-10-07, Jan). Only while the Therma V control strategy is
+               EMHASS does the plan carry the HP blocks for real; Manual and Heuristic park all
+               three, so the plan never schedules a pump it does not control (and
+               sensor.emhass_hp_plan_power reads 0). On the Manual/Heuristic side the pump keeps
+               running - its own thermostat or the e-price ESS automations - but that load is the
+               battery's problem through ZoM, not the plan's. The DHW block also needs its own
+               on/off coil: with the DHW switch off the pump cannot heat the tank, so that block is
+               parked too. Floor and cooling already follow the climate mode via heat/cool_season;
+               the same "parked" tank (pinned to the current temperature, zero loss, zero draw)
+               switches them off without EMHASS rejecting the block. #}
+            {% set hp_owned = is_state('input_select.therma_v_control_strategy', 'EMHASS') %}
+            {% set hp_heat = hp_owned and heat_season %}
+            {% set hp_cool = hp_owned and cool_season %}
+            {% set hp_dhw = hp_owned and is_state('switch.therma_v_dhw_on_off', 'on') %}
+            {% set sp_heat = states('input_number.room_setpoint_heating') | float(20) %}
+            {% set sp_cool = states('input_number.room_setpoint_cooling') | float(24) %}
+            {% set margin = state_attr(ba,'room_comfort_margin_c') | float(1) %}
+            {# Comfort window of +-1 C around the setpoint (Jan, 2026-09-20), stretched to the
+               current room temperature while the house sits outside it: the bound never forbids
+               where the house already is, so a transient cannot make the run infeasible, and the
+               target always lies inside the band by construction. #}
+            {% set cool_floor = [sp_cool - margin, room_now] | min %}
+            {% set cool_ceil  = [sp_cool + margin, room_now] | max %}
+            {# An out-of-season load cannot simply be given a wide band: EMHASS still forces it to
+               run for the building's own demand (the cooling side in particular ran 15-20 kWh a
+               day with a 5-45 C band on 2026-09-20). Parking it as a zero-draw water tank whose
+               temperature is pinned to the current room temperature really does switch it off -
+               tested against EMHASS directly, 0.0 kWh. The number of loads stays 3, which EMHASS
+               requires. #}
+            {% set parked = ([room_now] * n) | to_json %}
+            {# The DHW block parks on its own current temperature instead of the room's: same
+               zero-draw trick, and it keeps the number recognisable. #}
+            {% set dhw_parked = ([dhw_now] * n) | to_json %}
+            {# --- Floor model (Jan, 2026-09-20) -------------------------------------------------
+               The thermal store is the FLOOR, not the room: EMHASS's slab model wants the floor
+               temperature, and our heat pump regulates the return (= floor) temperature. So the
+               store starts on the return sensor and the weather-compensated curves live on the
+               water side: `heating_curve` sets the supply temperature, `min_temperature_curve`
+               sets the floor the slab must respect, and their offset carries
+               input_number.heating_curve_offset_correction - the knob of the integrating
+               controller that has to hold the room on its setpoint. The room setpoint +-1 C is
+               therefore no longer an EMHASS band but the controller's target. #}
+            {% set floor_now = states('sensor.therma_v_inlet_temperature') | float(room_now) %}
+            {% set curve_slope = state_attr(ba,'heating_curve_slope') | float(1.0) %}
+            {% set curve_offset = (state_attr(ba,'heating_curve_offset') | float(30))
+                                  + (states('input_number.heating_curve_offset_correction') | float(0)) %}
+            {% set curve_min_supply = state_attr(ba,'heating_curve_min_supply') | float(25) %}
+            {% set curve_max_supply = state_attr(ba,'heating_curve_max_supply') | float(40) %}
+            {% set floor_drop = state_attr(ba,'floor_return_drop_c') | float(4) %}
+            {% set floor_min_abs = [state_attr(ba,'floor_min_temperature') | float(20), floor_now] | min %}
+            {% set floor_max_abs = [state_attr(ba,'floor_max_temperature') | float(28), floor_now] | max %}
+            {% set floor_curve_min = state_attr(ba,'floor_curve_min_supply') | float(22) %}
+            {% set floor_curve_max = state_attr(ba,'floor_curve_max_supply') | float(32) %}
+
+            {
+              "load_cost_forecast": {{ incl_rounded | to_json }},
+              "prod_price_forecast": {{ excl_rounded | to_json }},
+              "prediction_horizon": {{ n }},
+              {# Battery power limits, coupled to the Sessy API strategy helpers (Jan, 2026-10-05):
+                 these are the same knobs the ZoM layer clips its setpoint with, and now they also
+                 cap what EMHASS may plan, so the plan cannot ask for power the actuator is not
+                 allowed to deliver. They travel as runtime parameters (associations.csv maps both
+                 to plant_conf), so the shared builder gives them to the MPC and the day-ahead
+                 alike; changing a helper takes effect on the next quarter-hour plan. #}
+              "battery_charge_power_max": {{ states('input_number.sessy_api_strategy_max_charge_power') | int(6000) }},
+              "battery_discharge_power_max": {{ states('input_number.sessy_api_strategy_max_discharge_power') | int(3000) }},
+              "soc_init": {{ (states('sensor.sessy_battery_state_of_charge') | float(60) / 100) | round(3) }},
+              "soc_final": {{ reserve_soc | round(3) }}{% if day_ahead %},
+              {# Keep the day-ahead plan out of the MPC's sensors (2026-10-03): the run saves its
+                 built entities under this prefix and the automation publishes those, so the two
+                 plans no longer share entity ids. See the notes, "03-10: the day-ahead plan". #}
+              "entity_save": true,
+              "publish_prefix": "dayahead_"{% endif %}{% if send_thermal %},
+              "def_load_config": [
+                {"thermal_battery": {
+                  "volume": {{ state_attr(ba,'dhw_volume_m3') | float(0.3) }},
+                  "density": 997,
+                  "heat_capacity": 4.184,
+                  "thermal_loss": {{ state_attr(ba,'dhw_thermal_loss_kw') | float(0.19) if hp_dhw else 0.0 }},
+                  "start_temperature": {{ [[dhw_now, dhw_min] | max, dhw_max] | min if hp_dhw else dhw_now }},
+                  "min_temperatures": {{ ([dhw_min] * n) | to_json if hp_dhw else dhw_parked }},
+                  "max_temperatures": {{ ([dhw_max] * n) | to_json if hp_dhw else dhw_parked }},
+                  "supply_temperature": {{ dhw_target }},
+                  "carnot_efficiency": {{ state_attr(ba,'dhw_carnot_efficiency') | float(0.42) }},
+                  "draw_off_demand": {{ ([0.005] * n) | to_json if hp_dhw else ([0.0] * n) | to_json }}
+                }},
+                {"thermal_battery": {
+                  "volume": {{ slab }},
+                  "start_temperature": {{ floor_now if hp_heat else room_now }},
+                  "min_temperatures": {{ ([floor_min_abs] * n) | to_json if hp_heat else parked }},
+                  "max_temperatures": {{ ([floor_max_abs] * n) | to_json if hp_heat else parked }},
+                  {% if hp_heat %}
+                  "heating_curve": {"slope": {{ curve_slope }}, "offset": {{ curve_offset }},
+                                    "min_supply": {{ curve_min_supply }}, "max_supply": {{ curve_max_supply }}},
+                  "min_temperature_curve": {"slope": {{ curve_slope }}, "offset": {{ curve_offset - floor_drop }},
+                                            "min_supply": {{ floor_curve_min }}, "max_supply": {{ floor_curve_max }}},
+                  "carnot_efficiency": {{ state_attr(ba,'carnot_efficiency_heating') | float(0.45) }},
+                  "u_value": {{ uval }},
+                  "envelope_area": {{ env }},
+                  "ventilation_rate": {{ vent }},
+                  "heated_volume": {{ vol }},
+                  "window_area": {{ warea }},
+                  "shgc": {{ shgc }},
+                  "internal_gains_factor": {{ igf }},
+                  "thermal_inertia_time_constant": {{ tau }},
+                  "indoor_target_temperature": {{ sp_heat }},
+                  "sense": "heat"
+                  {% else %}
+                  "density": 997,
+                  "heat_capacity": 4.184,
+                  "thermal_loss": 0.0,
+                  "supply_temperature": {{ state_attr(ba,'heating_supply_temperature') | float(32) }},
+                  "carnot_efficiency": {{ state_attr(ba,'carnot_efficiency_heating') | float(0.45) }},
+                  "draw_off_demand": {{ ([0.0] * n) | to_json }}
+                  {% endif %}
+                }},
+                {"thermal_battery": {
+                  "volume": {{ slab }},
+                  "start_temperature": {{ room_now }},
+                  "min_temperatures": {{ ([cool_floor] * n) | to_json if hp_cool else parked }},
+                  "max_temperatures": {{ ([cool_ceil] * n) | to_json if hp_cool else parked }},
+                  {% if hp_cool %}
+                  "supply_temperature": {{ state_attr(ba,'cooling_supply_temperature') | float(16) }},
+                  "carnot_efficiency": {{ state_attr(ba,'carnot_efficiency_heating') | float(0.45) }},
+                  "u_value": {{ uval }},
+                  "envelope_area": {{ env }},
+                  "ventilation_rate": {{ vent }},
+                  "heated_volume": {{ vol }},
+                  "window_area": {{ warea }},
+                  "shgc": {{ shgc }},
+                  "internal_gains_factor": {{ igf }},
+                  "thermal_inertia_time_constant": {{ tau }},
+                  "indoor_target_temperature": {{ sp_cool }},
+                  "sense": "cool"
+                  {% else %}
+                  "density": 997,
+                  "heat_capacity": 4.184,
+                  "thermal_loss": 0.0,
+                  "supply_temperature": {{ state_attr(ba,'cooling_supply_temperature') | float(16) }},
+                  "carnot_efficiency": {{ state_attr(ba,'carnot_efficiency_heating') | float(0.45) }},
+                  "draw_off_demand": {{ ([0.0] * n) | to_json }}
+                  {% endif %}
+                }}
+              ]{% endif %}
+            }
+      # A script response has to be a dictionary; the caller reads .body from it.
+      - variables:
+          built:
+            # Home Assistant's native template rendering hands this over as a real dict, not as
+            # the JSON text that was written above. That is fine - the rest_command turns it back
+            # into JSON before it goes on the wire - but it is why the payload templates in the
+            # rest_commands (package_emhass_mpc.yaml / package_emhass_dayahead.yaml) test for a
+            # string.
+            body: "{{ body }}"
+      - stop: "payload built"
+        response_variable: built
+
+  # Price-data guard, shared by the MPC and the day-ahead automation. Returns 'run' or 'skip'
+  # so the caller can decide whether the optimisation makes sense; the caller keeps the
+  # optimisation itself.
+  emhass_price_guard:
+    alias: "EMHASS price guard"
+    description: >-
+      Logs an error when there is no price data at all and a warning when the horizon is
+      short. Returns 'skip' when the caller should not run EMHASS, otherwise 'run'.
+    fields:
+      label:
+        name: "Label in the log line"
+        description: "What is being guarded, e.g. MPC or Day-ahead."
+        default: "EMHASS"
+        selector:
+          text:
+      warn_below:
+        name: "Warn below (quarters)"
+        description: "Log a warning when fewer than this many quarters are known (see require_tomorrow)."
+        default: 24
+        selector:
+          number:
+            min: 0
+            max: 192
+      require_tomorrow:
+        name: "Look at tomorrow instead of the horizon"
+        description: "Measure tomorrow's quarters instead of the quarters from now; for the day-ahead run."
+        default: false
+        selector:
+          boolean:
+    sequence:
+      - variables:
+          require: "{{ require_tomorrow | default(false, true) | bool(false) }}"
+      # The MPC needs the quarters from now on, the day-ahead needs the quarters of tomorrow.
+      - variables:
+          known: >-
+            {% if require %}
+              {{ state_attr('sensor.emhass_price_horizon', 'quarters_tomorrow') | int(0) }}
+            {% else %}
+              {{ states('sensor.emhass_price_horizon') | int(0) }}
+            {% endif %}
+          unit: "{{ 'quarters of tomorrow' if require else 'quarters' }}"
+      # A field default is not always filled in by Home Assistant, so fall back here too.
+      - variables:
+          warn_at: "{{ warn_below | default(24, true) | int(0) }}"
+      # No data at all: the restart case, right before the price sensor has fetched its first
+      # day. A run with an empty price list is rejected by EMHASS (and falls back to the
+      # missing csv), so not calling it is the honest answer.
+      - if:
+          - condition: template
+            value_template: "{{ known < 1 }}"
+        then:
+          - action: system_log.write
+            data:
+              message: >-
+                EMHASS: {{ label }} run skipped, no price data for it ({{ known }} {{ unit }},
+                sensor.emhass_price_horizon is {{ states('sensor.emhass_price_horizon') }}).
+                The published sensors keep their previous values.
+              level: error
+              logger: emhass.prices
+        else:
+          # Warn when the horizon gets so short that tomorrow's prices are missing. Normal is
+          # ~44 quarters or more, so a warning means the Nord Pool data is incomplete.
+          - if:
+              - condition: template
+                value_template: "{{ known < warn_at }}"
+            then:
+              - action: system_log.write
+                data:
+                  message: >-
+                    EMHASS: {{ label }} price data is short, only {{ known }} {{ unit }}
+                    (last price {{ state_attr('sensor.emhass_price_horizon', 'last_price_time') }},
+                    tomorrow's prices {{ 'are in' if state_attr('sensor.emhass_price_horizon', 'covers_tomorrow') else 'are NOT in' }}).
+                  level: warning
+                  logger: emhass.prices
+      # The response has to be a dictionary; the caller reads .decision from it.
+      - variables:
+          guard_response:
+            decision: "{{ 'skip' if known < 1 else 'run' }}"
+      - stop: ""
+        response_variable: guard_response

@@ -25,6 +25,27 @@ input_select:
       - "8 - Very low power state (1/2/5)"
     # No initial: Home Assistant restores the last chosen state.
 
+  # Who owns the heat pump (2026-10-07, Jan). Deliberately the same shape as
+  # input_select.sessy_auto_api_control_strategy, so the battery and the heat pump read the same:
+  #   Manual    - no automatic control; the pump follows its own thermostat/programmes and EMHASS
+  #               parks all heat-pump blocks in the plan;
+  #   Heuristic - the three ess_based_on_e_price_*_auto automations pick the ESS mode from the
+  #               price (today's behaviour); EMHASS parks all heat-pump blocks in the plan;
+  #   EMHASS    - the plan owns the pump: those three automations stand down (they would fight
+  #               the plan) and the payload sends the three thermal blocks for real, so EMHASS can
+  #               put DHW and floor heating on the cheap hours. Making the pump actually *follow*
+  #               the plan is the next step; until that exists EMHASS mode only means "the plan may
+  #               schedule it", and sensor.emhass_hp_plan_power shows the wish.
+  # initial is only the first-ever value (Home Assistant restores the last choice after that).
+  therma_v_control_strategy:
+    name: "Therma V control strategy"
+    icon: mdi:auto-mode
+    options:
+      - "Manual"
+      - "Heuristic"
+      - "EMHASS"
+    initial: "Heuristic"
+
 
 input_number:
   # Daily price spread above which the high-price regime is used.
@@ -53,6 +74,11 @@ automation:
     conditions:
       - condition: template
         value_template: "{{ states('sensor.electricity_buying_price') | float(0) <= -0.001 }}"
+      # Only the Heuristic strategy owns the pump (2026-10-07, mirrors the battery's Heuristic
+      # gate). Manual turns these off, EMHASS hands the pump to the plan.
+      - condition: state
+        entity_id: input_select.therma_v_control_strategy
+        state: "Heuristic"
     actions:
       - action: switch.turn_on
         target:
@@ -113,6 +139,10 @@ automation:
         value_template: >-
           {{ states('sensor.difference_in_electricity_price_today') | float(0)
              < states('input_number.therma_v_ess_high_price_difference') | float(0) }}
+      # Only the Heuristic strategy owns the pump (2026-10-07, see the select's comment).
+      - condition: state
+        entity_id: input_select.therma_v_control_strategy
+        state: "Heuristic"
     actions:
       - delay: "00:01" # Let the price sensors settle after the trigger.
       - choose:
@@ -175,6 +205,10 @@ automation:
         value_template: >-
           {{ states('sensor.difference_in_electricity_price_today') | float(0)
              >= states('input_number.therma_v_ess_high_price_difference') | float(0) }}
+      # Only the Heuristic strategy owns the pump (2026-10-07, see the select's comment).
+      - condition: state
+        entity_id: input_select.therma_v_control_strategy
+        state: "Heuristic"
     actions:
       - delay: "00:01" # Let the price sensors settle after the trigger.
       - choose:
