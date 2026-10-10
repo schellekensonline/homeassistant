@@ -44,11 +44,16 @@ template:
         # Room temperature is deliberate: the climate card should show the value the room control
         # loop works with. The water inlet/outlet variants are not used here.
         current_temperature: "{{ states('sensor.therma_v_room_temperature') }}"
+        # Auto mode keeps showing its own delta register. The other modes show the *request*: since
+        # 2026-10-10 the control layer (package_therma_v_control.yaml) is the only writer of
+        # register 2, so the slider would otherwise follow the moving effective value. The register
+        # itself stays readable through sensor.therma_v_target_temperature_circuit_1 and
+        # sensor.therma_v_water_setpoint_effective.
         target_temperature: >-
           {% if is_state('sensor.therma_v_operation_mode', '3') %}
           {{ states('sensor.therma_v_auto_mode_target_temperature_delta_circuit_1') }}
           {% else %}
-          {{ states('sensor.therma_v_target_temperature_circuit_1') }}
+          {{ states('input_number.therma_v_water_target_request') }}
           {% endif %}
         hvac_modes: "{{ ['off', 'cool', 'heat', 'auto'] }}"
         hvac_mode: >-
@@ -66,20 +71,29 @@ template:
           # clamp on the value that goes to the Modbus register. `temperature` is the requested
           # value from the service call.
           - variables:
+              # A script `variables:` value is normalised to its native type: `{{ states(...) }}`
+              # arrives as the *number* 4, not the string "4" (measured 2026-10-10; even `| string`
+              # in the definition is normalised back). Every `mode == '4'` therefore compared a
+              # number with a string and was false, which swapped the heat and cool bands from the
+              # core migration on 2026-10-08 until this fix. All mode comparisons below are numeric
+              # (`mode | int(-1)`), which is immune to that normalisation. It only became visible
+              # when the cool band was narrowed to 10..20 and a heat request of 25 came back as 20.
               mode: "{{ states('sensor.therma_v_operation_mode') }}"
               water_control: "{{ states('sensor.therma_v_control_mode') | int(-1) < 2 }}"
+              # The water band now comes from the four min/max helpers (the same source the
+              # start-up layer uses); auto keeps the -5..5 delta and room control the 15..25 band.
               temp_lo: >-
-                {% if mode == '3' %}-5
-                {% elif water_control %}10
+                {% if mode | int(-1) == 3 %}-5
+                {% elif water_control %}{{ states('input_number.therma_v_min_water_temperature_heat') if mode | int(-1) == 4 else states('input_number.therma_v_min_water_temperature_cool') }}
                 {% else %}15{% endif %}
               temp_hi: >-
-                {% if mode == '3' %}5
-                {% elif water_control %}{% if mode == '4' %}40{% else %}30{% endif %}
+                {% if mode | int(-1) == 3 %}5
+                {% elif water_control %}{{ states('input_number.therma_v_max_water_temperature_heat') if mode | int(-1) == 4 else states('input_number.therma_v_max_water_temperature_cool') }}
                 {% else %}25{% endif %}
               target: "{{ [[temperature | float(0), temp_lo | float(0)] | max, temp_hi | float(40)] | min }}"
           - choose:
               - conditions:
-                  - "{{ mode == '3' }}"  # auto mode: the delta register
+                  - "{{ mode | int(-1) == 3 }}"  # auto mode: the delta register
                 sequence:
                   - action: modbus.write_register
                     data:
@@ -92,13 +106,20 @@ template:
                         {% else %}
                           {{ target | int }}
                         {% endif %}
-            default:  # not auto mode: the water temperature register
-              - action: modbus.write_register
-                data:
-                  address: 2
-                  slave: 1
-                  hub: modbus_gateway_therma_v
-                  value: "{{ ((target | float(0)) * 10) | int }}"
+            default:  # not auto mode: the request helper, the start-up layer writes register 2
+              # A range-style call (target_temp_low/high without `temperature`, which a dashboard
+              # card can send) must not write anything: `temperature` is then not a number and the
+              # clamp above would turn it into the season minimum. Measured 2026-10-10: such a call
+              # wrote 20 in heat and 10 in cool while the real request was 26.
+              - if:
+                  - condition: template
+                    value_template: "{{ temperature is number }}"
+                then:
+                  - action: input_number.set_value
+                    target:
+                      entity_id: input_number.therma_v_water_target_request
+                    data:
+                      value: "{{ target }}"
         set_hvac_mode:
           - choose:
               - conditions:

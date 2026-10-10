@@ -1,0 +1,227 @@
+# Therma V control: the "start-hulp" for now. Jan's design, 2026-10-10. Step 1: heat and cool;
+# the same package will carry the auto-mode help (step 2) and the room temperature control
+# (step 3), which is why it is named control rather than startup (Jan, 2026-10-10).
+#
+# Why: the pump starts at maximum compressor power for a fixed ~15 minutes. If the controlled
+# water temperature reaches setpoint + hysteresis inside that window, the pump does not modulate
+# back and switches off. This layer writes a moving water setpoint that keeps the water inside the
+# hysteresis band, so the start survives; the demand also stays close to the water, which keeps
+# the pump's internal control out of overdrive (a soft start).
+#
+# Where it sits: the climate template no longer writes Modbus register 2 itself. Its
+# `set_temperature` stores the request in `input_number.therma_v_water_target_request`, and the
+# writer automation here is the only writer of register 2. Auto mode (register 4, the delta on the
+# heating curve) is still written by the template - that is step 2. Room temperature control is
+# step 3.
+#
+# Control law (asymmetric, matching the two hysteresis values in the pump menu, Jan 2026-10-10):
+# the pump trips OFF when `water > target + hys_pos` (heat; mirrored in cool) and stops being
+# satisfied at `water = target + hys_neg`, with hys_neg negative. Solving both for the target
+# gives the same bracket in heat and cool:
+#
+#     effectief = clamp(vraag, water - hys_pos, water - hys_neg)
+#
+# The lower bound keeps `water <= target + hys_pos`, so the off-trip cannot be met; the upper
+# bound keeps the pump demanding and caps the demand at |hys_neg| above the water (the soft
+# start). Set both helpers slightly inside the pump's own values to keep a margin.
+#
+# Passthrough (effectief = vraag) instead of the clamp when:
+#   * the compressor is off - a saturated target sits exactly on the start threshold
+#     (`target = water + hys_pos`) and the pump would not start (Jan, 2026-10-10);
+#   * the toggle is off, the pump is off, or the pump is in room control (control mode 2);
+#   * vraag <= the active season's minimum - there the pump may go off on hysteresis, which is
+#     exactly what that setting is for.
+
+input_number:
+  therma_v_startup_hysteresis_pos:
+    name: "Therma V startup hysteresis pos"
+    min: 0.1
+    max: 4
+    step: 0.1
+    initial: 2.5
+    mode: box
+    unit_of_measurement: "°C"
+    icon: mdi:plus-minus-variant
+
+  # Negative on purpose: it mirrors the pump's own negative hysteresis entry (Jan).
+  therma_v_startup_hysteresis_neg:
+    name: "Therma V startup hysteresis neg"
+    min: -4
+    max: -0.1
+    step: 0.1
+    initial: -2.5
+    mode: box
+    unit_of_measurement: "°C"
+    icon: mdi:plus-minus-variant
+
+  # The request the layer steers to: the climate slider writes it (heat/cool/room), and it is the
+  # starting point for the clamp. Range covers every mode (cool 10..20, room 15..25, heat 20..35).
+  therma_v_water_target_request:
+    name: "Therma V water target request"
+    min: 10
+    max: 35
+    step: 1 # The pump only holds whole degrees (measured 2026-10-10: writing 25,5 reads back 25).
+    initial: 26 # First-ever value only; Home Assistant restores the last value after that.
+    mode: box
+    unit_of_measurement: "°C"
+    icon: mdi:water-thermometer
+
+  # The four min/max helpers are also the climate template's mode-dependent write band, so there
+  # is one source of truth (Jan, 2026-10-10). The min is where the layer switches off (passthrough)
+  # so the pump may go off on hysteresis.
+  therma_v_min_water_temperature_heat:
+    name: "Therma V min water temperature heat"
+    min: 10
+    max: 45
+    step: 0.5
+    initial: 20
+    mode: box
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-low
+
+  therma_v_max_water_temperature_heat:
+    name: "Therma V max water temperature heat"
+    min: 10
+    max: 45
+    step: 0.5
+    initial: 35
+    mode: box
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-high
+
+  therma_v_min_water_temperature_cool:
+    name: "Therma V min water temperature cool"
+    min: 5
+    max: 30
+    step: 0.5
+    initial: 10
+    mode: box
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-low
+
+  therma_v_max_water_temperature_cool:
+    name: "Therma V max water temperature cool"
+    min: 5
+    max: 30
+    step: 0.5
+    initial: 20
+    mode: box
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-high
+
+input_boolean:
+  therma_v_controlled_startup:
+    name: "Therma V controlled start-up"
+    icon: mdi:rocket-launch-outline
+    # Jan, 2026-10-10: "eigenlijk mag het altijd actief zijn". One flip turns the layer off.
+    initial: true
+
+template:
+  - sensor:
+      # The water temperature the pump actually controls: outlet in control mode 0, inlet in
+      # control mode 1 (register 1). Room control (2) falls back to the outlet; the algorithm is
+      # off there anyway.
+      - name: "Therma V controlled water temperature"
+        unique_id: therma_v_controlled_water_temperature
+        state_class: measurement
+        device_class: temperature
+        unit_of_measurement: "°C"
+        availability: >-
+          {{ has_value('sensor.therma_v_inlet_temperature')
+             and has_value('sensor.therma_v_outlet_temperature')
+             and has_value('sensor.therma_v_control_mode') }}
+        state: >-
+          {% if is_state('sensor.therma_v_control_mode', '1') %}
+          {{ states('sensor.therma_v_inlet_temperature') }}
+          {% else %}
+          {{ states('sensor.therma_v_outlet_temperature') }}
+          {% endif %}
+
+      # The value the writer automation puts in register 2. See the header for the control law.
+      # Rounded UP to a whole degree: the pump truncates register 2 to whole degrees (measured
+      # 2026-10-10: writing 25,5 reads back 25, writing 25,8 reads back 25), and rounding up is the
+      # safe direction - a rounded-down target could land on `water - hys_pos` and trip the pump
+      # off. The sensor therefore shows the value the pump will actually hold, which also makes the
+      # writer's register guard an exact comparison.
+      - name: "Therma V water setpoint effective"
+        unique_id: therma_v_water_setpoint_effective
+        state_class: measurement
+        device_class: temperature
+        unit_of_measurement: "°C"
+        availability: >-
+          {{ has_value('input_number.therma_v_water_target_request')
+             and has_value('sensor.therma_v_controlled_water_temperature')
+             and has_value('sensor.therma_v_operation_mode')
+             and has_value('sensor.therma_v_control_mode')
+             and has_value('sensor.therma_v_compressor_hz') }}
+        state: >-
+          {% set req = states('input_number.therma_v_water_target_request') | float(0) %}
+          {% set water = states('sensor.therma_v_controlled_water_temperature') | float(0) %}
+          {% set mode = states('sensor.therma_v_operation_mode') %}
+          {% set cm = states('sensor.therma_v_control_mode') | int(-1) %}
+          {% set hys_pos = states('input_number.therma_v_startup_hysteresis_pos') | float(3) %}
+          {% set hys_neg = states('input_number.therma_v_startup_hysteresis_neg') | float(-3) %}
+          {% set hz = states('sensor.therma_v_compressor_hz') | float(0) %}
+          {% set heat = mode in ['3', '4'] %}
+          {% set mn = (states('input_number.therma_v_min_water_temperature_heat') if heat
+                       else states('input_number.therma_v_min_water_temperature_cool')) | float(20 if heat else 10) %}
+          {% set mx = (states('input_number.therma_v_max_water_temperature_heat') if heat
+                       else states('input_number.therma_v_max_water_temperature_cool')) | float(35 if heat else 20) %}
+          {% set active = is_state('input_boolean.therma_v_controlled_startup', 'on')
+                          and is_state('switch.therma_v_heating_cooling_on_off', 'on')
+                          and mode in ['0', '4']
+                          and cm in [0, 1]
+                          and hz > 1
+                          and req > mn %}
+          {% if not active %}
+          {{ req | round(0, 'ceil') }}
+          {% else %}
+          {% set low = [req, water - hys_pos] | max %}
+          {% set high = water - hys_neg %}
+          {{ [[[low, high] | min, mn] | max, mx] | min | round(0, 'ceil') }}
+          {% endif %}
+
+automation:
+  # The only writer of Modbus register 2 (heat/cool/room). Four ways in: the effective value
+  # changing, the register changing (the pump's own logic, or a manual change on the unit), a mode
+  # change, and a 15-minute heartbeat as the safety net (a Home Assistant restart or a Modbus
+  # hiccup). The mode trigger is what closes the gap found live on 2026-10-10: switching auto ->
+  # heat leaves the pump's own heating-curve value behind in register 2 (22) while our effective
+  # value does not change (26), so a change trigger on the effective value alone never fires. (A
+  # template trigger on the divergence was tried first and does not work: a template trigger that is
+  # already true at load time never starts its `for:` timer.) The write is guarded by a comparison
+  # with the register, so our own writes - and the pump's own clamping, e.g. asking 35 lands as 30 -
+  # cannot feed back into a write loop. Auto mode is skipped - register 4 is step 2.
+  - id: therma_v_apply_water_setpoint_auto
+    alias: "Therma V apply water setpoint auto"
+    description: "Writes the controlled-start-up water setpoint to Modbus register 2"
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id: sensor.therma_v_water_setpoint_effective
+      - trigger: state
+        entity_id: sensor.therma_v_target_temperature_circuit_1
+      - trigger: state
+        entity_id: sensor.therma_v_operation_mode
+      - trigger: time_pattern
+        minutes: "/15"
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ states('sensor.therma_v_operation_mode') in ['0', '4']
+             and states('sensor.therma_v_control_mode') | is_number
+             and states('sensor.therma_v_water_setpoint_effective') | is_number }}
+      # Only write when the register really differs from the effective value.
+      - condition: template
+        value_template: >-
+          {% set registered = states('sensor.therma_v_target_temperature_circuit_1') %}
+          {% set effective = states('sensor.therma_v_water_setpoint_effective') | float(0) %}
+          {{ not (registered | is_number) or ((registered | float(0)) - effective) | abs > 0.5 }}
+    actions:
+      - action: modbus.write_register
+        data:
+          address: 2
+          slave: 1
+          hub: modbus_gateway_therma_v
+          value: "{{ (states('sensor.therma_v_water_setpoint_effective') | float(0) * 10) | int }}"
