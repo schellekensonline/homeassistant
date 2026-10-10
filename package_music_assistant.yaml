@@ -323,21 +323,35 @@ automation:
       # Never send the placeholder as a station name: Music Assistant fuzzy-matches it.
       # 2026-09-19: "Geen favorieten gevonden" resolved to the classical "Geen dag zonder Bach"
       # (Concertzender), which is what played when the select had been reset to the placeholder.
+      # 2026-10-10: the guard was correct but the fallback was not - a select sitting on the
+      # placeholder made this activity call `media_player.media_play`, so "Listen to Radio" just
+      # resumed whatever was loaded (an album) and the box stayed on the album. The recorder shows
+      # the radio select on "Geen favorieten gevonden" until a touchscreen tap fixed it at 12:10:51,
+      # while the Harmony press at 12:10:26 did nothing but resume. The activity now falls back to
+      # the *first real favourite* and starts that through the same entry point the box uses
+      # (`script.music_assistant_select_favorite`, which decides between select-then-play and a
+      # direct play), so there is still exactly one play request.
+      - variables:
+          placeholders: >-
+            ['Laden...', 'Geen favorieten gevonden', 'Geen zenders gevonden',
+             'unknown', 'unavailable']
+          options: >-
+            {{ state_attr('input_select.music_assistant_radio_select', 'options') | default([], true) }}
+          valid: "{{ options | reject('in', placeholders) | list }}"
+          selected: "{{ states('input_select.music_assistant_radio_select') }}"
+          station: >-
+            {{ selected if selected not in placeholders
+               else (valid[0] if valid | count > 0 else '') }}
       - if:
           - condition: template
-            value_template: >-
-              {{ states('input_select.music_assistant_radio_select') not in
-                 ['Laden...', 'Geen favorieten gevonden', 'Geen zenders gevonden',
-                  'unknown', 'unavailable'] }}
+            value_template: "{{ station | length > 0 }}"
         then:
-          - action: music_assistant.play_media
-            target:
-              entity_id: media_player.esp32_s3_box_player
+          - action: script.music_assistant_select_favorite
             data:
-              media_id: "{{ states('input_select.music_assistant_radio_select') }}"
-              media_type: radio
+              kind: radio
+              option: "{{ station }}"
         else:
-          # No valid favourite selected: resume what the player already has loaded.
+          # No real favourite in the list at all: resume what the player already has loaded.
           - action: media_player.media_play
             target:
               entity_id: media_player.esp32_s3_box_player
@@ -355,19 +369,24 @@ automation:
         target:
           entity_id: light.esp32_s3_box_player_backlight
       # Same guard as the radio activity above, for the album list.
+      - variables:
+          placeholders: >-
+            ['Laden...', 'Geen albums gevonden', 'unknown', 'unavailable']
+          options: >-
+            {{ state_attr('input_select.music_assistant_album_select', 'options') | default([], true) }}
+          valid: "{{ options | reject('in', placeholders) | list }}"
+          selected: "{{ states('input_select.music_assistant_album_select') }}"
+          album: >-
+            {{ selected if selected not in placeholders
+               else (valid[0] if valid | count > 0 else '') }}
       - if:
           - condition: template
-            value_template: >-
-              {{ states('input_select.music_assistant_album_select') not in
-                 ['Laden...', 'Geen favorieten gevonden', 'Geen albums gevonden',
-                  'unknown', 'unavailable'] }}
+            value_template: "{{ album | length > 0 }}"
         then:
-          - action: music_assistant.play_media
-            target:
-              entity_id: media_player.esp32_s3_box_player
+          - action: script.music_assistant_select_favorite
             data:
-              media_id: "{{ states('input_select.music_assistant_album_select') }}"
-              media_type: album
+              kind: album
+              option: "{{ album }}"
         else:
           - action: media_player.media_play
             target:
