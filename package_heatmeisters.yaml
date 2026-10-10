@@ -61,10 +61,11 @@ automation:
     mode: single
     max_exceeded: silent
     triggers:
-      - trigger: state
-        entity_id: binary_sensor.therma_v_compressor_state
-        from: "off"
-        to: "on"
+      # Compressor running comes from the Hz register (5 s) instead of the 30 s discrete state
+      # (Jan, 2026-10-10); idle reads 1 Hz.
+      - trigger: numeric_state
+        entity_id: sensor.therma_v_compressor_hz
+        above: 1
       - trigger: state
         entity_id: binary_sensor.therma_v_defrost_state
         from: "on"
@@ -194,10 +195,9 @@ automation:
     mode: single
     max_exceeded: silent
     triggers:
-      - trigger: state
-        entity_id: binary_sensor.therma_v_compressor_state
-        from: "off"
-        to: "on"
+      - trigger: numeric_state
+        entity_id: sensor.therma_v_compressor_hz
+        above: 1
       - trigger: state
         entity_id: binary_sensor.therma_v_defrost_state
         from: "on"
@@ -311,10 +311,9 @@ automation:
     mode: single
     max_exceeded: silent
     triggers:
-      - trigger: state
-        entity_id: binary_sensor.therma_v_compressor_state
-        from: "on"
-        to: "off"
+      - trigger: numeric_state
+        entity_id: sensor.therma_v_compressor_hz
+        below: 1
       - trigger: state
         entity_id: climate.therma_v_heating_cooling
         from: "cool"

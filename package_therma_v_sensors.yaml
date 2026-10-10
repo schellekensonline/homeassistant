@@ -87,7 +87,9 @@ template:
       state: >
         {% set pt_cop = states('sensor.therma_v_thermal_power') | float(0) | abs %}
         {% set pe_cop = states('sensor.therma_v_electric_power') | float(0) %}
-        {% set on_cop  = is_state('binary_sensor.therma_v_compressor_state','on') %}
+        {# Compressor running is read from the Hz register (5 s) instead of the 30 s discrete
+           state since 2026-10-10. #}
+        {% set on_cop  = (states('sensor.therma_v_compressor_hz') | float(0)) > 1 %}
 
         {% if (pt_cop > 500.0) and on_cop and (pe_cop > 0.0) %}
           {{ min( (pt_cop / pe_cop) , 10.0) | round(2) }}
@@ -190,6 +192,11 @@ modbus:
   # The gateway's serial side towards the heat pump is configured as:
   #   9600 baud, 8 data bits, no parity, 1 stop bit, RTU (slave id 1)
   # Register addresses come from part 1 of the Therma V Modbus manual.
+  # Poll budget (Jan, 2026-10-10): the start-up layer needs the controlled water temperature and
+  # the compressor speed fast, so inlet/outlet/Hz sit at 5 s and the 5 s holding set stays. That
+  # is paid for by the registers nothing reads: room air temperature circuit 1 and the eight
+  # unused 30 s inputs moved to 60 s. Everything together is ~170 requests/min, the same as
+  # before. refrigerant_temperature_suction stays at 30 s - the silent-OFF safety reads it.
   - name: "modbus_gateway_therma_v"
     type: rtuovertcp
     host: 10.43.110.20
@@ -201,7 +208,7 @@ modbus:
       # INPUT REGISTERS
       - name: "Therma V error code"
         unique_id: therma_v_error_code
-        scan_interval: 30
+        scan_interval: 60
         address: 0
         slave: 1
         input_type: input
@@ -215,7 +222,7 @@ modbus:
 
       - name: "Therma V inlet temperature"
         unique_id: therma_v_inlet_temperature
-        scan_interval: 10
+        scan_interval: 5
         address: 2
         slave: 1
         input_type: input
@@ -227,7 +234,7 @@ modbus:
 
       - name: "Therma V outlet temperature"
         unique_id: therma_v_outlet_temperature
-        scan_interval: 10
+        scan_interval: 5
         address: 3
         slave: 1
         input_type: input
@@ -287,7 +294,7 @@ modbus:
 
       - name: "Therma V outside temperature"
         unique_id: therma_v_outside_temperature
-        scan_interval: 30
+        scan_interval: 60
         address: 12
         slave: 1
         input_type: input
@@ -310,7 +317,7 @@ modbus:
 
       - name: "Therma V refrigirant temperature liquid gas"
         unique_id: therma_v_refrigirant_temperature_liquid_gas
-        scan_interval: 30
+        scan_interval: 60
         address: 16
         slave: 1
         input_type: input
@@ -344,7 +351,7 @@ modbus:
 
       - name: "Therma V refrigirant temperature heat gas"
         unique_id: therma_v_refrigirant_temperature_hot_gas
-        scan_interval: 30
+        scan_interval: 60
         address: 19
         slave: 1
         input_type: input
@@ -355,7 +362,7 @@ modbus:
 
       - name: "Therma V temperature before heat exchanger"
         unique_id: therma_v_temperature_before_heat_exchanger
-        scan_interval: 30
+        scan_interval: 60
         address: 20
         slave: 1
         input_type: input
@@ -367,7 +374,7 @@ modbus:
 
       - name: "Therma V temperature after heat exchanger"
         unique_id: therma_v_temperature_after_heat_exchanger 
-        scan_interval: 30
+        scan_interval: 60
         address: 21
         slave: 1
         input_type: input
@@ -379,7 +386,7 @@ modbus:
 
       - name: "Therma V compressor pressure high"
         unique_id: therma_v_compressor_pressure_high
-        scan_interval: 30
+        scan_interval: 60
         address: 22
         slave: 1
         input_type: input
@@ -390,7 +397,7 @@ modbus:
 
       - name: "Therma V compressor pressure low"
         unique_id: therma_v_compressor_pressure_low
-        scan_interval: 30
+        scan_interval: 60
         address: 23
         slave: 1
         input_type: input
@@ -401,7 +408,7 @@ modbus:
 
       - name: "Therma V compressor Hz"
         unique_id: therma_v_compressor_frequency
-        scan_interval: 10
+        scan_interval: 5
         address: 24
         slave: 1
         input_type: input
@@ -439,7 +446,7 @@ modbus:
 
       - name: "Therma V room air temperature circuit 1" # 0.1C
         unique_id: therma_v_room_air_temperature_circuit_1
-        scan_interval: 5
+        scan_interval: 60
         address: 3
         slave: 1
         input_type: holding
