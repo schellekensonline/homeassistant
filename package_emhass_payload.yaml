@@ -190,7 +190,19 @@ script:
               "battery_charge_power_max": {{ states('input_number.sessy_api_strategy_max_charge_power') | int(6000) }},
               "battery_discharge_power_max": {{ states('input_number.sessy_api_strategy_max_discharge_power') | int(3000) }},
               "soc_init": {{ (states('sensor.sessy_battery_state_of_charge') | float(60) / 100) | round(3) }},
-              "soc_final": {{ reserve_soc | round(3) }}{% if day_ahead %},
+              "soc_final": {{ reserve_soc | round(3) }}{% if not day_ahead %},
+              {# Make the MPC publish the thermal model's predicted store temperatures (Jan,
+                 2026-10-10). The shared builder already sends the three thermal batteries, but
+                 EMHASS's /action/publish-data only posts the sensors named in these custom id
+                 lists, and the built-in default does not include the predicted temperatures -
+                 which is why sensor.temp_predicted* only existed under the day-ahead's saved,
+                 prefixed entities. The day-ahead saves and publishes its own entities, so it is
+                 left alone here. #}
+              "custom_predicted_temperature_id": [
+                {"entity_id": "sensor.temp_predicted0"},
+                {"entity_id": "sensor.temp_predicted1"},
+                {"entity_id": "sensor.temp_predicted2"}
+              ]{% endif %}{% if day_ahead %},
               {# Keep the day-ahead plan out of the MPC's sensors (2026-10-03): the run saves its
                  built entities under this prefix and the automation publishes those, so the two
                  plans no longer share entity ids. See the notes, "03-10: the day-ahead plan". #}

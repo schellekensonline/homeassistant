@@ -66,6 +66,19 @@ input_number:
     unit_of_measurement: "°C"
     icon: mdi:water-thermometer
 
+  # Auto mode (the heating curve): the pump adds this delta to the curve and publishes the result
+  # on register 2. The slider writes this helper, and the layer moves it within -5..+5 to keep the
+  # water inside the hysteresis band. Whole degrees, because register 4 is 1 C per step.
+  therma_v_auto_delta_request:
+    name: "Therma V auto delta request"
+    min: -5
+    max: 5
+    step: 1
+    initial: 0 # First-ever value only; Home Assistant restores the last value after that.
+    mode: box
+    unit_of_measurement: "°C"
+    icon: mdi:chart-bell-curve-cumulative
+
   # The four min/max helpers are also the climate template's mode-dependent write band, so there
   # is one source of truth (Jan, 2026-10-10). The min is where the layer switches off (passthrough)
   # so the pump may go off on hysteresis.
@@ -137,12 +150,14 @@ template:
           {{ states('sensor.therma_v_outlet_temperature') }}
           {% endif %}
 
-      # The value the writer automation puts in register 2. See the header for the control law.
-      # Rounded UP to a whole degree: the pump truncates register 2 to whole degrees (measured
-      # 2026-10-10: writing 25,5 reads back 25, writing 25,8 reads back 25), and rounding up is the
-      # safe direction - a rounded-down target could land on `water - hys_pos` and trip the pump
-      # off. The sensor therefore shows the value the pump will actually hold, which also makes the
-      # writer's register guard an exact comparison.
+      # The value the writer automation puts in register 2 (heat/cool). See the header for the
+      # control law. Rounded to a whole degree because the pump truncates register 2 (measured
+      # 2026-10-10: writing 25,5 reads back 25, writing 25,8 reads back 25). The direction follows
+      # the mode: **heat ceil, cool floor**, because the two modes trip on opposite sides of the
+      # band. In heat the off-trip is `water > target + hys_pos`, so the target must not be rounded
+      # *down*; in cool it is `water < target + hys_neg`, so it must not be rounded *up*. The sensor
+      # therefore shows the value the pump will actually hold, which also makes the writer's
+      # register guard an exact comparison.
       - name: "Therma V water setpoint effective"
         unique_id: therma_v_water_setpoint_effective
         state_class: measurement
@@ -162,23 +177,73 @@ template:
           {% set hys_pos = states('input_number.therma_v_startup_hysteresis_pos') | float(3) %}
           {% set hys_neg = states('input_number.therma_v_startup_hysteresis_neg') | float(-3) %}
           {% set hz = states('sensor.therma_v_compressor_hz') | float(0) %}
-          {% set heat = mode in ['3', '4'] %}
+          {% set mode_num = mode | int(-1) %}
+          {% set heat = mode_num in [3, 4] %}
+          {% set dir = 'floor' if mode_num == 0 else 'ceil' %}
           {% set mn = (states('input_number.therma_v_min_water_temperature_heat') if heat
                        else states('input_number.therma_v_min_water_temperature_cool')) | float(20 if heat else 10) %}
           {% set mx = (states('input_number.therma_v_max_water_temperature_heat') if heat
                        else states('input_number.therma_v_max_water_temperature_cool')) | float(35 if heat else 20) %}
           {% set active = is_state('input_boolean.therma_v_controlled_startup', 'on')
                           and is_state('switch.therma_v_heating_cooling_on_off', 'on')
-                          and mode in ['0', '4']
+                          and mode_num in [0, 4]
                           and cm in [0, 1]
                           and hz > 1
                           and req > mn %}
           {% if not active %}
-          {{ req | round(0, 'ceil') }}
+          {{ req | round(0, dir) | int }}
           {% else %}
           {% set low = [req, water - hys_pos] | max %}
           {% set high = water - hys_neg %}
-          {{ [[[low, high] | min, mn] | max, mx] | min | round(0, 'ceil') }}
+          {{ [[[low, high] | min, mn] | max, mx] | min | round(0, dir) | int }}
+          {% endif %}
+
+      # The delta to write on register 4 in auto mode. Auto follows a heating curve, so the
+      # reachable water target is `curve +/- 5`; the layer solves for the delta that puts the water
+      # where the hysteresis clamp wants it. Only the hysteresis clamp applies here (Jan,
+      # 2026-10-10: no min/max water band in auto), and auto only ever heats, so the whole-degree
+      # rounding goes up like heat. The curve is derived from the two registers - register 2 is the
+      # resulting water target, register 4 the delta the pump applies - verified live 2026-10-10:
+      # auto with delta 0 read register 2 = 23, with delta +2 it read 25.
+      # Passthrough: the raw request delta when the compressor is off, the toggle is off, the pump
+      # is off, the pump is in room control, or the asked-for water is already at/below
+      # `water - hys_pos` - in heating that means "let the pump go off on hysteresis".
+      - name: "Therma V auto delta effective"
+        unique_id: therma_v_auto_delta_effective
+        state_class: measurement
+        device_class: temperature
+        unit_of_measurement: "°C"
+        availability: >-
+          {{ has_value('input_number.therma_v_auto_delta_request')
+             and has_value('sensor.therma_v_controlled_water_temperature')
+             and has_value('sensor.therma_v_operation_mode')
+             and has_value('sensor.therma_v_control_mode')
+             and has_value('sensor.therma_v_compressor_hz')
+             and has_value('sensor.therma_v_target_temperature_circuit_1')
+             and has_value('sensor.therma_v_auto_mode_target_temperature_delta_circuit_1') }}
+        state: >-
+          {% set req = states('input_number.therma_v_auto_delta_request') | float(0) %}
+          {% set water = states('sensor.therma_v_controlled_water_temperature') | float(0) %}
+          {% set mode = states('sensor.therma_v_operation_mode') | int(-1) %}
+          {% set cm = states('sensor.therma_v_control_mode') | int(-1) %}
+          {% set hys_pos = states('input_number.therma_v_startup_hysteresis_pos') | float(2.5) %}
+          {% set hys_neg = states('input_number.therma_v_startup_hysteresis_neg') | float(-2.5) %}
+          {% set hz = states('sensor.therma_v_compressor_hz') | float(0) %}
+          {% set applied = states('sensor.therma_v_auto_mode_target_temperature_delta_circuit_1') | float(0) %}
+          {% set water_target = states('sensor.therma_v_target_temperature_circuit_1') | float(0) %}
+          {% set curve = water_target - applied %}
+          {% set vraag_water = curve + req %}
+          {% set active = is_state('input_boolean.therma_v_controlled_startup', 'on')
+                          and is_state('switch.therma_v_heating_cooling_on_off', 'on')
+                          and mode == 3
+                          and cm in [0, 1]
+                          and hz > 1
+                          and vraag_water > water - hys_pos %}
+          {% if not active %}
+          {{ req | round(0, 'ceil') | int }}
+          {% else %}
+          {% set desired = [[vraag_water, water - hys_pos] | max, water - hys_neg] | min %}
+          {{ [[desired - curve, -5] | max, 5] | min | round(0, 'ceil') | int }}
           {% endif %}
 
 automation:
@@ -194,34 +259,70 @@ automation:
   # cannot feed back into a write loop. Auto mode is skipped - register 4 is step 2.
   - id: therma_v_apply_water_setpoint_auto
     alias: "Therma V apply water setpoint auto"
-    description: "Writes the controlled-start-up water setpoint to Modbus register 2"
+    description: "Writes the controlled-start-up water setpoint (register 2) or the auto delta (register 4)"
     mode: single
     max_exceeded: silent
     triggers:
       - trigger: state
         entity_id: sensor.therma_v_water_setpoint_effective
       - trigger: state
+        entity_id: sensor.therma_v_auto_delta_effective
+      - trigger: state
         entity_id: sensor.therma_v_target_temperature_circuit_1
+      - trigger: state
+        entity_id: sensor.therma_v_auto_mode_target_temperature_delta_circuit_1
       - trigger: state
         entity_id: sensor.therma_v_operation_mode
       - trigger: time_pattern
         minutes: "/15"
     conditions:
       - condition: template
-        value_template: >-
-          {{ states('sensor.therma_v_operation_mode') in ['0', '4']
-             and states('sensor.therma_v_control_mode') | is_number
-             and states('sensor.therma_v_water_setpoint_effective') | is_number }}
-      # Only write when the register really differs from the effective value.
-      - condition: template
-        value_template: >-
-          {% set registered = states('sensor.therma_v_target_temperature_circuit_1') %}
-          {% set effective = states('sensor.therma_v_water_setpoint_effective') | float(0) %}
-          {{ not (registered | is_number) or ((registered | float(0)) - effective) | abs > 0.5 }}
+        value_template: "{{ states('sensor.therma_v_operation_mode') | int(-1) in [0, 3, 4] }}"
     actions:
-      - action: modbus.write_register
-        data:
-          address: 2
-          slave: 1
-          hub: modbus_gateway_therma_v
-          value: "{{ (states('sensor.therma_v_water_setpoint_effective') | float(0) * 10) | int }}"
+      - choose:
+          # Auto mode: the delta on register 4. It is a signed 16-bit register, so a negative
+          # delta goes out as two's complement - the same as the climate template does.
+          - conditions:
+              - condition: template
+                value_template: "{{ states('sensor.therma_v_operation_mode') | int(-1) == 3 }}"
+            sequence:
+              - if:
+                  - condition: template
+                    value_template: >-
+                      {{ states('sensor.therma_v_control_mode') | is_number
+                         and states('sensor.therma_v_auto_delta_effective') | is_number
+                         and (states('sensor.therma_v_auto_mode_target_temperature_delta_circuit_1') | float(0)
+                              - states('sensor.therma_v_auto_delta_effective') | float(0)) | abs > 0.5 }}
+                then:
+                  - variables:
+                      delta: "{{ states('sensor.therma_v_auto_delta_effective') | int(0) }}"
+                  - action: modbus.write_register
+                    data:
+                      address: 4
+                      slave: 1
+                      hub: modbus_gateway_therma_v
+                      value: "{{ delta + 65536 if delta < 0 else delta }}"
+        default:
+          # Heat / cool / room control: the water setpoint on register 2. Only write when the
+          # register really differs from the effective value, so our own writes (and the pump's own
+          # truncation) cannot feed back into a write loop.
+          - if:
+              - condition: template
+                value_template: >-
+                  {{ states('sensor.therma_v_operation_mode') | int(-1) in [0, 4]
+                     and states('sensor.therma_v_control_mode') | is_number
+                     and states('sensor.therma_v_water_setpoint_effective') | is_number }}
+            then:
+              - if:
+                  - condition: template
+                    value_template: >-
+                      {% set registered = states('sensor.therma_v_target_temperature_circuit_1') %}
+                      {% set effective = states('sensor.therma_v_water_setpoint_effective') | float(0) %}
+                      {{ not (registered | is_number) or ((registered | float(0)) - effective) | abs > 0.5 }}
+                then:
+                  - action: modbus.write_register
+                    data:
+                      address: 2
+                      slave: 1
+                      hub: modbus_gateway_therma_v
+                      value: "{{ (states('sensor.therma_v_water_setpoint_effective') | float(0) * 10) | int }}"
