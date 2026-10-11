@@ -1,6 +1,6 @@
-# Therma V control: the "start-hulp" for now. Jan's design, 2026-10-10. Step 1: heat and cool;
+# Therma V control: the "start-hulp" for now. Design 2026-10-10. Step 1: heat and cool;
 # the same package will carry the auto-mode help (step 2) and the room temperature control
-# (step 3), which is why it is named control rather than startup (Jan, 2026-10-10).
+# (step 3), which is why it is named control rather than startup (2026-10-10).
 #
 # Why: the pump starts at maximum compressor power for a fixed ~15 minutes. If the controlled
 # water temperature reaches setpoint + hysteresis inside that window, the pump does not modulate
@@ -14,23 +14,33 @@
 # heating curve) is still written by the template - that is step 2. Room temperature control is
 # step 3.
 #
-# Control law (asymmetric, matching the two hysteresis values in the pump menu, Jan 2026-10-10):
+# Control law (asymmetric, matching the two hysteresis values in the pump menu, 2026-10-10):
 # the pump trips OFF when `water > target + hys_pos` (heat; mirrored in cool) and stops being
 # satisfied at `water = target + hys_neg`, with hys_neg negative. Solving both for the target
 # gives the same bracket in heat and cool:
 #
-#     effectief = clamp(vraag, water - hys_pos, water - hys_neg)
+#     effective = clamp(request, water - hys_pos, water - hys_neg)
 #
 # The lower bound keeps `water <= target + hys_pos`, so the off-trip cannot be met; the upper
 # bound keeps the pump demanding and caps the demand at |hys_neg| above the water (the soft
 # start). Set both helpers slightly inside the pump's own values to keep a margin.
 #
-# Passthrough (effectief = vraag) instead of the clamp when:
+# The season band from the four min/max helpers is the outer limit, so the band in use is
+#
+#     water_floor = max(band_min, water - hys_pos)
+#     water_ceil  = min(band_max, water - hys_neg)
+#
+# and in every mode - heat, cool and auto - both ends of that band sit closer to the water
+# temperature than the helper alone would put them. Auto is heating-only and therefore reads the
+# heat pair (2026-10-11).
+#
+# Passthrough (effective = request) instead of the clamp when:
 #   * the compressor is off - a saturated target sits exactly on the start threshold
-#     (`target = water + hys_pos`) and the pump would not start (Jan, 2026-10-10);
+#     (`target = water + hys_pos`) and the pump would not start (2026-10-10);
 #   * the toggle is off, the pump is off, or the pump is in room control (control mode 2);
-#   * vraag <= the active season's minimum - there the pump may go off on hysteresis, which is
-#     exactly what that setting is for.
+#   * request <= the active season's minimum - there the pump may go off on hysteresis, which is
+#     exactly what that setting is for. In auto the same thing happens when the asked-for water is
+#     at or below `water - hys_pos`, so the layer stops chasing the water downward.
 
 input_number:
   therma_v_startup_hysteresis_pos:
@@ -38,18 +48,18 @@ input_number:
     min: 0.1
     max: 4
     step: 0.1
-    initial: 2.5
+    initial: 2.8
     mode: box
     unit_of_measurement: "°C"
     icon: mdi:plus-minus-variant
 
-  # Negative on purpose: it mirrors the pump's own negative hysteresis entry (Jan).
+  # Negative on purpose: it mirrors the pump's own negative hysteresis entry.
   therma_v_startup_hysteresis_neg:
     name: "Therma V startup hysteresis neg"
     min: -4
     max: -0.1
     step: 0.1
-    initial: -2.5
+    initial: -2.8
     mode: box
     unit_of_measurement: "°C"
     icon: mdi:plus-minus-variant
@@ -80,8 +90,9 @@ input_number:
     icon: mdi:chart-bell-curve-cumulative
 
   # The four min/max helpers are also the climate template's mode-dependent write band, so there
-  # is one source of truth (Jan, 2026-10-10). The min is where the layer switches off (passthrough)
-  # so the pump may go off on hysteresis.
+  # is one source of truth (2026-10-10). The min is where the layer switches off (passthrough)
+  # so the pump may go off on hysteresis. Auto (heating only) reads the heat pair the same way, so
+  # the band hugs the water temperature in all three modes (2026-10-11).
   therma_v_min_water_temperature_heat:
     name: "Therma V min water temperature heat"
     min: 10
@@ -105,7 +116,7 @@ input_number:
   therma_v_min_water_temperature_cool:
     name: "Therma V min water temperature cool"
     min: 5
-    max: 30
+    max: 25
     step: 0.5
     initial: 10
     mode: box
@@ -115,7 +126,7 @@ input_number:
   therma_v_max_water_temperature_cool:
     name: "Therma V max water temperature cool"
     min: 5
-    max: 30
+    max: 25
     step: 0.5
     initial: 20
     mode: box
@@ -126,7 +137,6 @@ input_boolean:
   therma_v_controlled_startup:
     name: "Therma V controlled start-up"
     icon: mdi:rocket-launch-outline
-    # Jan, 2026-10-10: "eigenlijk mag het altijd actief zijn". One flip turns the layer off.
     initial: true
 
 template:
@@ -180,31 +190,32 @@ template:
           {% set mode_num = mode | int(-1) %}
           {% set heat = mode_num in [3, 4] %}
           {% set dir = 'floor' if mode_num == 0 else 'ceil' %}
-          {% set mn = (states('input_number.therma_v_min_water_temperature_heat') if heat
-                       else states('input_number.therma_v_min_water_temperature_cool')) | float(20 if heat else 10) %}
-          {% set mx = (states('input_number.therma_v_max_water_temperature_heat') if heat
-                       else states('input_number.therma_v_max_water_temperature_cool')) | float(35 if heat else 20) %}
+          {% set band_min = (states('input_number.therma_v_min_water_temperature_heat') if heat
+                             else states('input_number.therma_v_min_water_temperature_cool')) | float(10) %}
+          {% set band_max = (states('input_number.therma_v_max_water_temperature_heat') if heat
+                             else states('input_number.therma_v_max_water_temperature_cool')) | float(35) %}
           {% set active = is_state('input_boolean.therma_v_controlled_startup', 'on')
                           and is_state('switch.therma_v_heating_cooling_on_off', 'on')
                           and mode_num in [0, 4]
                           and cm in [0, 1]
                           and hz > 1
-                          and req > mn %}
+                          and req > band_min %}
           {% if not active %}
           {{ req | round(0, dir) | int }}
           {% else %}
-          {% set low = [req, water - hys_pos] | max %}
-          {% set high = water - hys_neg %}
-          {{ [[[low, high] | min, mn] | max, mx] | min | round(0, dir) | int }}
+          {% set water_floor = max(band_min, water - hys_pos) %}
+          {% set water_ceil = min(band_max, water - hys_neg) %}
+          {{ min(max(req, water_floor), water_ceil) | round(0, dir) | int }}
           {% endif %}
 
       # The delta to write on register 4 in auto mode. Auto follows a heating curve, so the
       # reachable water target is `curve +/- 5`; the layer solves for the delta that puts the water
-      # where the hysteresis clamp wants it. Only the hysteresis clamp applies here (Jan,
-      # 2026-10-10: no min/max water band in auto), and auto only ever heats, so the whole-degree
-      # rounding goes up like heat. The curve is derived from the two registers - register 2 is the
-      # resulting water target, register 4 the delta the pump applies - verified live 2026-10-10:
-      # auto with delta 0 read register 2 = 23, with delta +2 it read 25.
+      # where the hysteresis clamp wants it. The heat min/max helpers bound that band exactly as in
+      # heat - floor = max(band_min, water - hys_pos), ceiling = min(band_max, water - hys_neg) - so
+      # the band hugs the water temperature here too (2026-10-11). Auto only ever heats, so the
+      # whole-degree rounding goes up like heat. The curve is derived from the two registers -
+      # register 2 is the resulting water target, register 4 the delta the pump applies - verified
+      # live 2026-10-10: auto with delta 0 read register 2 = 23, with delta +2 it read 25.
       # Passthrough: the raw request delta when the compressor is off, the toggle is off, the pump
       # is off, the pump is in room control, or the asked-for water is already at/below
       # `water - hys_pos` - in heating that means "let the pump go off on hysteresis".
@@ -226,24 +237,28 @@ template:
           {% set water = states('sensor.therma_v_controlled_water_temperature') | float(0) %}
           {% set mode = states('sensor.therma_v_operation_mode') | int(-1) %}
           {% set cm = states('sensor.therma_v_control_mode') | int(-1) %}
-          {% set hys_pos = states('input_number.therma_v_startup_hysteresis_pos') | float(2.5) %}
-          {% set hys_neg = states('input_number.therma_v_startup_hysteresis_neg') | float(-2.5) %}
+          {% set hys_pos = states('input_number.therma_v_startup_hysteresis_pos') | float(3) %}
+          {% set hys_neg = states('input_number.therma_v_startup_hysteresis_neg') | float(-3) %}
           {% set hz = states('sensor.therma_v_compressor_hz') | float(0) %}
           {% set applied = states('sensor.therma_v_auto_mode_target_temperature_delta_circuit_1') | float(0) %}
           {% set water_target = states('sensor.therma_v_target_temperature_circuit_1') | float(0) %}
+          {% set band_min = states('input_number.therma_v_min_water_temperature_heat') | float(20) %}
+          {% set band_max = states('input_number.therma_v_max_water_temperature_heat') | float(35) %}
           {% set curve = water_target - applied %}
-          {% set vraag_water = curve + req %}
+          {% set water_request = curve + req %}
+          {% set water_floor = max(band_min, water - hys_pos) %}
+          {% set water_ceil = min(band_max, water - hys_neg) %}
           {% set active = is_state('input_boolean.therma_v_controlled_startup', 'on')
                           and is_state('switch.therma_v_heating_cooling_on_off', 'on')
                           and mode == 3
                           and cm in [0, 1]
                           and hz > 1
-                          and vraag_water > water - hys_pos %}
+                          and water_request > water - hys_pos %}
           {% if not active %}
           {{ req | round(0, 'ceil') | int }}
           {% else %}
-          {% set desired = [[vraag_water, water - hys_pos] | max, water - hys_neg] | min %}
-          {{ [[desired - curve, -5] | max, 5] | min | round(0, 'ceil') | int }}
+          {% set desired = min(max(water_request, water_floor), water_ceil) %}
+          {{ min(max(desired - curve, -5), 5) | round(0, 'ceil') | int }}
           {% endif %}
 
 automation:

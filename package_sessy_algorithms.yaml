@@ -263,7 +263,7 @@ template:
             {{ soc_target | round(1) }}
               
 
-  # ZoM input power: the P1 meter minus the heat pump when the switch is on (Jan, 2026-10-05).
+  # ZoM input power: the P1 meter minus the heat pump when the switch is on (2026-10-05).
   # The switch has one meaning - "the heat pump is EMHASS's" - and gates both this measured side and
   # the plan side in `sessy_api_control_mode_auto`. Triggered on P1 so the value is sampled on the
   # P1 clock (P1 already contains the HP, so a HP change moves P1); the HP meter is only a
@@ -296,7 +296,7 @@ template:
           fallback: "{{ not (states('sensor.kwh_meter_heat_pump_active_power') | is_number) }}"
 
 input_boolean:
-  # One switch for "the heat pump belongs to EMHASS" (Jan, 2026-10-05): gates the measured side
+  # One switch for "the heat pump belongs to EMHASS" (2026-10-05): gates the measured side
   # (ZoM sees P1 minus the HP) and the plan side (the mode logic reads p_grid_forecast minus the HP
   # deferrables). Off = today's behaviour. Starts off until the HP actually follows EMHASS.
   sessy_zom_exclude_heat_pump:
@@ -348,7 +348,7 @@ input_number:
     initial: 250
 
   # The floor EMHASS asks for in the current quarter, in W (+ = discharge, the same sign as P_batt
-  # and the Sessy setpoint). Jan's design (2026-10-04): the automation below copies the plan's
+  # and the Sessy setpoint). Design (2026-10-04): the automation below copies the plan's
   # value in here while the control strategy is EMHASS and puts it back to 0 otherwise, so a value
   # from an earlier session can never linger. The three ZoM items take it into their min/max maths:
   # the plan sets the floor, ZoM may go further when the house or the surplus asks for it.
@@ -523,7 +523,7 @@ input_number:
     # initial: 3000
     mode: box
     unit_of_measurement: "W"
-  # The ZoM clip gets its own pair (Jan, 2026-10-07). Until then the ZoM controller clipped on
+  # The ZoM clip gets its own pair (2026-10-07). Until then the ZoM controller clipped on
   # sessy_api_strategy_max_charge/discharge_power, and those two are also what the EMHASS payload
   # sends as battery_charge/discharge_power_max - one knob for two layers, so tuning the heuristic
   # silently moved the planner's ceiling and the other way round. From here:
@@ -718,7 +718,7 @@ automation:
             {% set zom_charge    = min(zom, 0) %}
             {# The floor EMHASS asks for this quarter, 0 outside EMHASS mode: with it the plan sets
                a floor in the direction it wants, and the house may still pull more out of the pack
-               (Jan, 2026-10-04). Zero keeps every mode exactly as it was. #}
+               (2026-10-04). Zero keeps every mode exactly as it was. #}
             {% set zom_floor     = states('input_number.sessy_zom_power_floor') | float(0) %}
             {% set zom_planned   = max(zom_discharge, zom_floor) if zom_floor > 0
                                    else (min(zom_charge, zom_floor) if zom_floor < 0 else zom) %}
@@ -760,14 +760,14 @@ automation:
                 0
               {% endif %}
             {% endset %}
-            {# 5. The overarching saturation (Jan, 2026-10-07): whatever a strategy asks, the
+            {# 5. The overarching saturation (2026-10-07): whatever a strategy asks, the
                setpoint stays inside the hardware / plan limits. It is the same pair as the range of
                the number this feeds, so a strategy limit set above it (or a plan floor that does
                not fit) can never lead to a rejected write - which is what happened on 05-10. #}
             {{ max(min(setpoint | float(0), max_discharge_power), -max_charge_power) | int }}
 
 
-  # EMHASS mode (Jan's design, 2026-10-04): the plan's intent for this quarter picks both the ZoM
+  # EMHASS mode (design, 2026-10-04): the plan's intent for this quarter picks both the ZoM
   # item and the floor, from two signals - the planned battery power and the planned grid flow
   # (p_grid_forecast is the plan's own balance, so "charging without importing" means PV):
   #   battery ~ 0                     -> Zero on Meter,        floor 0  (cover the house)
@@ -777,7 +777,7 @@ automation:
   # The deadband decides what counts as "~ 0". Anywhere else - Off, Heuristic, or a stale plan -
   # the floor is 0, so the ZoM items behave as they always did; a stale plan also resets the item to
   # plain ZoM once, so nothing from the plan lingers.
-  # The mode layer (Jan's design, 2026-10-04). Two jobs:
+  # The mode layer (design, 2026-10-04). Two jobs:
   #  1. handover - our layer needs the Sessy in API mode, so any mode change puts it there (the old
   #     enable switch did the same). Off is hand control: item Manual and the setpoint at 0, so the
   #     last automatic setpoint cannot keep running. Heuristic asks the price selector for its item
@@ -816,7 +816,7 @@ automation:
           fresh: "{{ is_state('binary_sensor.emhass_forecast_fresh','on') }}"
           band: "{{ states('input_number.sessy_emhass_mode_deadband') | float(250) }}"
           batt: "{{ states('sensor.p_batt_forecast') | float(0) }}"
-          # Plan grid in the non-heat-pump domain when the exclude switch is on (Jan, 2026-10-05):
+          # Plan grid in the non-heat-pump domain when the exclude switch is on (2026-10-05):
           # the three deferrables are the heat pump loads, so removing them lets the same sell/buy
           # cases read the plan's intent correctly - a planned HP-covering discharge then becomes
           # Support with floor = p_batt instead of falling into else/floor 0. Gated by the same

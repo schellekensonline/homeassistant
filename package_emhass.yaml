@@ -29,7 +29,7 @@ template:
 
           {# house consumption = grid import + PV + battery discharge, minus the steerable heatpump #}
           {# clamp at 0: brief P1 transients can momentarily make the balance negative, which is physically impossible #}
-          {{ [ (tot_p1 + tot_pv + tot_bat - tot_hp), 0 ] | max | round(2) }}
+          {{ max(tot_p1 + tot_pv + tot_bat - tot_hp, 0) | round(2) }}
 
       # The day plan's value for the *current* quarter, so it can go on a history graph next to
       # the quarter-hour plan. The day-ahead mirror itself only changes when a new plan is
@@ -226,7 +226,7 @@ input_number:
     mode: box
     unit_of_measurement: "C"
 
-  # Integrating controller knob (Jan, 2026-09-20): the offset of the heating curve is trimmed so
+  # Integrating controller knob (2026-09-20): the offset of the heating curve is trimmed so
   # the room lands on input_number.room_setpoint_heating. This helper carries the correction; the
   # control loop that updates it from the room error still has to be built (nothing writes it yet).
   # Range +-10 K around building_heating_curve_offset.

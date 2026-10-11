@@ -8,13 +8,13 @@ template:
     - name: "B Hyve zone active"
       unique_id: b_hyve_zone_active_sensor
       state: >
-        {% set bloembak_muur_z = is_state('switch.bloembak_muur_zone','on') %} 
-        {% set border_achter_z = is_state('switch.border_achter_zone','on') %} 
-        {% set gazon_lr_z      = is_state('switch.gazon_links_rechts_zone','on') %}
-        {% set gazon_m_z       = is_state('switch.gazon_midden_zone','on') %}
-        {% set voortuin_z      = is_state('switch.voor_zijtuin_zone','on') %}
+        {% set flower_box_wall = is_state('switch.bloembak_muur_zone','on') %}
+        {% set border_back     = is_state('switch.border_achter_zone','on') %}
+        {% set lawn_left_right = is_state('switch.gazon_links_rechts_zone','on') %}
+        {% set lawn_center     = is_state('switch.gazon_midden_zone','on') %}
+        {% set front_garden    = is_state('switch.voor_zijtuin_zone','on') %}
 
-        {{ bloembak_muur_z or border_achter_z or gazon_lr_z or gazon_m_z or voortuin_z }}
+        {{ flower_box_wall or border_back or lawn_left_right or lawn_center or front_garden }}
       icon: >
         {% if is_state('binary_sensor.b_hyve_zone_active','on') %} 
           {{'mdi:sprinkler'}} 

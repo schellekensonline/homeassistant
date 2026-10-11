@@ -117,7 +117,7 @@ automation:
     action:
       - variables:
           clean_days: "{{ (now().date() - as_datetime('2026-09-13').date()).days }}"
-          target: "{{ [ clean_days | int(2), 60 ] | min }}"
+          target: "{{ min(clean_days | int(2), 60) }}"
       - condition: template
         value_template: "{{ target | int(0) > states('input_number.emhass_ml_days_to_retrieve') | float(0) }}"
       - action: input_number.set_value

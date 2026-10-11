@@ -35,7 +35,7 @@ automation:
     trigger:
       # The scheduled run: after the 23:45 MPC has published, so the plan starts at 23:45, covers
       # the coming day, and never runs at the same instant as an MPC run (the condition below keeps
-      # it out of the 23:45:00 slot). Jan's design (2026-10-03): the day-ahead runs when the new
+      # it out of the 23:45:00 slot). Design (2026-10-03): the day-ahead runs when the new
       # prices are in - which by then they are, they arrive ~13:00 - and always before 00:00.
       - platform: time_pattern
         hours: "23"

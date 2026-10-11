@@ -91,7 +91,7 @@ template:
                 {% if mode | int(-1) == 3 %}5
                 {% elif water_control %}{{ states('input_number.therma_v_max_water_temperature_heat') if mode | int(-1) == 4 else states('input_number.therma_v_max_water_temperature_cool') }}
                 {% else %}25{% endif %}
-              target: "{{ [[temperature | float(0), temp_lo | float(0)] | max, temp_hi | float(40)] | min }}"
+              target: "{{ min(max(temperature | float(0), temp_lo | float(0)), temp_hi | float(40)) }}"
           - choose:
               - conditions:
                   - "{{ mode | int(-1) == 3 }}"  # auto mode: the delta request helper

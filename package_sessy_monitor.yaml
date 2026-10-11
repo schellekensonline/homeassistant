@@ -2,13 +2,13 @@
 #
 # Why: the Sessy REST sensors drop out for tens of minutes to hours at a time (2026-09-23: 161,
 # 82 and 50 minutes, with 11:00 and 12:00 missing entirely). This is a development prototype, so
-# the device may be flashing new firmware or crash; Jan wants to know when that happens so he can
-# report it back to the Sessy developers.
+# the device may be flashing new firmware or crash; we want to know when that happens so it can be
+# reported back to the Sessy developers.
 #
 # This adds two slow REST sensors (firmware + software version), a binary sensor that says
 # whether the API answers (derived from the existing 15 s power sensor, so no extra requests) and
 # four automations: API down, API back (with duration), firmware changed, OTA active.
-# Notifications go to Jan's phone and to a persistent notification, so there is always a record.
+# Notifications go to the owner's phone and to a persistent notification, so there is always a record.
 
 sensor:
   - platform: rest

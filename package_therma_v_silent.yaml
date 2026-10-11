@@ -127,7 +127,7 @@ automation:
     max_exceeded: silent
     triggers:
       # Compressor running comes from the Hz register (5 s) instead of the 30 s discrete state
-      # (Jan, 2026-10-10); idle reads 1 Hz, so the threshold is > 1.
+      # (2026-10-10); idle reads 1 Hz, so the threshold is > 1.
       - trigger: numeric_state
         entity_id: sensor.therma_v_compressor_hz
         above: 1 # Compressor starts.

@@ -25,7 +25,7 @@ input_select:
       - "8 - Very low power state (1/2/5)"
     # No initial: Home Assistant restores the last chosen state.
 
-  # Who owns the heat pump (2026-10-07, Jan). Deliberately the same shape as
+  # Who owns the heat pump (2026-10-07). Deliberately the same shape as
   # input_select.sessy_auto_api_control_strategy, so the battery and the heat pump read the same:
   #   Manual    - no automatic control; the pump follows its own thermostat/programmes and EMHASS
   #               parks all heat-pump blocks in the plan;

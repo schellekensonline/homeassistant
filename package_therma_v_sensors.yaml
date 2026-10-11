@@ -192,7 +192,7 @@ modbus:
   # The gateway's serial side towards the heat pump is configured as:
   #   9600 baud, 8 data bits, no parity, 1 stop bit, RTU (slave id 1)
   # Register addresses come from part 1 of the Therma V Modbus manual.
-  # Poll budget (Jan, 2026-10-10): the start-up layer needs the controlled water temperature and
+  # Poll budget (2026-10-10): the start-up layer needs the controlled water temperature and
   # the compressor speed fast, so inlet/outlet/Hz sit at 5 s and the 5 s holding set stays. That
   # is paid for by the registers nothing reads: room air temperature circuit 1 and the eight
   # unused 30 s inputs moved to 60 s. Everything together is ~170 requests/min, the same as
