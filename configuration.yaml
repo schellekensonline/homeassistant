@@ -36,24 +36,6 @@ recorder:
   purge_keep_days: 60
   commit_interval: 30
 
-# # Allow traefik etc.
-# http:
-#   use_x_forwarded_for: true
-#   trusted_proxies:
-#     - 10.43.10.0/24   # internal
-#     - 10.43.110.0/24  # IOT
-#     - 192.168.1.0/24  # no use
-#     - 192.168.2.0/24  # docker proxy-net
-#     - 192.168.3.0/24  # docker internal-net
-#     - 192.168.4.0/24  # docker tools-net
-#     - 192.168.5.0/24  # docker cloud-net
-#     - 192.168.6.0/24  # docker torrent-net
-#     - 192.168.7.0/24  # docker media-net
-#     - 192.168.8.0/24  # docker nvr-net
-#     - 172.17.0.0/16   # docker default networks
-#   ip_ban_enabled: true
-#   login_attempts_threshold: 5
-
 homeassistant:
   allowlist_external_dirs:
     - /config
@@ -68,27 +50,28 @@ homeassistant:
 
 # Packages with bundles for automations
   packages:
-    dhw_circulation_pack:       !include package_dhw_circulation.yaml
-    dhw_booster_pack:           !include package_dhw_booster.yaml
-    dhw_disinfection_pack:      !include package_dhw_disinfection.yaml
-    therma_v_dewpoint_pack:     !include package_therma_v_dewpoint.yaml
-    therma_v_sensors_pack:      !include package_therma_v_sensors.yaml
-    therma_v_silent_pack:       !include package_therma_v_silent.yaml
-    therma_v_ess_pack:          !include package_therma_v_ess.yaml
-    therma_v_climate_pack:      !include package_therma_v_climate.yaml
-    therma_v_control_pack:      !include package_therma_v_control.yaml
-    heatmeisters_pack:          !include package_heatmeisters.yaml
-    goodwe_sensors_pack:        !include package_goodwe_sensors.yaml
-    goodwe_export_limit_pack:   !include package_goodwe_export_limit.yaml
-    energy_cost_pack:           !include package_energy_cost.yaml
-    garden_irrigation_pack:     !include package_garden_irrigation.yaml
-    garage_door_pack:           !include package_garage_door.yaml
-    music_assistant_pack:       !include package_music_assistant.yaml
-    harmony_commands_pack:      !include package_harmony_commands.yaml
-    sessy_sensors_pack:         !include package_sessy_sensors.yaml
-    sessy_commands_pack:        !include package_sessy_commands.yaml
-    sessy_algorithms_pack:      !include package_sessy_algorithms.yaml
-    sessy_monitor_pack:         !include package_sessy_monitor.yaml
+    dhw_circulation_pack:               !include package_dhw_circulation.yaml
+    dhw_booster_pack:                   !include package_dhw_booster.yaml
+    dhw_disinfection_pack:              !include package_dhw_disinfection.yaml
+    therma_v_dewpoint_pack:             !include package_therma_v_dewpoint.yaml
+    therma_v_sensors_pack:              !include package_therma_v_sensors.yaml
+    therma_v_silent_pack:               !include package_therma_v_silent.yaml
+    therma_v_ess_pack:                  !include package_therma_v_ess.yaml
+    therma_v_climate_pack:              !include package_therma_v_climate.yaml
+    therma_v_startup_control_pack:      !include package_therma_v_startup_control.yaml
+    therma_v_temperature_control_pack:  !include package_therma_v_temperature_control.yaml
+    heatmeisters_pack:                  !include package_heatmeisters.yaml
+    goodwe_sensors_pack:                !include package_goodwe_sensors.yaml
+    goodwe_export_limit_pack:           !include package_goodwe_export_limit.yaml
+    energy_cost_pack:                   !include package_energy_cost.yaml
+    garden_irrigation_pack:             !include package_garden_irrigation.yaml
+    garage_door_pack:                   !include package_garage_door.yaml
+    music_assistant_pack:               !include package_music_assistant.yaml
+    harmony_commands_pack:              !include package_harmony_commands.yaml
+    sessy_sensors_pack:                 !include package_sessy_sensors.yaml
+    sessy_commands_pack:                !include package_sessy_commands.yaml
+    sessy_algorithms_pack:              !include package_sessy_algorithms.yaml
+    sessy_monitor_pack:                 !include package_sessy_monitor.yaml
     # The EMHASS package is split along its workflows (2026-10-07): the core/shared part, the
     # shared payload builder, the quarter-hour MPC, the day plan, the ML load model and the
     # watchdog. Home Assistant merges them all the same way.

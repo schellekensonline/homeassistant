@@ -44,14 +44,23 @@ template:
         # Room temperature is deliberate: the climate card should show the value the room control
         # loop works with. The water inlet/outlet variants are not used here.
         current_temperature: "{{ states('sensor.therma_v_room_temperature') }}"
-        # Every mode shows the *request*: since 2026-10-10 the control layer
-        # (package_therma_v_control.yaml) is the only writer of registers 2 and 4, so the slider
-        # would otherwise follow the moving effective value. Auto shows the delta request, the other
-        # modes the water request. The registers themselves stay readable through
-        # sensor.therma_v_target_temperature_circuit_1, sensor.therma_v_auto_mode_target_temperature_delta_circuit_1,
+        # What the card shows, per regime (step 3b, 2026-10-11):
+        #   * temperature control on (input_select.therma_v_temperature_control) - the slider is the
+        #     *room* setpoint, because that is the knob the curve and the room term are driven by.
+        #     That is 'Room control (P)' in heat and auto, and 'Heating-curve' in heat (auto keeps the
+        #     pump's own curve, so there the delta request stays the slider);
+        #   * otherwise the *request*, never the moving effective value: since 2026-10-10 the start-up
+        #     layer (package_therma_v_startup_control.yaml) is the only writer of registers 2 and 4.
+        #     Auto shows the delta request, the other modes the water request.
+        # The registers themselves stay readable through sensor.therma_v_target_temperature_circuit_1,
+        # sensor.therma_v_auto_mode_target_temperature_delta_circuit_1,
         # sensor.therma_v_water_setpoint_effective and sensor.therma_v_auto_delta_effective.
         target_temperature: >-
-          {% if is_state('sensor.therma_v_operation_mode', '3') %}
+          {% set tc = states('input_select.therma_v_temperature_control') %}
+          {% set mode = states('sensor.therma_v_operation_mode') | int(-1) %}
+          {% if tc == 'Room control (P)' or (tc == 'Heating-curve' and mode == 4) %}
+          {{ states('input_number.room_setpoint_heating') }}
+          {% elif mode == 3 %}
           {{ states('input_number.therma_v_auto_delta_request') }}
           {% else %}
           {{ states('input_number.therma_v_water_target_request') }}
@@ -81,20 +90,42 @@ template:
               # when the cool band was narrowed to 10..20 and a heat request of 25 came back as 20.
               mode: "{{ states('sensor.therma_v_operation_mode') }}"
               water_control: "{{ states('sensor.therma_v_control_mode') | int(-1) < 2 }}"
+              # Who the slider belongs to. True while the temperature control select drives this
+              # regime, so the service call sets the *room* setpoint instead of a water/delta value
+              # (step 3b, 2026-10-11). The band comes from the helper itself, so the clamp cannot
+              # drift from it. `mode` is already defined above - variables render in order.
+              room_control: >-
+                {% set tc = states('input_select.therma_v_temperature_control') %}
+                {{ tc == 'Room control (P)' or (tc == 'Heating-curve' and mode | int(-1) == 4) }}
               # The water band now comes from the four min/max helpers (the same source the
               # start-up layer uses); auto keeps the -5..5 delta and room control the 15..25 band.
               temp_lo: >-
-                {% if mode | int(-1) == 3 %}-5
+                {% if room_control %}{{ state_attr('input_number.room_setpoint_heating','min') | float(15) }}
+                {% elif mode | int(-1) == 3 %}-5
                 {% elif water_control %}{{ states('input_number.therma_v_min_water_temperature_heat') if mode | int(-1) == 4 else states('input_number.therma_v_min_water_temperature_cool') }}
                 {% else %}15{% endif %}
               temp_hi: >-
-                {% if mode | int(-1) == 3 %}5
+                {% if room_control %}{{ state_attr('input_number.room_setpoint_heating','max') | float(24) }}
+                {% elif mode | int(-1) == 3 %}5
                 {% elif water_control %}{{ states('input_number.therma_v_max_water_temperature_heat') if mode | int(-1) == 4 else states('input_number.therma_v_max_water_temperature_cool') }}
                 {% else %}25{% endif %}
               target: "{{ min(max(temperature | float(0), temp_lo | float(0)), temp_hi | float(40)) }}"
           - choose:
+              # Temperature control owns the setpoint: write the room setpoint. First, so the auto
+              # branch below cannot swallow the auto + room case. Same `temperature is number` guard
+              # as the default branch: a range-style call without `temperature` must not write.
+              - conditions:
+                  - "{{ room_control }}"
+                  - "{{ temperature is number }}"
+                sequence:
+                  - action: input_number.set_value
+                    target:
+                      entity_id: input_number.room_setpoint_heating
+                    data:
+                      value: "{{ target }}"
               - conditions:
                   - "{{ mode | int(-1) == 3 }}"  # auto mode: the delta request helper
+                  - "{{ temperature is number }}"
                 sequence:
                   - action: input_number.set_value
                     target:

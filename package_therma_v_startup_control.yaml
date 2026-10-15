@@ -1,18 +1,21 @@
-# Therma V control: the "start-hulp" for now. Design 2026-10-10. Step 1: heat and cool;
-# the same package will carry the auto-mode help (step 2) and the room temperature control
-# (step 3), which is why it is named control rather than startup (2026-10-10).
+# Therma V start-up control: the pump's water-setpoint layer. Design 2026-10-10 as
+# package_therma_v_control.yaml; renamed 2026-10-11, when the weather curve and the room control
+# moved to package_therma_v_temperature_control.yaml. The split is clean now: that package decides
+# *what* the setpoint should be, this one is the actuator side and owns Modbus registers 2 and 4.
 #
 # Why: the pump starts at maximum compressor power for a fixed ~15 minutes. If the controlled
 # water temperature reaches setpoint + hysteresis inside that window, the pump does not modulate
 # back and switches off. This layer writes a moving water setpoint that keeps the water inside the
 # hysteresis band, so the start survives; the demand also stays close to the water, which keeps
-# the pump's internal control out of overdrive (a soft start).
+# the pump's internal control out of overdrive (a soft start). The same clamp holds the pump on
+# whenever it runs, not only during the first minutes, and the auto branch applies the same bracket
+# to the delta on register 4.
 #
 # Where it sits: the climate template no longer writes Modbus register 2 itself. Its
 # `set_temperature` stores the request in `input_number.therma_v_water_target_request`, and the
 # writer automation here is the only writer of register 2. Auto mode (register 4, the delta on the
-# heating curve) is still written by the template - that is step 2. Room temperature control is
-# step 3.
+# pump's own heating curve) works the same way: the template records the request in
+# `input_number.therma_v_auto_delta_request` and this automation writes the register.
 #
 # Control law (asymmetric, matching the two hysteresis values in the pump menu, 2026-10-10):
 # the pump trips OFF when `water > target + hys_pos` (heat; mirrored in cool) and stops being
@@ -20,6 +23,12 @@
 # gives the same bracket in heat and cool:
 #
 #     effective = clamp(request, water - hys_pos, water - hys_neg)
+#
+# `request` is the temperature set on the climate entity: its `set_temperature` writes the water
+# request helper in heat/cool and the delta request helper in auto, and the step-3 room control loop
+# will feed those same helpers. `effective` is the number that goes to the pump - register 2 in
+# heat/cool, the delta on register 4 in auto, where the realised curve (register 2 minus the delta
+# the pump reports) turns the delta back into a water temperature.
 #
 # The lower bound keeps `water <= target + hys_pos`, so the off-trip cannot be met; the upper
 # bound keeps the pump demanding and caps the demand at |hys_neg| above the water (the soft
@@ -41,11 +50,17 @@
 #   * request <= the active season's minimum - there the pump may go off on hysteresis, which is
 #     exactly what that setting is for. In auto the same thing happens when the asked-for water is
 #     at or below `water - hys_pos`, so the layer stops chasing the water downward.
+#   * the band would have to hold the pump on more than `input_number.therma_v_shutdown_offset` past
+#     the request - in heat that is `desired - request`, in cool `request - desired`, i.e. the water
+#     has run away from the request on the side where the pump switches off (too hot in heat, too
+#     cold in cool). The request then goes back in and the pump trips off on its own hysteresis. The
+#     soft-start side - a demand held *back* from the request - never bypasses, so a cold start with
+#     a high request keeps its soft start (2026-10-11).
 
 input_number:
   therma_v_startup_hysteresis_pos:
     name: "Therma V startup hysteresis pos"
-    min: 0.1
+    min: 1
     max: 4
     step: 0.1
     initial: 2.8
@@ -57,21 +72,38 @@ input_number:
   therma_v_startup_hysteresis_neg:
     name: "Therma V startup hysteresis neg"
     min: -4
-    max: -0.1
+    max: -1
     step: 0.1
     initial: -2.8
     mode: box
     unit_of_measurement: "°C"
     icon: mdi:plus-minus-variant
 
+  # How far the layer may hold the pump on against the request before it hands the request back and
+  # lets the pump switch off. It only counts on the switch-off side: in heat the demand lifted above
+  # the request (the water is too hot), in cool the demand pulled below it (the water is too cold);
+  # the soft-start side never triggers it. Both the water sensor and the auto delta sensor read this
+  # helper, so the two cannot drift apart (2026-10-11).
+  therma_v_shutdown_offset:
+    name: "Therma V shutdown offset"
+    min: 0
+    max: 10
+    step: 0.5
+    initial: 6
+    mode: box
+    unit_of_measurement: "°C"
+    icon: mdi:power
+
   # The request the layer steers to: the climate slider writes it (heat/cool/room), and it is the
-  # starting point for the clamp. Range covers every mode (cool 10..20, room 15..25, heat 20..35).
+  # starting point for the clamp. Range covers every mode (cool, room, heat). Step 0.5 since
+  # 2026-10-11: the heating curve (package_therma_v_heating_curve.yaml) writes fractional requests
+  # and the pump still only ever sees whole degrees, because the effective sensor below rounds.
   therma_v_water_target_request:
     name: "Therma V water target request"
     min: 10
-    max: 35
-    step: 1 # The pump only holds whole degrees (measured 2026-10-10: writing 25,5 reads back 25).
-    initial: 26 # First-ever value only; Home Assistant restores the last value after that.
+    max: 45
+    step: 0.5 # The pump holds whole degrees; the whole-degree rounding sits in the effective sensor
+    initial: 25 # First-ever value only; Home Assistant restores the last value after that.
     mode: box
     unit_of_measurement: "°C"
     icon: mdi:water-thermometer
@@ -97,7 +129,7 @@ input_number:
     name: "Therma V min water temperature heat"
     min: 10
     max: 45
-    step: 0.5
+    step: 1
     initial: 20
     mode: box
     unit_of_measurement: "°C"
@@ -107,8 +139,8 @@ input_number:
     name: "Therma V max water temperature heat"
     min: 10
     max: 45
-    step: 0.5
-    initial: 35
+    step: 1
+    initial: 42
     mode: box
     unit_of_measurement: "°C"
     icon: mdi:thermometer-high
@@ -117,8 +149,8 @@ input_number:
     name: "Therma V min water temperature cool"
     min: 5
     max: 25
-    step: 0.5
-    initial: 10
+    step: 1
+    initial: 12
     mode: box
     unit_of_measurement: "°C"
     icon: mdi:thermometer-low
@@ -127,8 +159,8 @@ input_number:
     name: "Therma V max water temperature cool"
     min: 5
     max: 25
-    step: 0.5
-    initial: 20
+    step: 1
+    initial: 22
     mode: box
     unit_of_measurement: "°C"
     icon: mdi:thermometer-high
@@ -186,6 +218,7 @@ template:
           {% set cm = states('sensor.therma_v_control_mode') | int(-1) %}
           {% set hys_pos = states('input_number.therma_v_startup_hysteresis_pos') | float(3) %}
           {% set hys_neg = states('input_number.therma_v_startup_hysteresis_neg') | float(-3) %}
+          {% set shutdown_offset = states('input_number.therma_v_shutdown_offset') | float(6) %}
           {% set hz = states('sensor.therma_v_compressor_hz') | float(0) %}
           {% set mode_num = mode | int(-1) %}
           {% set heat = mode_num in [3, 4] %}
@@ -194,18 +227,27 @@ template:
                              else states('input_number.therma_v_min_water_temperature_cool')) | float(10) %}
           {% set band_max = (states('input_number.therma_v_max_water_temperature_heat') if heat
                              else states('input_number.therma_v_max_water_temperature_cool')) | float(35) %}
+          {% set water_floor = max(band_min, water - hys_pos) %}
+          {% set water_ceil = min(band_max, water - hys_neg) %}
+          {% set desired = min(max(req, water_floor), water_ceil) %}
+          {# Never hold the pump on more than `shutdown_offset` past the request. In heat the band
+             lifts the demand above the request to keep the pump running, which is the side where the
+             pump would switch off on a too-hot water; in cool it is the mirror. Past the limit the
+             layer hands the request back, so the pump trips off on its own hysteresis. The soft-start
+             side - a demand held *back* from the request - never triggers this, or a cold start with
+             a high request would lose its soft start (2026-10-11). #}
+          {% set chase = desired - req if heat else req - desired %}
           {% set active = is_state('input_boolean.therma_v_controlled_startup', 'on')
                           and is_state('switch.therma_v_heating_cooling_on_off', 'on')
                           and mode_num in [0, 4]
                           and cm in [0, 1]
                           and hz > 1
-                          and req > band_min %}
+                          and req > band_min
+                          and chase <= shutdown_offset %}
           {% if not active %}
           {{ req | round(0, dir) | int }}
           {% else %}
-          {% set water_floor = max(band_min, water - hys_pos) %}
-          {% set water_ceil = min(band_max, water - hys_neg) %}
-          {{ min(max(req, water_floor), water_ceil) | round(0, dir) | int }}
+          {{ desired | round(0, dir) | int }}
           {% endif %}
 
       # The delta to write on register 4 in auto mode. Auto follows a heating curve, so the
@@ -216,6 +258,9 @@ template:
       # whole-degree rounding goes up like heat. The curve is derived from the two registers -
       # register 2 is the resulting water target, register 4 the delta the pump applies - verified
       # live 2026-10-10: auto with delta 0 read register 2 = 23, with delta +2 it read 25.
+      # The chase limit above applies to the water target here too: if the band pushes the asked-for
+      # water up by more than `input_number.therma_v_shutdown_offset` (the runaway case, the side
+      # where the pump switches off on a too-hot water), the raw request delta goes back in.
       # Passthrough: the raw request delta when the compressor is off, the toggle is off, the pump
       # is off, the pump is in room control, or the asked-for water is already at/below
       # `water - hys_pos` - in heating that means "let the pump go off on hysteresis".
@@ -239,6 +284,7 @@ template:
           {% set cm = states('sensor.therma_v_control_mode') | int(-1) %}
           {% set hys_pos = states('input_number.therma_v_startup_hysteresis_pos') | float(3) %}
           {% set hys_neg = states('input_number.therma_v_startup_hysteresis_neg') | float(-3) %}
+          {% set shutdown_offset = states('input_number.therma_v_shutdown_offset') | float(6) %}
           {% set hz = states('sensor.therma_v_compressor_hz') | float(0) %}
           {% set applied = states('sensor.therma_v_auto_mode_target_temperature_delta_circuit_1') | float(0) %}
           {% set water_target = states('sensor.therma_v_target_temperature_circuit_1') | float(0) %}
@@ -248,16 +294,17 @@ template:
           {% set water_request = curve + req %}
           {% set water_floor = max(band_min, water - hys_pos) %}
           {% set water_ceil = min(band_max, water - hys_neg) %}
+          {% set desired = min(max(water_request, water_floor), water_ceil) %}
           {% set active = is_state('input_boolean.therma_v_controlled_startup', 'on')
                           and is_state('switch.therma_v_heating_cooling_on_off', 'on')
                           and mode == 3
                           and cm in [0, 1]
                           and hz > 1
-                          and water_request > water - hys_pos %}
+                          and water_request > water - hys_pos
+                          and desired - water_request <= shutdown_offset %}
           {% if not active %}
           {{ req | round(0, 'ceil') | int }}
           {% else %}
-          {% set desired = min(max(water_request, water_floor), water_ceil) %}
           {{ min(max(desired - curve, -5), 5) | round(0, 'ceil') | int }}
           {% endif %}
 
@@ -271,7 +318,8 @@ automation:
   # template trigger on the divergence was tried first and does not work: a template trigger that is
   # already true at load time never starts its `for:` timer.) The write is guarded by a comparison
   # with the register, so our own writes - and the pump's own clamping, e.g. asking 35 lands as 30 -
-  # cannot feed back into a write loop. Auto mode is skipped - register 4 is step 2.
+  # cannot feed back into a write loop. Auto mode is a branch of its own below: register 4, the delta
+  # on the pump's own heating curve, with its own register guard.
   - id: therma_v_apply_water_setpoint_auto
     alias: "Therma V apply water setpoint auto"
     description: "Writes the controlled-start-up water setpoint (register 2) or the auto delta (register 4)"
