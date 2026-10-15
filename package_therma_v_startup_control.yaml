@@ -53,9 +53,10 @@
 #   * the band would have to hold the pump on more than `input_number.therma_v_shutdown_offset` past
 #     the request - in heat that is `desired - request`, in cool `request - desired`, i.e. the water
 #     has run away from the request on the side where the pump switches off (too hot in heat, too
-#     cold in cool). The request then goes back in and the pump trips off on its own hysteresis. The
-#     soft-start side - a demand held *back* from the request - never bypasses, so a cold start with
-#     a high request keeps its soft start (2026-10-11).
+#     cold in cool). The request then goes back in and the pump trips off on its own hysteresis. This
+#     hand-back is what *forces* the release; a clamp on the demand was tried and reverted on
+#     2026-10-15 (see the helper's comment). The soft-start side - a demand held *back* from the
+#     request - never bypasses, so a cold start with a high request keeps its soft start.
 
 input_number:
   therma_v_startup_hysteresis_pos:
@@ -79,17 +80,27 @@ input_number:
     unit_of_measurement: "°C"
     icon: mdi:plus-minus-variant
 
-  # How far the layer may hold the pump on against the request before it hands the request back and
-  # lets the pump switch off. It only counts on the switch-off side: in heat the demand lifted above
-  # the request (the water is too hot), in cool the demand pulled below it (the water is too cold);
-  # the soft-start side never triggers it. Both the water sensor and the auto delta sensor read this
-  # helper, so the two cannot drift apart (2026-10-11).
+  # How far the layer may hold the pump on against the request. It only counts on the switch-off side:
+  # in heat the demand lifted above the request (the water is too hot), in cool the demand pulled
+  # below it (the water is too cold); the soft-start side never reaches it. Both the water sensor and
+  # the auto delta sensor read this helper, so the two cannot drift apart (2026-10-11).
+  #
+  # It is a cliff, not a step (measured 2026-10-15): while the gap is at or below this value the layer
+  # holds the demand at `water - hys_pos`; the moment it exceeds it the whole demand is handed back, so
+  # register 2 jumps to the raw request and the pump trips off at once. With whole-degree writes you
+  # therefore see the gap climb +1..+5 and then drop to 0, never +6 - that jump is the mechanism, not a
+  # bug. Clamping the demand to `request + offset` was tried on 2026-10-15 and reverted the same
+  # evening: it bounds the demand but never forces a release.
+  # Jan raised it 6 -> 7 C the same evening, so the cliff sits 1 K higher (water gap `offset + hys_pos`
+  # = 9.8 C above the request).
+  # Remember: `initial` does not reach an entity that already exists - the live value has to be set
+  # too (see the notes, "The season band was loaded the same evening").
   therma_v_shutdown_offset:
     name: "Therma V shutdown offset"
     min: 0
     max: 10
     step: 0.5
-    initial: 6
+    initial: 8
     mode: box
     unit_of_measurement: "°C"
     icon: mdi:power
@@ -233,9 +244,15 @@ template:
           {# Never hold the pump on more than `shutdown_offset` past the request. In heat the band
              lifts the demand above the request to keep the pump running, which is the side where the
              pump would switch off on a too-hot water; in cool it is the mirror. Past the limit the
-             layer hands the request back, so the pump trips off on its own hysteresis. The soft-start
-             side - a demand held *back* from the request - never triggers this, or a cold start with
-             a high request would lose its soft start (2026-10-11). #}
+             layer hands the request back, so the pump trips off on its own hysteresis. That hand-back
+             IS the "force it off" mechanism, and it is why the release is immediate: the demand lands
+             far below the water, so the off-trip is met at once. Clamping the demand to
+             `request + offset` instead was tried on the evening of 2026-10-15 and reverted the same
+             evening (Jan): a clamp only bounds the demand - it never forces a release, so the pump
+             keeps running until its own hysteresis happens to trip, roughly 2-3 C of water later and
+             not at all if the water settles below that. The soft-start side - a demand held *back*
+             from the request - never triggers this, or a cold start with a high request would lose
+             its soft start (2026-10-11). #}
           {% set chase = desired - req if heat else req - desired %}
           {% set active = is_state('input_boolean.therma_v_controlled_startup', 'on')
                           and is_state('switch.therma_v_heating_cooling_on_off', 'on')
