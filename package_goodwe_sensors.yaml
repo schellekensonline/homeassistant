@@ -113,6 +113,33 @@ template:
           0
         {% endif %}
 
+  # Guarded lifetime PV counter for the energy dashboard.
+  #
+  # The GoodWe inverter can answer one Modbus poll with (near) 0 when it wakes up (seen
+  # 2026-01-29 and 2026-05-11). The counter itself is fine - it runs on without a step - but
+  # `total_increasing` reads that momentary drop as a *meter reset* and then adds the whole
+  # re-accumulated total to the statistics sum, which doubled the series both times.
+  #
+  # This sensor never reports a lower value than the one before, so the blip never reaches the
+  # recorder. It deliberately keeps the original unique_id `total_pv_generation`: that is what
+  # keeps the entity id sensor.total_pv_generation, and with it the statistics series and the
+  # dashboard history. The raw Modbus read lives on as sensor.goodwe_total_pv_generation_raw.
+  - trigger:
+      - platform: state
+        entity_id: sensor.goodwe_total_pv_generation_raw
+    sensor:
+      - name: "Total PV Generation"
+        unique_id: total_pv_generation
+        unit_of_measurement: "kWh"
+        device_class: energy
+        state_class: total_increasing
+        state: >
+          {% set new = trigger.to_state.state | float(-1) %}
+          {% set old = this.state | float(-1) %}
+          {% if new < 0 %}{{ old if old >= 0 else 0 }}
+          {% elif old < 0 or new >= old %}{{ new }}
+          {% else %}{{ old }}{% endif %}
+
 automation:
   # Manual Modbus polling, so nothing is polled overnight while the inverter is off.
   # Every GoodWe Modbus entity below has scan_interval: 0, which makes this automation
@@ -137,10 +164,12 @@ automation:
       - variables:
           # Find entities with sensor.goodwe_
           goodwe_list: "{{ states.sensor | selectattr('entity_id', 'search', 'sensor.goodwe_') | list | map(attribute='entity_id') | list }}"
-          # Energy counters that don't follow the sensor.goodwe_ naming
+          # Energy counters that don't follow the sensor.goodwe_ naming. The lifetime PV
+          # counter is matched by that search as well since the 2026-10-16 rename; listing it
+          # here keeps the poll explicit (update_entity tolerates the duplicate).
           other_list:
             - sensor.today_s_pv_generation
-            - sensor.total_pv_generation
+            - sensor.goodwe_total_pv_generation_raw
       - action: homeassistant.update_entity
         target:
           # Poll the goodwe entities and the two counters in one call
@@ -442,16 +471,18 @@ modbus:
 
 
       # - name: "Goodwe total energy generation" # total energy produced
-      # Name same as original integration to not lose energy dashboard data
-      - name: "Total PV Generation" # total energy produced
-        unique_id: total_pv_generation
+      # The raw lifetime counter. No state_class on purpose: this is not the entity the energy
+      # dashboard reads. The guarded "Total PV Generation" template at the top of this file
+      # carries the original unique_id, so that name - and with it the statistics series - stays
+      # with the dashboard. See "The energy dashboard's two PV outliers" in the hass notes.
+      - name: "Goodwe Total PV Generation Raw" # total energy produced
+        unique_id: goodwe_total_pv_generation_raw
         scan_interval: 0
         address: 786
         slave: 1
         input_type: holding
         scale: 0.1 
         precision: 1
-        state_class: total_increasing
         device_class: energy
         unit_of_measurement: "kWh"
         data_type: uint32

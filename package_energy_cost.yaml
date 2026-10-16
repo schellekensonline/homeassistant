@@ -160,20 +160,22 @@ template:
           
           {{ (tot_import - tot_export + tot_solar + tot_battery_discharge - tot_battery_charge) | round(2) }}
 
-  # Triggered PV sensor that holds its value overnight, when the source resets
-  - trigger:
-      - platform: state
-        entity_id: sensor.total_pv_generation
-        not_to:
-          - unknown
-          - unavailable
-    sensor:
+  # Mirror of the guarded PV counter, for the energy bookkeeping below.
+  #
+  # This used to be a triggered sensor that held the last value while the source reset. The
+  # source (sensor.total_pv_generation) is monotonic since 2026-10-16 - the guard on the GoodWe
+  # side (package_goodwe_sensors.yaml) does that now - and the trigger version could stay
+  # 'unknown' indefinitely: on 2026-10-16 the entity was recreated and the trigger never fired,
+  # which took sensor.electric_energy_used_in_home and both daily meters down with it.
+  # A plain template re-renders on its own whenever the source moves, so it cannot hang.
+  - sensor:
       - name: "Total PV Generation Preserved"
         unique_id: total_pv_generation_preserved
         unit_of_measurement: "kWh"
         device_class: energy
         state_class: total_increasing
-        state: "{{ trigger.to_state.state }}"
+        availability: "{{ states('sensor.total_pv_generation') | is_number }}"
+        state: "{{ states('sensor.total_pv_generation') | float(0) }}"
 
 
   # Triggered Nord Pool sensor for the selling side: what a kWh that goes back to the grid
