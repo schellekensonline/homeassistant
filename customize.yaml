@@ -39,7 +39,31 @@ sensor.energy_production_tomorrow_east:
 sensor.energy_production_tomorrow_west:
   state_class: measurement
 
+# --- EMHASS thermal plan: predicted storage temperatures (2026-10-16) ------------------------
+# Pushed by EMHASS (`publish_data` -> `sensor.temp_predicted{k}`), so there is no own YAML
+# definition. The state is the plan value for the current quarter; the whole horizon rides along
+# in the `predicted_temperatures` attribute, which the recorder purges after 60 days. Statistics
+# keep the per-quarter series for the heating-season validation against
+# `sensor.therma_v_dhw_temperature` (0), `sensor.therma_v_inlet_temperature` (1, the floor/return
+# proxy) and `sensor.therma_v_room_temperature` (2, cooling) - all three already record statistics.
+# A forecast per quarter is a measurement, not a counter, so `measurement` is the right class.
+# Caveat: while `input_select.therma_v_control_strategy` is `Manual`/`Heuristic` the three loads
+# are parked, and the series mirror those measured sensors (46.6 C tank / room temperature). They
+# become real plan values when the pump follows the plan - note that flip date here and in
+# `notes_dockers_hass_emhass.md`.
+sensor.temp_predicted0:
+  state_class: measurement
+sensor.temp_predicted1:
+  state_class: measurement
+sensor.temp_predicted2:
+  state_class: measurement
+
 # --- Deliberately not listed here ------------------------------------------------------------
+# `sensor.heating_demand0/1/2` (EMHASS, 2026-10-16): the plan's heat demand per load. It reads 0.0
+#   while the three loads are parked, and per the EMHASS docs the column carries the whole demand of
+#   the storage, so it must not be summed. Add it when the pump really follows the plan, together
+#   with `sensor.p_deferrable0/1/2` (the plan power, the other half of plan-versus-realized); until
+#   then both are flat or mirrored series that would only add noise.
 # `number.*` and `input_number.*`: Home Assistant only compiles long-term statistics for
 #   `sensor` entities. A `state_class` added here does show up on the entity's state, but no
 #   statistics are written for it - checked on 2026-09-19 with

@@ -273,7 +273,19 @@ rest_command:
     # `publish_prefix: "dayahead_"`, which makes EMHASS post the entity files that run saved
     # instead (data/entities/sensor.dayahead_*.json), so the two plans stop sharing entity ids.
     # Empty prefix = the old behaviour, so the MPC callers can keep sending `data: {}`.
-    payload: '{{ {"publish_prefix": publish_prefix | default("")} | to_json }}'
+    #
+    # 2026-10-16: the marker blocks below are what make EMHASS publish the *thermal* sensors.
+    # `publish-data` (command_line._publish_thermal_loads) only publishes
+    # `sensor.temp_predicted{k}` and `sensor.heating_demand{k}` for the loads whose
+    # `def_load_config` entry carries a `thermal_config` / `thermal_battery` /
+    # `thermal_source` key, and this call sends no def_load_config of its own - which is why
+    # the MPC published no temperatures up to now (the day-ahead did, from its saved
+    # entities). Only the key is read, the values may be empty; one marker per load index
+    # (0 DHW, 1 floor heating, 2 cooling) so the series line up with the payload builder.
+    payload: >-
+      {{ {"publish_prefix": publish_prefix | default(""),
+          "def_load_config": [{"thermal_battery": {}}, {"thermal_battery": {}},
+                              {"thermal_battery": {}}]} | to_json }}
 
   # Read and write EMHASS's own config from Home Assistant (2026-09-26). EMHASS's REST API is
   # bound to the host loopback, so the agent cannot reach it directly any more - HA can, and with
