@@ -1,11 +1,119 @@
+# DHW circulation control for the horizontal 300 l tank.
+#
+# Mixing is useful only while a DHW source runs AND the tank is already close to its target.
+# Starting from a fixed run time was an indirect proxy for "near the end"; it mixed too early on
+# long cold recoveries and could mix the useful hot layer away during a shower. The pump now
+# starts at target - 2 K, keeps running down to target - 3 K, and stops when no source is active.
+# The 1 K gap is hysteresis against sensor/mixing movement. Leaving the useful band starts a
+# 2-minute stop timer; if the source or temperature returns in time, the timer is cancelled.
+#
+# There is deliberately no post-run mixing: once the tank is mixed, more circulation only loses
+# heat through the vessel and pipes. The timer is a debounce, not extra mixing time.
+#
+# Defrost blocks only the heat-pump source. The two electric boosters use the same temperature
+# hysteresis but start from the *normal* DHW setpoint, not a raised disinfection target: during a
+# 60 C legionella cycle the booster may run from around 50 C, where the target-2 K rule would
+# otherwise suppress useful mixing until 58 C.
+
+input_number:
+  dhw_circulation_start_delta:
+    name: "DHW circulation start delta"
+    icon: mdi:thermometer-chevron-up
+    min: 0
+    max: 10
+    step: 0.5
+    initial: 2
+    mode: box
+    unit_of_measurement: "K"
+
+  dhw_circulation_stop_delta:
+    name: "DHW circulation stop delta"
+    icon: mdi:thermometer-chevron-down
+    min: 0
+    max: 15
+    step: 0.5
+    initial: 3
+    mode: box
+    unit_of_measurement: "K"
+
+  dhw_circulation_booster_stop_delta:
+    name: "DHW circulation booster stop delta"
+    icon: mdi:thermometer-low
+    min: 0.5
+    max: 5
+    step: 0.5
+    initial: 1
+    mode: box
+    unit_of_measurement: "K"
+
+timer:
+  dhw_circulation_stop_delay:
+    name: "DHW circulation stop delay"
+    icon: mdi:timer-outline
+    duration: "00:02:00"
+    restore: true
+
 template:
   # Real state of the Shelly plug S3 that powers the DHW circulation pump. The pump sits in
-  # the vertical tank circuit so the tank heats more evenly during heating and disinfection.
+  # the tank circuit so the tank heats more evenly during heating and disinfection.
   - binary_sensor:
       - name: "Therma V DHW circulation state (S3)"
         unique_id: therma_v_dhw_circulation_state_s3
         availability: "{{ has_value('switch.shelly_plug_s3') }}"
         state: "{{ is_state('switch.shelly_plug_s3', 'on') }}"
+
+      # The switch's current state is the hysteresis memory: while off it needs target - 2 K to
+      # start, while on it may fall to target - 3 K before the stop timer begins. A shower or a
+      # large draw therefore takes the tank out of the band and stops mixing, while a small
+      # movement caused by the mixing itself does not flap the relay.
+      - name: "DHW circulation mixing required"
+        unique_id: dhw_circulation_mixing_required
+        icon: mdi:water-sync
+        availability: >-
+          {{ has_value('sensor.therma_v_dhw_temperature')
+             and has_value('sensor.therma_v_dhw_target_temperature')
+             and has_value('input_number.dhw_circulation_start_delta')
+             and has_value('input_number.dhw_circulation_stop_delta')
+             and has_value('input_number.dhw_circulation_booster_stop_delta')
+             and has_value('sensor.dhw_normal_setpoint')
+             and has_value('binary_sensor.therma_v_dhw_heating_state')
+             and has_value('binary_sensor.therma_v_defrost_state') }}
+        state: >-
+          {% set tank = states('sensor.therma_v_dhw_temperature') | float(0) %}
+          {% set target = states('sensor.therma_v_dhw_target_temperature') | float(50) %}
+          {% set normal = states('sensor.dhw_normal_setpoint') | float(50) %}
+          {% set start_delta = states('input_number.dhw_circulation_start_delta') | float(2) %}
+          {% set stop_delta = max(states('input_number.dhw_circulation_stop_delta') | float(3),
+                                  start_delta) %}
+          {% set booster_stop_delta =
+               states('input_number.dhw_circulation_booster_stop_delta') | float(1) %}
+          {% set circulating = is_state('binary_sensor.therma_v_dhw_circulation_state_s3', 'on')
+                               or is_state('switch.dhw_circulation_switch', 'on') %}
+          {% set hp_active = is_state('binary_sensor.therma_v_dhw_heating_state', 'on')
+                             and is_state('binary_sensor.therma_v_defrost_state', 'off') %}
+          {% set booster_active = is_state('binary_sensor.therma_v_dhw_booster_state', 'on')
+                                  or is_state('binary_sensor.therma_v_dhw_booster_2_state_s1', 'on') %}
+          {# Boosters use the normal service setpoint so a 60 C disinfection target does not
+             defer mixing until the expensive final band. The HP keeps target-relative mixing. #}
+          {% set threshold =
+               (normal - (booster_stop_delta if circulating else 0)) if booster_active
+               else (target - (stop_delta if circulating else start_delta)) %}
+          {{ (hp_active or booster_active) and tank >= threshold }}
+
+  - sensor:
+      # The normal service setpoint, independent of a temporary legionella target. The
+      # disinfection automation stores the pre-cycle target in dhw_setpoint_state before raising
+      # the live target to 60 C.
+      - name: "DHW normal setpoint"
+        unique_id: dhw_normal_setpoint
+        availability: >-
+          {{ has_value('sensor.therma_v_dhw_target_temperature')
+             and has_value('input_number.dhw_setpoint_state')
+             and has_value('input_boolean.dhw_disinfection_active') }}
+        state: >-
+          {% set live = states('sensor.therma_v_dhw_target_temperature') | float(50) %}
+          {% set stored = states('input_number.dhw_setpoint_state') | float(50) %}
+          {{ stored if is_state('input_boolean.dhw_disinfection_active', 'on') else live }}
 
   - switch:
       # Switch the automations use as their own state memory, separate from the relay (which
@@ -24,73 +132,75 @@ template:
               entity_id: switch.shelly_plug_s3
 
 automation:
-  # Switch the circulation pump on after 20 minutes of DHW heating, by the heat pump or by
-  # either booster, as long as the unit is not defrosting.
+  # One controller for both directions. The template sensor carries the temperature hysteresis;
+  # this automation turns the relay on immediately when mixing is required, and starts the
+  # 2-minute stop timer when it no longer is. A returning source or temperature cancels the
+  # timer before it can stop the pump.
   - id: dhw_circulation_on_auto
-    alias: "DHW circulation on auto"
-    description: "Turns the DHW circulation pump on during long DHW heating cycles"
+    alias: "DHW circulation control auto"
+    description: "Starts tank mixing near the DHW target and schedules the debounced stop"
     mode: restart
     triggers:
       - trigger: state
-        entity_id: binary_sensor.therma_v_dhw_heating_state
-        to: "on"
-        for:
-          minutes: 20
-      - trigger: state
-        entity_id: binary_sensor.therma_v_dhw_booster_state
-        to: "on"
-        for:
-          minutes: 20
-      - trigger: state
-        entity_id: binary_sensor.therma_v_dhw_booster_2_state_s1
-        to: "on"
-        for:
-          minutes: 20
-    conditions:
-      and:
-        - condition: state
-          entity_id: binary_sensor.therma_v_defrost_state
-          state: "off"
-        - or:
-          - condition: state
-            entity_id: binary_sensor.therma_v_dhw_heating_state
-            state: "on"
-          - condition: state
-            entity_id: binary_sensor.therma_v_dhw_booster_state
-            state: "on"
-          - condition: state
-            entity_id: binary_sensor.therma_v_dhw_booster_2_state_s1
-            state: "on"
+        entity_id: binary_sensor.dhw_circulation_mixing_required
+      - trigger: homeassistant
+        event: start
     actions:
-      - action: switch.turn_on
-        target:
-          entity_id: switch.dhw_circulation_switch
+      - choose:
+          - conditions:
+              - condition: state
+                entity_id: binary_sensor.dhw_circulation_mixing_required
+                state: "on"
+            sequence:
+              - if:
+                  - condition: state
+                    entity_id: timer.dhw_circulation_stop_delay
+                    state: "active"
+                then:
+                  - action: timer.cancel
+                    target:
+                      entity_id: timer.dhw_circulation_stop_delay
+              - if:
+                  - condition: state
+                    entity_id: switch.dhw_circulation_switch
+                    state: "off"
+                then:
+                  - action: switch.turn_on
+                    target:
+                      entity_id: switch.dhw_circulation_switch
+        default:
+          - if:
+              - condition: or
+                conditions:
+                  - condition: state
+                    entity_id: switch.dhw_circulation_switch
+                    state: "on"
+                  - condition: state
+                    entity_id: binary_sensor.therma_v_dhw_circulation_state_s3
+                    state: "on"
+              - condition: state
+                entity_id: timer.dhw_circulation_stop_delay
+                state: "idle"
+            then:
+              - action: timer.start
+                target:
+                  entity_id: timer.dhw_circulation_stop_delay
 
+  # The timer is the debounce. Re-check the condition when it expires, because the source or
+  # tank may have returned while an event was in flight.
   - id: dhw_circulation_off_auto
-    # Switch the circulation pump off once none of the three DHW sources heats any more. The
-    # 5-minute heartbeat keeps it robust: a missed trigger (for example around a restart) is
-    # corrected within 5 minutes.
     alias: "DHW circulation off auto"
-    description: "Turns the DHW circulation pump off when DHW heating has stopped"
-    mode: restart
+    description: "Turns the DHW circulation pump off after mixing is no longer required"
+    mode: single
+    max_exceeded: silent
     triggers:
-      - trigger: time_pattern
-        minutes: "/5"
-      - trigger: state
-        entity_id: binary_sensor.therma_v_dhw_heating_state
-      - trigger: state
-        entity_id: binary_sensor.therma_v_dhw_booster_state
-      - trigger: state
-        entity_id: binary_sensor.therma_v_dhw_booster_2_state_s1
+      - trigger: event
+        event_type: timer.finished
+        event_data:
+          entity_id: timer.dhw_circulation_stop_delay
     conditions:
       - condition: state
-        entity_id: binary_sensor.therma_v_dhw_booster_state
-        state: "off"
-      - condition: state
-        entity_id: binary_sensor.therma_v_dhw_heating_state
-        state: "off"
-      - condition: state
-        entity_id: binary_sensor.therma_v_dhw_booster_2_state_s1
+        entity_id: binary_sensor.dhw_circulation_mixing_required
         state: "off"
     actions:
       - action: switch.turn_off
