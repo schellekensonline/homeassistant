@@ -1,14 +1,14 @@
 # EMHASS package: the shared optimisation body (split out of package_emhass.yaml on 2026-10-07).
-# script.emhass_build_payload turns the live sensors, the prices and the three thermal batteries
-# into the JSON body for *both* optimisations, so the MPC (package_emhass_mpc.yaml) and the
-# day-ahead (package_emhass_dayahead.yaml) always describe the same house;
+# script.emhass_build_payload turns the live sensors, the prices and the heat topology into the
+# JSON body for *both* optimisations, so the MPC (package_emhass_mpc.yaml) and the day-ahead
+# (package_emhass_dayahead.yaml) always describe the same house;
 # script.emhass_price_guard decides whether a run makes sense at all.
 script:
   # Build the JSON body for the two EMHASS optimisations. One script for both, so the MPC (every
   # 15 minutes) and the day-ahead (once a day, when tomorrow's prices arrive) always describe the
   # same house: the same window from the current quarter hour, the same prices, the same night
-  # reserve and the same three thermal batteries. Until 2026-09-26 those thermal blocks lived only
-  # in the MPC payload, so the day-ahead plan silently ignored the heat pump; until 2026-10-03 the
+  # reserve and the same heat topology. Until 2026-09-26 those thermal blocks lived only in the
+  # MPC payload, so the day-ahead plan silently ignored the heat pump; until 2026-10-03 the
   # day-ahead sent only tomorrow's prices, which EMHASS mapped positionally from "now" and so
   # shifted by ~11 h.
   emhass_build_payload:
@@ -16,8 +16,8 @@ script:
     description: >-
       Returns { body: <json string> }. plan: 'mpc' and 'dayahead' both start at the current
       quarter hour; 'dayahead' only adds entity_save/publish_prefix so its plan lands on the
-      sensor.dayahead_* entities. thermal: false drops the thermal batteries - the fallback both
-      automations use when EMHASS rejects the blocks.
+      sensor.dayahead_* entities. thermal: false drops the heat topology - the fallback both
+      automations use when EMHASS rejects it.
     mode: parallel
     max: 4
     fields:
@@ -42,7 +42,7 @@ script:
       - variables:
           body: >-
             {% set day_ahead = plan | default('mpc', true) == 'dayahead' %}
-            {% set send_thermal = thermal | default(true, true) | bool(true) %}
+            {% set send_thermal = thermal | default(true) | bool %}
             {# Both plans start at the current quarter hour, rounded down so the filter is stable
                within it: EMHASS's day-ahead horizon starts at the run time too
                (`get_forecast_dates` floors "now") and it applies a passed price *list* positionally
@@ -87,14 +87,15 @@ script:
             {% set reserve_fixed_wh = states('input_number.emhass_reserve_fixed_wh') | float(2000) %}
             {% set reserve_wh = (acc.wh if acc.n >= 30 else avg_wh) * reserve_margin + reserve_fixed_wh %}
             {% set reserve_soc = min(max(reserve_wh / 15960, 0.05), 0.90) %}
-            {# --- Thermal batteries: the DHW tank, space heating and space cooling -----------------
-               Batch 2026-09-26. All parameters come from sensor.building_parameters (fed by
-               secrets.yaml) plus live sensors, so no building detail is hard-coded. The three
-               loads share one heat pump; the mutual-exclusion group that keeps them from running
-               together lives in the EMHASS config. This is compute-only: nothing acts on the
-               published p_deferrable* sensors. #}
+            {# --- Heat topology: one compressor plus the electric DHW booster --------------------
+               2026-10-17. The topology replaces the three classic thermal batteries with four
+               flows in a stable order: 0 = HP -> DHW, 1 = HP -> house heating, 2 = HP -> house
+               cooling, 3 = electric booster -> DHW. The first three keep their historical
+               p_deferrable meanings. The HP flows share one physical compressor and are in one
+               mutual-exclusion actuator group; Jan confirmed the 1.5 kW Shelly booster may run
+               in parallel. Every storage is parked as a fixed-temperature zero-loss store while
+               the strategy is not EMHASS or the physical mode/coil is unavailable. #}
             {% set ba = 'sensor.building_parameters' %}
-            {% set slab = state_attr(ba,'slab_volume_m3') | float(4.7) %}
             {% set room_now = states('sensor.therma_v_room_temperature') | float(20.5) %}
             {% set uval = state_attr(ba,'u_value') | float(0.55) %}
             {% set env = state_attr(ba,'envelope_area_m2') | float(380) %}
@@ -104,78 +105,48 @@ script:
             {% set shgc = state_attr(ba,'shgc') | float(0.55) %}
             {% set igf = state_attr(ba,'internal_gains_factor') | float(0.6) %}
             {% set tau = state_attr(ba,'slab_inertia_time_constant_h') | float(2) %}
+            {% set hp_nom = state_attr(ba,'heatpump_electric_max_w') | float(3000) %}
             {% set dhw_now = states('sensor.therma_v_dhw_temperature') | float(50) %}
-            {# DHW target: the setpoint of the existing DHW climate entity (register 8), so a
-               disinfection cycle that raises the target travels into the model by itself. #}
             {% set dhw_target = state_attr('climate.therma_v_dhw','temperature')
                                 | float(0) or states('sensor.therma_v_dhw_target_temperature') | float(50) %}
-            {# Comfort bands. The start temperature is clamped into its band in the body below:
-               EMHASS treats a start outside min/max as infeasible, which is what cost us 11 hours
-               on 2026-09-20 when the DHW tank sat above its old 58 C ceiling after the
-               disinfection. #}
             {% set dhw_min = state_attr(ba,'dhw_min_temperature') | float(42) %}
             {% set dhw_max = state_attr(ba,'dhw_max_temperature') | float(68) %}
-            {# Which season the house model should plan. The heat pump's own HVAC mode decides:
-               'cool' is the cooling season, 'heat' and 'auto' are the heating season (auto is a
-               heating curve with a delta, it never cools), 'off' means neither. The out-of-season
-               load stays in the body with a band so wide that nothing can force it to run, so the
-               number of loads always matches what EMHASS expects. #}
             {% set pump_mode = states('climate.therma_v_heating_cooling') %}
             {% set heat_season = pump_mode in ['heat', 'auto'] %}
             {% set cool_season = pump_mode == 'cool' %}
-            {# Who owns the heat pump (2026-10-07). Only while the Therma V control strategy is
-               EMHASS does the plan carry the HP blocks for real; Manual and Heuristic park all
-               three, so the plan never schedules a pump it does not control (and
-               sensor.emhass_hp_plan_power reads 0). On the Manual/Heuristic side the pump keeps
-               running - its own thermostat or the e-price ESS automations - but that load is the
-               battery's problem through ZoM, not the plan's. The DHW block also needs its own
-               on/off coil: with the DHW switch off the pump cannot heat the tank, so that block is
-               parked too. Floor and cooling already follow the climate mode via heat/cool_season;
-               the same "parked" tank (pinned to the current temperature, zero loss, zero draw)
-               switches them off without EMHASS rejecting the block. #}
             {% set hp_owned = is_state('input_select.therma_v_control_strategy', 'EMHASS') %}
-            {% set hp_heat = hp_owned and heat_season %}
-            {% set hp_cool = hp_owned and cool_season %}
-            {% set hp_dhw = hp_owned and is_state('switch.therma_v_dhw_on_off', 'on') %}
+            {% set master_on = is_state('switch.therma_v_heating_cooling_on_off', 'on') %}
+            {% set hp_heat = hp_owned and master_on and heat_season %}
+            {% set hp_cool = hp_owned and master_on and cool_season %}
+            {% set hp_dhw = hp_owned and master_on and is_state('switch.therma_v_dhw_on_off', 'on') %}
             {% set sp_heat = states('input_number.room_setpoint_heating') | float(20) %}
             {% set sp_cool = states('input_number.room_setpoint_cooling') | float(24) %}
             {% set margin = state_attr(ba,'room_comfort_margin_c') | float(1) %}
-            {# Comfort window of +-1 C around the setpoint (2026-09-20), stretched to the
-               current room temperature while the house sits outside it: the bound never forbids
-               where the house already is, so a transient cannot make the run infeasible, and the
-               target always lies inside the band by construction. #}
+            {% set heat_floor = min(sp_heat - margin, room_now) %}
+            {% set heat_ceil = max(sp_heat + margin, room_now) %}
             {% set cool_floor = min(sp_cool - margin, room_now) %}
             {% set cool_ceil  = max(sp_cool + margin, room_now) %}
-            {# An out-of-season load cannot simply be given a wide band: EMHASS still forces it to
-               run for the building's own demand (the cooling side in particular ran 15-20 kWh a
-               day with a 5-45 C band on 2026-09-20). Parking it as a zero-draw water tank whose
-               temperature is pinned to the current room temperature really does switch it off -
-               tested against EMHASS directly, 0.0 kWh. The number of loads stays 3, which EMHASS
-               requires. #}
-            {% set parked = ([room_now] * n) | to_json %}
-            {# The DHW block parks on its own current temperature instead of the room's: same
-               zero-draw trick, and it keeps the number recognisable. #}
-            {% set dhw_parked = ([dhw_now] * n) | to_json %}
-            {# --- Floor model (2026-09-20) ------------------------------------------------------
-               The thermal store is the FLOOR, not the room: EMHASS's slab model wants the floor
-               temperature, and our heat pump regulates the return (= floor) temperature. So the
-               store starts on the return sensor and the weather-compensated curves live on the
-               water side: `heating_curve` sets the supply temperature, `min_temperature_curve`
-               sets the floor the slab must respect, and their offset carries
-               input_number.heating_curve_offset_correction - the knob of the integrating
-               controller that has to hold the room on its setpoint. The room setpoint +-1 C is
-               therefore no longer an EMHASS band but the controller's target. #}
-            {% set floor_now = states('sensor.therma_v_inlet_temperature') | float(room_now) %}
-            {% set curve_slope = state_attr(ba,'heating_curve_slope') | float(1.0) %}
-            {% set curve_offset = (state_attr(ba,'heating_curve_offset') | float(30))
-                                  + (states('input_number.heating_curve_offset_correction') | float(0)) %}
-            {% set curve_min_supply = state_attr(ba,'heating_curve_min_supply') | float(25) %}
-            {% set curve_max_supply = state_attr(ba,'heating_curve_max_supply') | float(40) %}
-            {% set floor_drop = state_attr(ba,'floor_return_drop_c') | float(4) %}
-            {% set floor_min_abs = min(state_attr(ba,'floor_min_temperature') | float(20), floor_now) %}
-            {% set floor_max_abs = max(state_attr(ba,'floor_max_temperature') | float(28), floor_now) %}
-            {% set floor_curve_min = state_attr(ba,'floor_curve_min_supply') | float(22) %}
-            {% set floor_curve_max = state_attr(ba,'floor_curve_max_supply') | float(32) %}
+            {# The actual heat-mode controller uses T_flow = target + slope * (target - outdoor)
+               + offset. EMHASS uses T_flow = curve.offset - curve.slope * outdoor, so the
+               equivalent offset at 0 C is target * (1 + slope) + offset. #}
+            {% set curve_slope = states('input_number.therma_v_heating_curve_slope') | float(0.444) %}
+            {% set curve_actual_offset = states('input_number.therma_v_heating_curve_offset') | float(0) %}
+            {% set curve_offset = sp_heat * (1 + curve_slope) + curve_actual_offset %}
+            {% set curve_min_supply = states('input_number.therma_v_min_water_temperature_heat') | float(20) %}
+            {% set curve_max_supply = states('input_number.therma_v_max_water_temperature_heat') | float(42) %}
+            {# House-zone parameters. The thermal mass is deliberately an explicit model value
+               rather than derived from the 4.7 m3 floor only: EMHASS tracks the room now, which
+               is the quantity the eventual supervisor will use. The loss coefficient is the
+               envelope UA plus the ventilation term (0.33 Wh/m3K). #}
+            {% set house_mass = 18.0 %}
+            {% set loss_coefficient = ((uval * env) + (vent * vol * 0.33)) / 1000 %}
+            {% set dhw_draw = ([0.005] * n) if hp_dhw else ([0.0] * n) %}
+            {% set dhw_minima = ([dhw_min] * n) if hp_dhw else ([dhw_now] * n) %}
+            {% set dhw_maxima = ([dhw_max] * n) if hp_dhw else ([dhw_now] * n) %}
+            {% set heat_minima = ([heat_floor] if hp_heat else [room_now]) %}
+            {% set heat_maxima = ([heat_ceil] * n) if hp_heat else ([room_now] * n) %}
+            {% set cool_minima = ([cool_floor] * n) if hp_cool else ([room_now] * n) %}
+            {% set cool_maxima = ([cool_ceil] * n) if hp_cool else ([room_now] * n) %}
 
             {
               "load_cost_forecast": {{ incl_rounded | to_json }},
@@ -190,7 +161,7 @@ script:
               "battery_charge_power_max": {{ states('input_number.sessy_api_strategy_max_charge_power') | int(6000) }},
               "battery_discharge_power_max": {{ states('input_number.sessy_api_strategy_max_discharge_power') | int(3000) }},
               "soc_init": {{ (states('sensor.sessy_battery_state_of_charge') | float(60) / 100) | round(3) }},
-              "soc_final": {{ reserve_soc | round(3) }}{% if not day_ahead %},
+              "soc_final": {{ reserve_soc | round(3) }}{% if not day_ahead and send_thermal %},
               {# Make the MPC publish the thermal model's predicted store temperatures (
                  2026-10-10). The shared builder already sends the three thermal batteries, but
                  EMHASS's /action/publish-data only posts the sensors named in these custom id
@@ -201,84 +172,92 @@ script:
               "custom_predicted_temperature_id": [
                 {"entity_id": "sensor.temp_predicted0"},
                 {"entity_id": "sensor.temp_predicted1"},
-                {"entity_id": "sensor.temp_predicted2"}
+                {"entity_id": "sensor.temp_predicted2"},
+                {"entity_id": "sensor.temp_predicted3"}
+              ],
+              "custom_heating_demand_id": [
+                {"entity_id": "sensor.heating_demand0"},
+                {"entity_id": "sensor.heating_demand1"},
+                {"entity_id": "sensor.heating_demand2"},
+                {"entity_id": "sensor.heating_demand3"}
+              ],
+              "custom_deferrable_forecast_id": [
+                {"entity_id": "sensor.p_deferrable0"},
+                {"entity_id": "sensor.p_deferrable1"},
+                {"entity_id": "sensor.p_deferrable2"},
+                {"entity_id": "sensor.p_deferrable3"}
               ]{% endif %}{% if day_ahead %},
               {# Keep the day-ahead plan out of the MPC's sensors (2026-10-03): the run saves its
                  built entities under this prefix and the automation publishes those, so the two
                  plans no longer share entity ids. See the notes, "03-10: the day-ahead plan". #}
               "entity_save": true,
               "publish_prefix": "dayahead_"{% endif %}{% if send_thermal %},
-              "def_load_config": [
-                {"thermal_battery": {
-                  "volume": {{ state_attr(ba,'dhw_volume_m3') | float(0.3) }},
-                  "density": 997,
-                  "heat_capacity": 4.184,
-                  "thermal_loss": {{ state_attr(ba,'dhw_thermal_loss_kw') | float(0.19) if hp_dhw else 0.0 }},
-                  "start_temperature": {{ min(max(dhw_now, dhw_min), dhw_max) if hp_dhw else dhw_now }},
-                  "min_temperatures": {{ ([dhw_min] * n) | to_json if hp_dhw else dhw_parked }},
-                  "max_temperatures": {{ ([dhw_max] * n) | to_json if hp_dhw else dhw_parked }},
-                  "supply_temperature": {{ dhw_target }},
-                  "carnot_efficiency": {{ state_attr(ba,'dhw_carnot_efficiency') | float(0.42) }},
-                  "draw_off_demand": {{ ([0.005] * n) | to_json if hp_dhw else ([0.0] * n) | to_json }}
-                }},
-                {"thermal_battery": {
-                  "volume": {{ slab }},
-                  "start_temperature": {{ floor_now if hp_heat else room_now }},
-                  "min_temperatures": {{ ([floor_min_abs] * n) | to_json if hp_heat else parked }},
-                  "max_temperatures": {{ ([floor_max_abs] * n) | to_json if hp_heat else parked }},
-                  {% if hp_heat %}
-                  "heating_curve": {"slope": {{ curve_slope }}, "offset": {{ curve_offset }},
-                                    "min_supply": {{ curve_min_supply }}, "max_supply": {{ curve_max_supply }}},
-                  "min_temperature_curve": {"slope": {{ curve_slope }}, "offset": {{ curve_offset - floor_drop }},
-                                            "min_supply": {{ floor_curve_min }}, "max_supply": {{ floor_curve_max }}},
-                  "carnot_efficiency": {{ state_attr(ba,'carnot_efficiency_heating') | float(0.45) }},
-                  "u_value": {{ uval }},
-                  "envelope_area": {{ env }},
-                  "ventilation_rate": {{ vent }},
-                  "heated_volume": {{ vol }},
-                  "window_area": {{ warea }},
-                  "shgc": {{ shgc }},
-                  "internal_gains_factor": {{ igf }},
-                  "thermal_inertia_time_constant": {{ tau }},
-                  "indoor_target_temperature": {{ sp_heat }},
-                  "sense": "heat"
-                  {% else %}
-                  "density": 997,
-                  "heat_capacity": 4.184,
-                  "thermal_loss": 0.0,
-                  "supply_temperature": {{ state_attr(ba,'heating_supply_temperature') | float(32) }},
-                  "carnot_efficiency": {{ state_attr(ba,'carnot_efficiency_heating') | float(0.45) }},
-                  "draw_off_demand": {{ ([0.0] * n) | to_json }}
-                  {% endif %}
-                }},
-                {"thermal_battery": {
-                  "volume": {{ slab }},
-                  "start_temperature": {{ room_now }},
-                  "min_temperatures": {{ ([cool_floor] * n) | to_json if hp_cool else parked }},
-                  "max_temperatures": {{ ([cool_ceil] * n) | to_json if hp_cool else parked }},
-                  {% if hp_cool %}
-                  "supply_temperature": {{ state_attr(ba,'cooling_supply_temperature') | float(16) }},
-                  "carnot_efficiency": {{ state_attr(ba,'carnot_efficiency_heating') | float(0.45) }},
-                  "u_value": {{ uval }},
-                  "envelope_area": {{ env }},
-                  "ventilation_rate": {{ vent }},
-                  "heated_volume": {{ vol }},
-                  "window_area": {{ warea }},
-                  "shgc": {{ shgc }},
-                  "internal_gains_factor": {{ igf }},
-                  "thermal_inertia_time_constant": {{ tau }},
-                  "indoor_target_temperature": {{ sp_cool }},
-                  "sense": "cool"
-                  {% else %}
-                  "density": 997,
-                  "heat_capacity": 4.184,
-                  "thermal_loss": 0.0,
-                  "supply_temperature": {{ state_attr(ba,'cooling_supply_temperature') | float(16) }},
-                  "carnot_efficiency": {{ state_attr(ba,'carnot_efficiency_heating') | float(0.45) }},
-                  "draw_off_demand": {{ ([0.0] * n) | to_json }}
-                  {% endif %}
-                }}
-              ]{% endif %}
+              "heat_topology": {
+                "sources": [
+                  {"id": "hp_dhw", "type": "heatpump",
+                   "nominal_power": {{ hp_nom }}, "treat_as_semi_cont": false,
+                   "supply_temperature": {{ min(dhw_target, 53) }},
+                   "carnot_efficiency": {{ state_attr(ba,'dhw_carnot_efficiency') | float(0.42) }},
+                   "max_supply_temperature": 53, "max_thermal_power": 9000},
+                  {"id": "hp_heat", "type": "heatpump",
+                   "nominal_power": {{ hp_nom }}, "treat_as_semi_cont": false,
+                   "heating_curve": {"slope": {{ curve_slope }}, "offset": {{ curve_offset }},
+                                     "min_supply": {{ curve_min_supply }},
+                                     "max_supply": {{ curve_max_supply }}},
+                   "carnot_efficiency": {{ state_attr(ba,'carnot_efficiency_heating') | float(0.45) }},
+                   "max_thermal_power": 9000},
+                  {"id": "hp_cool", "type": "heatpump",
+                   "nominal_power": {{ hp_nom }}, "treat_as_semi_cont": false,
+                   "supply_temperature": {{ state_attr(ba,'cooling_supply_temperature') | float(16) }},
+                   "carnot_efficiency": {{ state_attr(ba,'carnot_efficiency_heating') | float(0.45) }},
+                   "max_thermal_power": 9000},
+                  {"id": "booster", "type": "electric", "efficiency": 1.0,
+                   "nominal_power": 1500, "treat_as_semi_cont": true}
+                ],
+                "storage": [
+                  {"id": "dhw",
+                   "volume": {{ state_attr(ba,'dhw_volume_m3') | float(0.3) }},
+                   "density": 997, "heat_capacity": 4.184,
+                   "thermal_loss": {{ state_attr(ba,'dhw_thermal_loss_kw') | float(0.19) if hp_dhw else 0.0 }},
+                   "start_temperature": {{ dhw_now }},
+                   "desired_temperature": {{ dhw_target }},
+                   "min_temperature": {{ dhw_minima | to_json }},
+                   "max_temperature": {{ dhw_maxima | to_json }}},
+                  {"id": "house_heat", "thermal_mass": {{ house_mass }},
+                   "loss_coefficient": {{ loss_coefficient if hp_heat else 0.0 }},
+                   "thermal_inertia": {{ tau if hp_heat else 0.0 }},
+                   "start_temperature": {{ room_now }},
+                   "desired_temperature": {{ sp_heat if hp_heat else room_now }},
+                   "min_temperature": {{ heat_minima | to_json }},
+                   "max_temperature": {{ heat_maxima | to_json }},
+                   "window_area": {{ warea if hp_heat else 0 }}, "shgc": {{ shgc }},
+                   "comfort_sense": "heat"},
+                  {"id": "house_cool", "thermal_mass": {{ house_mass }},
+                   "loss_coefficient": {{ loss_coefficient if hp_cool else 0.0 }},
+                   "thermal_inertia": {{ tau if hp_cool else 0.0 }},
+                   "start_temperature": {{ room_now }},
+                   "desired_temperature": {{ sp_cool if hp_cool else room_now }},
+                   "min_temperature": {{ cool_minima | to_json }},
+                   "max_temperature": {{ cool_maxima | to_json }},
+                   "window_area": {{ warea if hp_cool else 0 }}, "shgc": {{ shgc }},
+                   "comfort_sense": "cool"}
+                ],
+                "consumers": [
+                  {"id": "dhw_draw", "type": "profile", "target": "dhw",
+                   "profile": {{ dhw_draw | to_json }}}
+                ],
+                "flows": [
+                  {"from": "hp_dhw", "to": "dhw"},
+                  {"from": "hp_heat", "to": "house_heat"},
+                  {"from": "hp_cool", "to": "house_cool"},
+                  {"from": "booster", "to": "dhw"}
+                ],
+                "actuator_groups": [
+                  {"flows": [["hp_dhw", "dhw"], ["hp_heat", "house_heat"],
+                             ["hp_cool", "house_cool"]],
+                   "mutual_exclusion": true, "max_combined_power": {{ hp_nom }}}
+                ]
+              }{% endif %}
             }
       # A script response has to be a dictionary; the caller reads .body from it.
       - variables:

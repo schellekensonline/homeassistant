@@ -54,10 +54,10 @@ template:
           {% endfor %}
           {{ ns.value if ns.value is not none else (plan[0].dayahead_p_batt_forecast | float(0) if plan else 0) }}
 
-      # Planned electric power of the heat pump: the sum of the three deferrable loads EMHASS
-      # schedules (0 = DHW tank, 1 = floor heating, 2 = cooling). This is the plan's *wish*, not a
-      # measurement - the thermal blocks are still compute-only, so nothing acts on it yet. The full
-      # 96-quarter horizon rides in each p_deferrableN sensor's `deferrables_schedule` attribute.
+      # Planned electric power of the DHW/heating equipment: the sum of the four topology flows
+      # EMHASS schedules (0 = HP DHW, 1 = HP house heating, 2 = HP house cooling, 3 = electric
+      # DHW booster). This is the plan's *wish*, not a measurement. The full horizon rides in each
+      # p_deferrableN sensor's `deferrables_schedule` attribute.
       # Zero while input_select.therma_v_control_strategy is Manual or Heuristic: then the payload
       # parks all three blocks (see emhass_build_payload), so the plan carries no heat pump at all.
       - name: "EMHASS HP plan power"
@@ -68,15 +68,18 @@ template:
         availability: >-
           {{ states('sensor.p_deferrable0') | is_number
              and states('sensor.p_deferrable1') | is_number
-             and states('sensor.p_deferrable2') | is_number }}
+             and states('sensor.p_deferrable2') | is_number
+             and states('sensor.p_deferrable3') | is_number }}
         state: >-
           {{ (states('sensor.p_deferrable0') | float(0)
               + states('sensor.p_deferrable1') | float(0)
-              + states('sensor.p_deferrable2') | float(0)) | round(0) }}
+              + states('sensor.p_deferrable2') | float(0)
+              + states('sensor.p_deferrable3') | float(0)) | round(0) }}
         attributes:
           dhw_power: "{{ states('sensor.p_deferrable0') | float(0) | round(0) }}"
           floor_heating_power: "{{ states('sensor.p_deferrable1') | float(0) | round(0) }}"
           cooling_power: "{{ states('sensor.p_deferrable2') | float(0) | round(0) }}"
+          dhw_booster_power: "{{ states('sensor.p_deferrable3') | float(0) | round(0) }}"
 
       # Map the existing sensors onto the entity ids used in the EMHASS config.
       - name: "EMHASS PV Power"
@@ -136,7 +139,7 @@ template:
       # The building and thermal-battery parameters live in secrets.yaml (gitignored). They are
       # exposed here as attributes because a `!secret` tag cannot be embedded inside the rest
       # command payload: that payload is a Jinja template string, and tags only work on YAML
-      # nodes. script.emhass_build_payload builds EMHASS's `def_load_config` from these
+      # nodes. script.emhass_build_payload builds EMHASS's runtime `heat_topology` from these
       # attributes, for both the MPC and the day-ahead run.
       - name: "Building parameters"
         unique_id: building_parameters
@@ -151,6 +154,7 @@ template:
           internal_gains_factor: !secret building_internal_gains_factor
           slab_volume_m3: !secret building_slab_volume_m3
           slab_inertia_time_constant_h: !secret building_slab_inertia_time_constant_h
+          heatpump_electric_max_w: !secret building_heatpump_electric_max_w
           heating_supply_temperature: !secret building_supply_temperature_heating
           heating_target_temperature: !secret building_heating_target_temperature
           carnot_efficiency_heating: !secret building_carnot_efficiency_heating
@@ -281,11 +285,12 @@ rest_command:
     # `thermal_source` key, and this call sends no def_load_config of its own - which is why
     # the MPC published no temperatures up to now (the day-ahead did, from its saved
     # entities). Only the key is read, the values may be empty; one marker per load index
-    # (0 DHW, 1 floor heating, 2 cooling) so the series line up with the payload builder.
+    # (0 HP DHW, 1 HP house heat, 2 HP house cool, 3 electric DHW booster) so the series line up
+    # with the payload builder.
     payload: >-
       {{ {"publish_prefix": publish_prefix | default(""),
           "def_load_config": [{"thermal_battery": {}}, {"thermal_battery": {}},
-                              {"thermal_battery": {}}]} | to_json }}
+                              {"thermal_battery": {}}, {"thermal_battery": {}}]} | to_json }}
 
   # Read and write EMHASS's own config from Home Assistant (2026-09-26). EMHASS's REST API is
   # bound to the host loopback, so the agent cannot reach it directly any more - HA can, and with
