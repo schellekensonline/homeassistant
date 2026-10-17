@@ -47,15 +47,17 @@ sensor.energy_production_tomorrow_west:
 # `sensor.therma_v_dhw_temperature` (0), `sensor.therma_v_inlet_temperature` (1, the floor/return
 # proxy) and `sensor.therma_v_room_temperature` (2, cooling) - all three already record statistics.
 # A forecast per quarter is a measurement, not a counter, so `measurement` is the right class.
-# Caveat: while `input_select.therma_v_control_strategy` is `Manual`/`Heuristic` the three loads
-# are parked, and the series mirror those measured sensors (46.6 C tank / room temperature). They
-# become real plan values when the pump follows the plan - note that flip date here and in
-# `notes_dockers_hass_emhass.md`.
+# Index 3 is the electric booster flow into the same DHW tank, so its temperature duplicates index
+# 0. Caveat: while `input_select.therma_v_control_strategy` is `Manual`/`Heuristic` all four loads
+# are parked, and the series mirror the measured tank/room temperatures. They become real plan
+# values when the pump follows the plan - note that flip date here and in the EMHASS notes.
 sensor.temp_predicted0:
   state_class: measurement
 sensor.temp_predicted1:
   state_class: measurement
 sensor.temp_predicted2:
+  state_class: measurement
+sensor.temp_predicted3:
   state_class: measurement
 
 # --- Deliberately not listed here ------------------------------------------------------------
