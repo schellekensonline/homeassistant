@@ -156,32 +156,28 @@ input_number:
     mode: box
     icon: mdi:chart-bell-curve-cumulative
 
-  # The two room bands, both as offsets on the room error `e = setpoint - room` (positive = too
-  # cold), signed like the pump's own hysteresis pair. So the band is [min, max] on that error axis:
-  # `max` (+1) is the cold edge, `min` (-1) the warm edge. The hard stand enters on an edge and
-  # leaves when `e` crosses zero - a 1 K dead band per side, no third number (Jan, 2026-10-15).
+  # Absolute room-temperature bounds. `max` is the upper (too warm) edge and `min` the lower (too
+  # cold) edge; both comparisons are inclusive. The hard stand enters on an edge and releases
+  # when the filtered room crosses the normal setpoint, so it cannot flap on the edge.
   therma_v_room_hysteresis_max:
-    name: "Therma V room hysteresis max"
-    min: 0
-    max: 3
+    name: "Therma V room temperature upper bound"
+    min: 15
+    max: 30
     step: 0.1
-    initial: 1.0
+    # initial: 21.0 # Dashboard helper: restore the live value instead.
     mode: box
-    unit_of_measurement: "K"
-    icon: mdi:arrow-expand-horizontal
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-high
 
-  # Negative on purpose: this is the warm edge, and `e < min` is what leads to a *lower* water
-  # temperature. With two positive values the same comparison would already fire just above the
-  # setpoint.
   therma_v_room_hysteresis_min:
-    name: "Therma V room hysteresis min"
-    min: -3
-    max: 0
+    name: "Therma V room temperature lower bound"
+    min: 15
+    max: 30
     step: 0.1
-    initial: -0.5
+    # initial: 19.5 # Dashboard helper: restore the live value instead.
     mode: box
-    unit_of_measurement: "K"
-    icon: mdi:arrow-collapse-horizontal
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-low
 
   # Weather anticipation (morning sun): K water per K/h of outdoor rise, and its ceiling.
   therma_v_room_anticipation_gain:
@@ -274,7 +270,15 @@ template:
              and has_value('input_number.therma_v_heating_curve_offset')
              and has_value('input_number.therma_v_heating_curve_room_influence')
              and has_value('input_number.therma_v_min_water_temperature_heat')
-             and has_value('input_number.therma_v_max_water_temperature_heat') }}
+             and has_value('input_number.therma_v_max_water_temperature_heat')
+             and has_value('sensor.therma_v_room_temperature_filtered')
+             and has_value('input_number.therma_v_room_hysteresis_min')
+             and has_value('input_number.therma_v_room_hysteresis_max')
+             and states('input_number.therma_v_room_hysteresis_min') | is_number
+             and states('input_number.therma_v_room_hysteresis_max') | is_number
+             and 15 <= states('input_number.therma_v_room_hysteresis_min') | float(0)
+                       < states('input_number.therma_v_room_hysteresis_max') | float(0)
+                       <= 30 }}
         state: >-
           {% set slope = states('input_number.therma_v_heating_curve_slope') | float(1.0) %}
           {% set offset = states('input_number.therma_v_heating_curve_offset') | float(0) %}
@@ -293,6 +297,15 @@ template:
           {% set room_control = is_state('input_select.therma_v_temperature_control', 'Room control (P)') %}
           {% set curve_on = not is_state('input_select.therma_v_temperature_control', 'Off') %}
           {% set e = target - t_room %}
+          {% set room_lower = states('input_number.therma_v_room_hysteresis_min') | float(19.5) %}
+          {% set room_upper = states('input_number.therma_v_room_hysteresis_max') | float(21) %}
+          {# A restored hard-stop/boost flag is only allowed to override while the current filtered
+             room really is outside its absolute bound. A stale flag from before a restart/reload
+             must not stop or boost a pump while the room is back inside the normal band. #}
+          {% set stop_override =
+               is_state('input_boolean.therma_v_room_hard_stop', 'on') and t_room >= room_upper %}
+          {% set boost_override =
+               is_state('input_boolean.therma_v_room_hard_boost', 'on') and t_room <= room_lower %}
           {# Progressive room gain: linear plus quadratic, so a small error stays gentle and a big one
              bites, without a step in the water target. #}
           {% set room_corr = g1 * e + g2 * e * (e | abs) if room_control else 0 %}
@@ -300,9 +313,9 @@ template:
              water off, a fall adds a degree - it is a curve refinement, so it runs in both curve modes. #}
           {% set anticipation = min(max(-a_gain * trend, -a_max), a_max) if curve_on else 0 %}
           {% set normal = target + slope * (target - t_out) + offset + room_corr + anticipation %}
-          {% if is_state('input_boolean.therma_v_room_hard_stop', 'on') %}
+          {% if stop_override %}
           {{ lo }}
-          {% elif is_state('input_boolean.therma_v_room_hard_boost', 'on') %}
+          {% elif boost_override %}
           {{ hi }}
           {% else %}
           {{ min(max(normal, lo), hi) | round(1) }}
@@ -329,8 +342,12 @@ template:
                         -(states('input_number.therma_v_room_anticipation_max') | float(2))),
                        (states('input_number.therma_v_room_anticipation_max') | float(2))) | round(2) }}
           hard_stand: >-
-            {% if is_state('input_boolean.therma_v_room_hard_stop', 'on') %}stop
-            {% elif is_state('input_boolean.therma_v_room_hard_boost', 'on') %}boost
+            {% if is_state('input_boolean.therma_v_room_hard_stop', 'on')
+                  and states('sensor.therma_v_room_temperature_filtered') | float(0)
+                      >= states('input_number.therma_v_room_hysteresis_max') | float(21) %}stop
+            {% elif is_state('input_boolean.therma_v_room_hard_boost', 'on')
+                  and states('sensor.therma_v_room_temperature_filtered') | float(0)
+                      <= states('input_number.therma_v_room_hysteresis_min') | float(19.5) %}boost
             {% else %}normal{% endif %}
           # The two anchors Jan's curve is defined by (2026-10-11), so the abstract slope/level can
           # be checked without doing the arithmetic: 40.0 at -25 C outdoor, 20.0 at +20 C outdoor.
@@ -420,7 +437,13 @@ automation:
               - condition: template
                 value_template: "{{ states('input_select.therma_v_temperature_control') == 'Room control (P)' }}"
               - condition: template
-                value_template: "{{ states('sensor.therma_v_room_temperature_filtered') | is_number }}"
+                value_template: >-
+                  {{ states('sensor.therma_v_room_temperature_filtered') | is_number
+                     and states('input_number.therma_v_room_hysteresis_min') | is_number
+                     and states('input_number.therma_v_room_hysteresis_max') | is_number
+                     and 15 <= states('input_number.therma_v_room_hysteresis_min') | float(0)
+                               < states('input_number.therma_v_room_hysteresis_max') | float(0)
+                               <= 30 }}
             sequence:
               # The hard stand overrides the smooth room term here too: register 4 only reaches -5..+5,
               # so that is the whole authority we have in auto. The expression is repeated in the
@@ -434,8 +457,13 @@ automation:
                       {% set smooth = ((states('input_number.therma_v_heating_curve_room_influence') | float(1)) * e
                                        + (states('input_number.therma_v_room_gain_quadratic') | float(0.5)) * e * (e | abs))
                                       | round(0) | int %}
-                      {% set want = -5 if is_state('input_boolean.therma_v_room_hard_stop', 'on')
-                                    else (5 if is_state('input_boolean.therma_v_room_hard_boost', 'on')
+                      {% set room = states('sensor.therma_v_room_temperature_filtered') | float(20) %}
+                      {% set stop_override = is_state('input_boolean.therma_v_room_hard_stop', 'on')
+                                             and room >= states('input_number.therma_v_room_hysteresis_max') | float(21) %}
+                      {% set boost_override = is_state('input_boolean.therma_v_room_hard_boost', 'on')
+                                              and room <= states('input_number.therma_v_room_hysteresis_min') | float(19.5) %}
+                      {% set want = -5 if stop_override
+                                    else (5 if boost_override
                                           else min(max(smooth, -5), 5)) %}
                       {{ want != (states('input_number.therma_v_auto_delta_request') | int(0)) }}
                 then:
@@ -449,8 +477,13 @@ automation:
                         {% set smooth = ((states('input_number.therma_v_heating_curve_room_influence') | float(1)) * e
                                          + (states('input_number.therma_v_room_gain_quadratic') | float(0.5)) * e * (e | abs))
                                         | round(0) | int %}
-                        {% set want = -5 if is_state('input_boolean.therma_v_room_hard_stop', 'on')
-                                      else (5 if is_state('input_boolean.therma_v_room_hard_boost', 'on')
+                        {% set room = states('sensor.therma_v_room_temperature_filtered') | float(20) %}
+                        {% set stop_override = is_state('input_boolean.therma_v_room_hard_stop', 'on')
+                                               and room >= states('input_number.therma_v_room_hysteresis_max') | float(21) %}
+                        {% set boost_override = is_state('input_boolean.therma_v_room_hard_boost', 'on')
+                                                and room <= states('input_number.therma_v_room_hysteresis_min') | float(19.5) %}
+                        {% set want = -5 if stop_override
+                                      else (5 if boost_override
                                             else min(max(smooth, -5), 5)) %}
                         {{ want }}
 
@@ -478,7 +511,13 @@ automation:
         minutes: "/5"
     conditions:
       - condition: template
-        value_template: "{{ states('sensor.therma_v_room_temperature_filtered') | is_number }}"
+        value_template: >-
+          {{ states('sensor.therma_v_room_temperature_filtered') | is_number
+             and states('input_number.therma_v_room_hysteresis_min') | is_number
+             and states('input_number.therma_v_room_hysteresis_max') | is_number
+             and 15 <= states('input_number.therma_v_room_hysteresis_min') | float(0)
+                       < states('input_number.therma_v_room_hysteresis_max') | float(0)
+                       <= 30 }}
     actions:
       # Only room control has a room stand; in the other modes clear whatever was left behind.
       - if:
@@ -498,9 +537,8 @@ automation:
                 state: "off"
               - condition: template
                 value_template: >-
-                  {{ (states('input_number.room_setpoint_heating') | float(20)
-                      - states('sensor.therma_v_room_temperature_filtered') | float(0))
-                     < (states('input_number.therma_v_room_hysteresis_min') | float(-1)) }}
+                  {{ states('sensor.therma_v_room_temperature_filtered') | float(0)
+                     >= states('input_number.therma_v_room_hysteresis_max') | float(21) }}
             then:
               - action: input_boolean.turn_on
                 target:
@@ -511,8 +549,8 @@ automation:
                 state: "on"
               - condition: template
                 value_template: >-
-                  {{ (states('input_number.room_setpoint_heating') | float(20)
-                      - states('sensor.therma_v_room_temperature_filtered') | float(0)) > 0 }}
+                  {{ states('sensor.therma_v_room_temperature_filtered') | float(0)
+                     < states('input_number.room_setpoint_heating') | float(20) }}
             then:
               - action: input_boolean.turn_off
                 target:
@@ -523,9 +561,8 @@ automation:
                 state: "off"
               - condition: template
                 value_template: >-
-                  {{ (states('input_number.room_setpoint_heating') | float(20)
-                      - states('sensor.therma_v_room_temperature_filtered') | float(0))
-                     > (states('input_number.therma_v_room_hysteresis_max') | float(1)) }}
+                  {{ states('sensor.therma_v_room_temperature_filtered') | float(0)
+                     <= states('input_number.therma_v_room_hysteresis_min') | float(19.5) }}
             then:
               - action: input_boolean.turn_on
                 target:
@@ -536,8 +573,8 @@ automation:
                 state: "on"
               - condition: template
                 value_template: >-
-                  {{ (states('input_number.room_setpoint_heating') | float(20)
-                      - states('sensor.therma_v_room_temperature_filtered') | float(0)) < 0 }}
+                  {{ states('sensor.therma_v_room_temperature_filtered') | float(0)
+                     > states('input_number.room_setpoint_heating') | float(20) }}
             then:
               - action: input_boolean.turn_off
                 target:

@@ -50,6 +50,9 @@
 #   * request <= the active season's minimum - there the pump may go off on hysteresis, which is
 #     exactly what that setting is for. In auto the same thing happens when the asked-for water is
 #     at or below `water - hys_pos`, so the layer stops chasing the water downward.
+#   * the room hard-stop flag is on - room comfort takes explicit priority over the anti-trip
+#     hold. Without this direct guard the release depended on the temperature-control automation
+#     having written the minimum request first, which can lag the room-control decision.
 #   * the band would have to hold the pump on more than `input_number.therma_v_shutdown_offset` past
 #     the request - in heat that is `desired - request`, in cool `request - desired`, i.e. the water
 #     has run away from the request on the side where the pump switches off (too hot in heat, too
@@ -114,7 +117,8 @@ input_number:
     min: 10
     max: 45
     step: 0.5 # The pump holds whole degrees; the whole-degree rounding sits in the effective sensor
-    initial: 25 # First-ever value only; Home Assistant restores the last value after that.
+    # initial: 25 # Dashboard helper: restore the last request. Without a restored value the
+    # effective sensor is unavailable and the writer cannot send an invented setpoint.
     mode: box
     unit_of_measurement: "°C"
     icon: mdi:water-thermometer
@@ -127,7 +131,7 @@ input_number:
     min: -5
     max: 5
     step: 1
-    initial: 0 # First-ever value only; Home Assistant restores the last value after that.
+    # initial: 0 # Dashboard helper: restore the last request rather than inventing a delta.
     mode: box
     unit_of_measurement: "°C"
     icon: mdi:chart-bell-curve-cumulative
@@ -221,7 +225,16 @@ template:
              and has_value('sensor.therma_v_controlled_water_temperature')
              and has_value('sensor.therma_v_operation_mode')
              and has_value('sensor.therma_v_control_mode')
-             and has_value('sensor.therma_v_compressor_hz') }}
+             and has_value('sensor.therma_v_compressor_hz')
+             and has_value('input_boolean.therma_v_room_hard_stop')
+             and has_value('sensor.therma_v_room_temperature_filtered')
+             and has_value('input_number.therma_v_room_hysteresis_min')
+             and has_value('input_number.therma_v_room_hysteresis_max')
+             and states('input_number.therma_v_room_hysteresis_min') | is_number
+             and states('input_number.therma_v_room_hysteresis_max') | is_number
+             and 15 <= states('input_number.therma_v_room_hysteresis_min') | float(0)
+                       < states('input_number.therma_v_room_hysteresis_max') | float(0)
+                       <= 30 }}
         state: >-
           {% set req = states('input_number.therma_v_water_target_request') | float(0) %}
           {% set water = states('sensor.therma_v_controlled_water_temperature') | float(0) %}
@@ -231,6 +244,8 @@ template:
           {% set hys_neg = states('input_number.therma_v_startup_hysteresis_neg') | float(-3) %}
           {% set shutdown_offset = states('input_number.therma_v_shutdown_offset') | float(6) %}
           {% set hz = states('sensor.therma_v_compressor_hz') | float(0) %}
+          {% set room = states('sensor.therma_v_room_temperature_filtered') | float(20) %}
+          {% set room_upper = states('input_number.therma_v_room_hysteresis_max') | float(21) %}
           {% set mode_num = mode | int(-1) %}
           {% set heat = mode_num in [3, 4] %}
           {% set dir = 'floor' if mode_num == 0 else 'ceil' %}
@@ -254,14 +269,22 @@ template:
              from the request - never triggers this, or a cold start with a high request would lose
              its soft start (2026-10-11). #}
           {% set chase = desired - req if heat else req - desired %}
+          {% set stop_override =
+               is_state('input_boolean.therma_v_room_hard_stop', 'on') and room >= room_upper %}
           {% set active = is_state('input_boolean.therma_v_controlled_startup', 'on')
                           and is_state('switch.therma_v_heating_cooling_on_off', 'on')
                           and mode_num in [0, 4]
                           and cm in [0, 1]
                           and hz > 1
+                          and not stop_override
                           and req > band_min
                           and chase <= shutdown_offset %}
-          {% if not active %}
+          {# The room hard-stop is an explicit override, not just a passthrough: force the
+             season minimum even if the temperature-control automation has not yet updated the
+             request helper. This is the safe hand-back that makes the pump switch off. #}
+          {% if heat and stop_override %}
+          {{ band_min | round(0, dir) | int }}
+          {% elif not active %}
           {{ req | round(0, dir) | int }}
           {% else %}
           {{ desired | round(0, dir) | int }}
@@ -293,7 +316,16 @@ template:
              and has_value('sensor.therma_v_control_mode')
              and has_value('sensor.therma_v_compressor_hz')
              and has_value('sensor.therma_v_target_temperature_circuit_1')
-             and has_value('sensor.therma_v_auto_mode_target_temperature_delta_circuit_1') }}
+             and has_value('sensor.therma_v_auto_mode_target_temperature_delta_circuit_1')
+             and has_value('input_boolean.therma_v_room_hard_stop')
+             and has_value('sensor.therma_v_room_temperature_filtered')
+             and has_value('input_number.therma_v_room_hysteresis_min')
+             and has_value('input_number.therma_v_room_hysteresis_max')
+             and states('input_number.therma_v_room_hysteresis_min') | is_number
+             and states('input_number.therma_v_room_hysteresis_max') | is_number
+             and 15 <= states('input_number.therma_v_room_hysteresis_min') | float(0)
+                       < states('input_number.therma_v_room_hysteresis_max') | float(0)
+                       <= 30 }}
         state: >-
           {% set req = states('input_number.therma_v_auto_delta_request') | float(0) %}
           {% set water = states('sensor.therma_v_controlled_water_temperature') | float(0) %}
@@ -303,6 +335,8 @@ template:
           {% set hys_neg = states('input_number.therma_v_startup_hysteresis_neg') | float(-3) %}
           {% set shutdown_offset = states('input_number.therma_v_shutdown_offset') | float(6) %}
           {% set hz = states('sensor.therma_v_compressor_hz') | float(0) %}
+          {% set room = states('sensor.therma_v_room_temperature_filtered') | float(20) %}
+          {% set room_upper = states('input_number.therma_v_room_hysteresis_max') | float(21) %}
           {% set applied = states('sensor.therma_v_auto_mode_target_temperature_delta_circuit_1') | float(0) %}
           {% set water_target = states('sensor.therma_v_target_temperature_circuit_1') | float(0) %}
           {% set band_min = states('input_number.therma_v_min_water_temperature_heat') | float(20) %}
@@ -312,14 +346,19 @@ template:
           {% set water_floor = max(band_min, water - hys_pos) %}
           {% set water_ceil = min(band_max, water - hys_neg) %}
           {% set desired = min(max(water_request, water_floor), water_ceil) %}
+          {% set stop_override =
+               is_state('input_boolean.therma_v_room_hard_stop', 'on') and room >= room_upper %}
           {% set active = is_state('input_boolean.therma_v_controlled_startup', 'on')
                           and is_state('switch.therma_v_heating_cooling_on_off', 'on')
                           and mode == 3
                           and cm in [0, 1]
                           and hz > 1
+                          and not stop_override
                           and water_request > water - hys_pos
                           and desired - water_request <= shutdown_offset %}
-          {% if not active %}
+          {% if stop_override %}
+          {{ min(max(band_min - curve, -5), 5) | round(0, 'ceil') | int }}
+          {% elif not active %}
           {{ req | round(0, 'ceil') | int }}
           {% else %}
           {{ min(max(desired - curve, -5), 5) | round(0, 'ceil') | int }}
