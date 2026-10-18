@@ -60,6 +60,7 @@ homeassistant:
     therma_v_climate_pack:              !include package_therma_v_climate.yaml
     therma_v_startup_control_pack:      !include package_therma_v_startup_control.yaml
     therma_v_temperature_control_pack:  !include package_therma_v_temperature_control.yaml
+    therma_v_supervisor_pack:           !include package_therma_v_supervisor.yaml
     heatmeisters_pack:                  !include package_heatmeisters.yaml
     goodwe_sensors_pack:                !include package_goodwe_sensors.yaml
     goodwe_export_limit_pack:           !include package_goodwe_export_limit.yaml
