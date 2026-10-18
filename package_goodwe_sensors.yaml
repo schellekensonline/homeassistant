@@ -12,7 +12,8 @@ template:
       availability: >
         {% set Vpv1 = states('sensor.goodwe_pv1_input_voltage') | float("unknown") %}
         {% set Ipv1 = states('sensor.goodwe_pv1_input_current') | float("unknown") %}
-        {{ Vpv1|is_number and Ipv1|is_number}}
+        {{ not is_state('sun.sun', 'above_horizon')
+           or (Vpv1|is_number and Ipv1|is_number) }}
       state: >
         {% if is_state('sun.sun', 'above_horizon') %}
           {% set Vpv1 = states('sensor.goodwe_pv1_input_voltage') | float(0) %}
@@ -29,7 +30,8 @@ template:
       availability: >
         {% set Vpv2 = states('sensor.goodwe_pv2_input_voltage') | float("unknown") %}
         {% set Ipv2 = states('sensor.goodwe_pv2_input_current') | float("unknown") %}
-        {{ Vpv2|is_number and Ipv2|is_number}}
+        {{ not is_state('sun.sun', 'above_horizon')
+           or (Vpv2|is_number and Ipv2|is_number) }}
       state: >
         {% if is_state('sun.sun', 'above_horizon') %}
           {% set Vpv2 = states('sensor.goodwe_pv2_input_voltage') | float(0) %}
@@ -49,7 +51,9 @@ template:
         {% set Ipv1 = states('sensor.goodwe_pv1_input_current') | float("unknown") %}
         {% set Vpv2 = states('sensor.goodwe_pv2_input_voltage') | float("unknown") %}
         {% set Ipv2 = states('sensor.goodwe_pv2_input_current') | float("unknown") %}
-        {{ Vpv1|is_number and Ipv1|is_number and Vpv2|is_number and Ipv2|is_number}}
+        {{ not is_state('sun.sun', 'above_horizon')
+           or (Vpv1|is_number and Ipv1|is_number
+               and Vpv2|is_number and Ipv2|is_number) }}
       state: >
         {% if is_state('sun.sun', 'above_horizon') %}
           {% set Vpv1 = states('sensor.goodwe_pv1_input_voltage') | float(0) %}
@@ -69,7 +73,8 @@ template:
       availability: >
         {% set VL1 = states('sensor.goodwe_l1_phase_voltage') | float("unknown") %}
         {% set IL1 = states('sensor.goodwe_l1_phase_current') | float("unknown") %}
-        {{ VL1|is_number and IL1|is_number}}
+        {{ not is_state('sun.sun', 'above_horizon')
+           or (VL1|is_number and IL1|is_number) }}
       state: >
         {% if is_state('sun.sun', 'above_horizon') %}
           {% set VL1 = states('sensor.goodwe_l1_phase_voltage') | float(0) %}
@@ -86,7 +91,8 @@ template:
       availability: >
         {% set VL2 = states('sensor.goodwe_l2_phase_voltage') | float("unknown") %}
         {% set IL2 = states('sensor.goodwe_l2_phase_current') | float("unknown") %}
-        {{ VL2|is_number and IL2|is_number}}
+        {{ not is_state('sun.sun', 'above_horizon')
+           or (VL2|is_number and IL2|is_number) }}
       state: >
         {% if is_state('sun.sun', 'above_horizon') %}
           {% set VL2 = states('sensor.goodwe_l2_phase_voltage') | float(0) %}
@@ -103,7 +109,8 @@ template:
       availability: >
         {% set VL3 = states('sensor.goodwe_l3_phase_voltage') | float("unknown") %}
         {% set IL3 = states('sensor.goodwe_l3_phase_current') | float("unknown") %}
-        {{ VL3|is_number and IL3|is_number}}
+        {{ not is_state('sun.sun', 'above_horizon')
+           or (VL3|is_number and IL3|is_number) }}
       state: >
         {% if is_state('sun.sun', 'above_horizon') %}
           {% set VL3 = states('sensor.goodwe_l3_phase_voltage') | float(0) %}
