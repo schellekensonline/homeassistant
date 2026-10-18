@@ -50,10 +50,15 @@
 #   * request <= the active season's minimum - there the pump may go off on hysteresis, which is
 #     exactly what that setting is for. In auto the same thing happens when the asked-for water is
 #     at or below `water - hys_pos`, so the layer stops chasing the water downward.
-#   * the room hard-stop flag is on - room comfort takes explicit priority over the anti-trip
-#     hold. Without this direct guard the release depended on the temperature-control automation
-#     having written the minimum request first, which can lag the room-control decision.
-#   * the band would have to hold the pump on more than `input_number.therma_v_shutdown_offset` past
+#   * the room is above its effective target and has kept rising without normal heat demand for the
+#     passive-gain hold time. This distinguishes real solar/other passive gain from a setpoint
+#     reduction that is still letting the room coast down.
+#   * the anti-trip layer has been the only thing holding the pump on for the maximum hold time.
+#     This is the slow-rise backstop when the room trend never reaches the passive-gain threshold.
+#   * the calibrated room force widens the anti-trip hold in proportion to the room error. At one
+#     room hysteresis the band reaches one water hysteresis from the measured water and stays there.
+#   * the band would have to hold the pump on more than
+#     `input_number.therma_v_water_setpoint_release_gap` past
 #     the request - in heat that is `desired - request`, in cool `request - desired`, i.e. the water
 #     has run away from the request on the side where the pump switches off (too hot in heat, too
 #     cold in cool). The request then goes back in and the pump trips off on its own hysteresis. This
@@ -98,8 +103,8 @@ input_number:
   # = 9.8 C above the request).
   # Remember: `initial` does not reach an entity that already exists - the live value has to be set
   # too (see the notes, "The season band was loaded the same evening").
-  therma_v_shutdown_offset:
-    name: "Therma V shutdown offset"
+  therma_v_water_setpoint_release_gap:
+    name: "Therma V water setpoint release gap"
     min: 0
     max: 10
     step: 0.5
@@ -107,6 +112,19 @@ input_number:
     mode: box
     unit_of_measurement: "°C"
     icon: mdi:power
+
+  # Passive heat gain leaves the room warmer without a corresponding water demand. The stop needs a
+  # sustained rise, not a single 0.1 C sensor step; the moving-average filtered room is differentiated
+  # over 20 minutes and the active condition must persist for 40 minutes.
+  therma_v_room_trend_threshold:
+    name: "Therma V room trend stop threshold"
+    min: 0.1
+    max: 2
+    step: 0.05
+    initial: 0.4
+    mode: box
+    unit_of_measurement: "°C/h"
+    icon: mdi:chart-line-variant
 
   # The request the layer steers to: the climate slider writes it (heat/cool/room), and it is the
   # starting point for the clamp. Range covers every mode (cool, room, heat). Step 0.5 since
@@ -185,8 +203,132 @@ input_boolean:
     name: "Therma V controlled start-up"
     icon: mdi:rocket-launch-outline
     initial: true
+  therma_v_passive_gain_stop:
+    name: "Therma V passive heat gain stop"
+    icon: mdi:weather-sunny-alert
+    initial: false
+  therma_v_passive_cooling_stop:
+    name: "Therma V passive cooling stop"
+    icon: mdi:snowflake-alert
+    initial: false
+  therma_v_antitrip_timeout:
+    name: "Therma V anti-trip maximum hold timeout"
+    icon: mdi:timer-alert-outline
+    initial: false
+
+sensor:
+  # The source is the already 20-minute filtered room value. A positive derivative here means the
+  # room is gaining heat even while the raw water request says no more heat is wanted.
+  - platform: derivative
+    name: "Therma V room temperature trend"
+    unique_id: therma_v_room_temperature_trend
+    source: sensor.therma_v_room_temperature_filtered
+    unit_time: h
+    time_window: "00:20:00"
+    round: 2
 
 template:
+  - binary_sensor:
+      # True only when normal heating or cooling demand is already below the pump's off threshold,
+      # but the start-up layer is still holding the compressor on against it. This is the condition
+      # that needs the maximum-hold timeout; when the compressor is off or the season limit already
+      # releases it, there is nothing to time out.
+      - name: "Therma V no-demand anti-trip hold"
+        unique_id: therma_v_no_demand_antitrip_hold
+        icon: mdi:heat-wave
+        availability: >-
+          {{ has_value('input_number.therma_v_water_target_request')
+             and has_value('sensor.therma_v_controlled_water_temperature')
+             and has_value('sensor.therma_v_operation_mode')
+             and has_value('sensor.therma_v_control_mode')
+             and has_value('sensor.therma_v_compressor_hz')
+             and has_value('sensor.therma_v_room_temperature_effective')
+             and has_value('input_number.room_setpoint_heating')
+             and has_value('input_number.room_setpoint_cooling')
+             and has_value('input_number.therma_v_room_hysteresis_min')
+             and has_value('input_number.therma_v_room_hysteresis_max')
+             and has_value('input_number.therma_v_room_force_exponent')
+             and has_value('input_number.therma_v_startup_hysteresis_pos')
+             and has_value('input_number.therma_v_startup_hysteresis_neg')
+             and has_value('input_number.therma_v_min_water_temperature_heat')
+             and has_value('input_number.therma_v_max_water_temperature_heat')
+             and has_value('input_number.therma_v_min_water_temperature_cool')
+             and has_value('input_number.therma_v_max_water_temperature_cool')
+             and has_value('input_number.therma_v_water_setpoint_release_gap') }}
+        state: >-
+          {% set req = states('input_number.therma_v_water_target_request') | float(0) %}
+          {% set water = states('sensor.therma_v_controlled_water_temperature') | float(0) %}
+          {% set mode = states('sensor.therma_v_operation_mode') | int(-1) %}
+          {% set cm = states('sensor.therma_v_control_mode') | int(-1) %}
+          {% set hz = states('sensor.therma_v_compressor_hz') | float(0) %}
+          {% set hys_pos = states('input_number.therma_v_startup_hysteresis_pos') | float(3) %}
+          {% set hys_neg = states('input_number.therma_v_startup_hysteresis_neg') | float(-3) %}
+          {% set release_gap = states('input_number.therma_v_water_setpoint_release_gap') | float(6) %}
+          {% set room = states('sensor.therma_v_room_temperature_effective') | float(20) %}
+          {% set strategy = states('input_select.therma_v_control_strategy') %}
+          {% set heat_enabled = is_state('input_boolean.therma_v_supervisor_space_heat_enabled', 'on') %}
+          {% set cooling_enabled = is_state('input_boolean.therma_v_supervisor_cooling_enabled', 'on') %}
+          {% set plan_target = states('sensor.therma_v_room_setpoint_plan') %}
+          {% set base_target = (states('input_number.room_setpoint_heating') | float(20) if mode == 4
+                                else states('input_number.room_setpoint_cooling') | float(24)) %}
+          {% set use_plan = strategy == 'EMHASS'
+                            and ((mode == 4 and heat_enabled) or (mode == 0 and cooling_enabled))
+                            and plan_target | is_number %}
+          {% set target = plan_target | float(base_target) if use_plan else base_target %}
+          {% set room_lower = states('input_number.therma_v_room_hysteresis_min') | float(19.5) %}
+          {% set room_upper = states('input_number.therma_v_room_hysteresis_max') | float(21) %}
+          {% set e = target - room %}
+          {% set room_hyst = max((target - room_lower) if e >= 0 else (room_upper - target), 0.1) %}
+          {% set water_hyst = max(hys_pos | abs, hys_neg | abs) %}
+          {% set exponent = states('input_number.therma_v_room_force_exponent') | float(2) %}
+          {% set force_allowance = water_hyst * min(((e | abs) / room_hyst) ** exponent, 1) %}
+          {% set heat = mode == 4 %}
+          {% set band_min = (states('input_number.therma_v_min_water_temperature_heat') | float(20)
+                             if heat else states('input_number.therma_v_min_water_temperature_cool') | float(12)) %}
+          {% set band_max = (states('input_number.therma_v_max_water_temperature_heat') | float(42)
+                             if heat else states('input_number.therma_v_max_water_temperature_cool') | float(22)) %}
+          {% set water_floor = max(band_min, water - max(hys_pos, force_allowance)) %}
+          {% set water_ceil = min(band_max, water + max(-hys_neg, force_allowance)) %}
+          {% set desired = min(max(req, water_floor), water_ceil) %}
+          {% set no_demand = (req <= water - hys_pos) if heat else (req >= water - hys_neg) %}
+          {% set room_beyond = (room > target) if heat else (room < target) %}
+          {% set chase = desired - req if heat else req - desired %}
+          {{ is_state('input_boolean.therma_v_controlled_startup', 'on')
+             and is_state('switch.therma_v_heating_cooling_on_off', 'on')
+             and mode in [0, 4]
+             and cm in [0, 1]
+             and hz > 1
+             and req > band_min
+             and no_demand
+             and room_beyond
+             and chase > 0
+             and chase <= release_gap }}
+
+      - name: "Therma V passive heat surplus"
+        unique_id: therma_v_passive_heat_surplus
+        icon: mdi:home-thermometer-alert
+        availability: >-
+          {{ has_value('binary_sensor.therma_v_no_demand_anti_trip_hold')
+             and has_value('sensor.therma_v_room_temperature_trend')
+             and has_value('input_number.therma_v_room_trend_threshold') }}
+        state: >-
+          {{ is_state('binary_sensor.therma_v_no_demand_anti_trip_hold', 'on')
+             and states('sensor.therma_v_room_temperature_trend') | float(0)
+                 >= states('input_number.therma_v_room_trend_threshold') | float(0.4) }}
+
+      - name: "Therma V passive cooling"
+        unique_id: therma_v_passive_cooling
+        icon: mdi:snowflake-alert
+        availability: >-
+          {{ has_value('binary_sensor.therma_v_no_demand_anti_trip_hold')
+             and has_value('sensor.therma_v_room_temperature_trend')
+             and has_value('input_number.therma_v_room_trend_threshold') }}
+        state: >-
+          {{ is_state('binary_sensor.therma_v_no_demand_anti_trip_hold', 'on')
+             and states('sensor.therma_v_operation_mode') | int(-1) == 0
+             and states('sensor.therma_v_room_temperature_trend') | float(0)
+                 <= -(states('input_number.therma_v_room_trend_threshold') | float(0.4)) }}
+
   - sensor:
       # The water temperature the pump actually controls: outlet in control mode 0, inlet in
       # control mode 1 (register 1). Room control (2) falls back to the outlet; the algorithm is
@@ -215,6 +357,11 @@ template:
       # *down*; in cool it is `water < target + hys_neg`, so it must not be rounded *up*. The sensor
       # therefore shows the value the pump will actually hold, which also makes the writer's
       # register guard an exact comparison.
+      #
+      # The anti-trip band normally holds the pump near the measured water temperature. If that
+      # support would have to sit more than the configured release gap away from the raw request,
+      # the raw request is handed back so the pump can switch off on its own hysteresis. The
+      # calibrated room-force allowance widens the band progressively and is capped at full force.
       - name: "Therma V water setpoint effective"
         unique_id: therma_v_water_setpoint_effective
         state_class: measurement
@@ -226,15 +373,16 @@ template:
              and has_value('sensor.therma_v_operation_mode')
              and has_value('sensor.therma_v_control_mode')
              and has_value('sensor.therma_v_compressor_hz')
-             and has_value('input_boolean.therma_v_room_hard_stop')
-             and has_value('sensor.therma_v_room_temperature_filtered')
+             and has_value('sensor.therma_v_room_temperature_effective')
+             and has_value('input_number.room_setpoint_heating')
              and has_value('input_number.therma_v_room_hysteresis_min')
              and has_value('input_number.therma_v_room_hysteresis_max')
+             and has_value('input_number.therma_v_room_force_exponent')
              and states('input_number.therma_v_room_hysteresis_min') | is_number
              and states('input_number.therma_v_room_hysteresis_max') | is_number
+             and states('input_number.therma_v_room_force_exponent') | is_number
              and 15 <= states('input_number.therma_v_room_hysteresis_min') | float(0)
-                       < states('input_number.therma_v_room_hysteresis_max') | float(0)
-                       <= 30 }}
+                       < states('input_number.therma_v_room_hysteresis_max') | float(0) <= 30 }}
         state: >-
           {% set req = states('input_number.therma_v_water_target_request') | float(0) %}
           {% set water = states('sensor.therma_v_controlled_water_temperature') | float(0) %}
@@ -242,52 +390,48 @@ template:
           {% set cm = states('sensor.therma_v_control_mode') | int(-1) %}
           {% set hys_pos = states('input_number.therma_v_startup_hysteresis_pos') | float(3) %}
           {% set hys_neg = states('input_number.therma_v_startup_hysteresis_neg') | float(-3) %}
-          {% set shutdown_offset = states('input_number.therma_v_shutdown_offset') | float(6) %}
+          {% set release_gap = states('input_number.therma_v_water_setpoint_release_gap') | float(6) %}
           {% set hz = states('sensor.therma_v_compressor_hz') | float(0) %}
-          {% set room = states('sensor.therma_v_room_temperature_filtered') | float(20) %}
+          {% set room = states('sensor.therma_v_room_temperature_effective') | float(20) %}
+          {% set target = states('input_number.room_setpoint_heating') | float(20) %}
+          {% set room_lower = states('input_number.therma_v_room_hysteresis_min') | float(19.5) %}
           {% set room_upper = states('input_number.therma_v_room_hysteresis_max') | float(21) %}
+          {% set e = target - room %}
+          {% set room_hyst = max((target - room_lower) if e >= 0 else (room_upper - target), 0.1) %}
+          {% set water_hyst = max(hys_pos | abs, hys_neg | abs) %}
+          {% set exponent = states('input_number.therma_v_room_force_exponent') | float(2) %}
+          {% set force_blend = min(((e | abs) / room_hyst) ** exponent, 1) %}
+          {% set force_allowance = water_hyst * force_blend %}
           {% set mode_num = mode | int(-1) %}
+          {# Register 0 values: 0=cool, 3=auto, 4=heat; register address 4 is the auto delta. #}
           {% set heat = mode_num in [3, 4] %}
           {% set dir = 'floor' if mode_num == 0 else 'ceil' %}
           {% set band_min = (states('input_number.therma_v_min_water_temperature_heat') if heat
                              else states('input_number.therma_v_min_water_temperature_cool')) | float(10) %}
           {% set band_max = (states('input_number.therma_v_max_water_temperature_heat') if heat
                              else states('input_number.therma_v_max_water_temperature_cool')) | float(35) %}
-          {% set water_floor = max(band_min, water - hys_pos) %}
-          {% set water_ceil = min(band_max, water - hys_neg) %}
+          {% set water_floor = max(band_min, water - max(hys_pos, force_allowance)) %}
+          {% set water_ceil = min(band_max, water + max(-hys_neg, force_allowance)) %}
           {% set desired = min(max(req, water_floor), water_ceil) %}
-          {# Never hold the pump on more than `shutdown_offset` past the request. In heat the band
-             lifts the demand above the request to keep the pump running, which is the side where the
-             pump would switch off on a too-hot water; in cool it is the mirror. Past the limit the
-             layer hands the request back, so the pump trips off on its own hysteresis. That hand-back
-             IS the "force it off" mechanism, and it is why the release is immediate: the demand lands
-             far below the water, so the off-trip is met at once. Clamping the demand to
-             `request + offset` instead was tried on the evening of 2026-10-15 and reverted the same
-             evening (Jan): a clamp only bounds the demand - it never forces a release, so the pump
-             keeps running until its own hysteresis happens to trip, roughly 2-3 C of water later and
-             not at all if the water settles below that. The soft-start side - a demand held *back*
-             from the request - never triggers this, or a cold start with a high request would lose
-             its soft start (2026-10-11). #}
           {% set chase = desired - req if heat else req - desired %}
-          {% set stop_override =
-               is_state('input_boolean.therma_v_room_hard_stop', 'on') and room >= room_upper %}
+          {% set force_dir = 'ceil' if e > 0 else ('floor' if e < 0 else dir) %}
           {% set active = is_state('input_boolean.therma_v_controlled_startup', 'on')
                           and is_state('switch.therma_v_heating_cooling_on_off', 'on')
                           and mode_num in [0, 4]
                           and cm in [0, 1]
                           and hz > 1
-                          and not stop_override
                           and req > band_min
-                          and chase <= shutdown_offset %}
-          {# The room hard-stop is an explicit override, not just a passthrough: force the
-             season minimum even if the temperature-control automation has not yet updated the
-             request helper. This is the safe hand-back that makes the pump switch off. #}
-          {% if heat and stop_override %}
-          {{ band_min | round(0, dir) | int }}
-          {% elif not active %}
-          {{ req | round(0, dir) | int }}
+                          and chase <= release_gap
+                          and (mode_num != 4
+                               or (not is_state('input_boolean.therma_v_passive_gain_stop', 'on')
+                                   and not is_state('input_boolean.therma_v_antitrip_timeout', 'on')))
+                          and (mode_num != 0
+                               or (not is_state('input_boolean.therma_v_passive_cooling_stop', 'on')
+                                   and not is_state('input_boolean.therma_v_antitrip_timeout', 'on'))) %}
+          {% if not active %}
+          {{ req | round(0, force_dir) | int }}
           {% else %}
-          {{ desired | round(0, dir) | int }}
+          {{ desired | round(0, force_dir) | int }}
           {% endif %}
 
       # The delta to write on register 4 in auto mode. Auto follows a heating curve, so the
@@ -299,7 +443,8 @@ template:
       # register 2 is the resulting water target, register 4 the delta the pump applies - verified
       # live 2026-10-10: auto with delta 0 read register 2 = 23, with delta +2 it read 25.
       # The chase limit above applies to the water target here too: if the band pushes the asked-for
-      # water up by more than `input_number.therma_v_shutdown_offset` (the runaway case, the side
+      # water up by more than `input_number.therma_v_water_setpoint_release_gap` (the runaway case,
+      # the side
       # where the pump switches off on a too-hot water), the raw request delta goes back in.
       # Passthrough: the raw request delta when the compressor is off, the toggle is off, the pump
       # is off, the pump is in room control, or the asked-for water is already at/below
@@ -317,15 +462,16 @@ template:
              and has_value('sensor.therma_v_compressor_hz')
              and has_value('sensor.therma_v_target_temperature_circuit_1')
              and has_value('sensor.therma_v_auto_mode_target_temperature_delta_circuit_1')
-             and has_value('input_boolean.therma_v_room_hard_stop')
-             and has_value('sensor.therma_v_room_temperature_filtered')
+             and has_value('sensor.therma_v_room_temperature_effective')
+             and has_value('input_number.room_setpoint_heating')
              and has_value('input_number.therma_v_room_hysteresis_min')
              and has_value('input_number.therma_v_room_hysteresis_max')
+             and has_value('input_number.therma_v_room_force_exponent')
              and states('input_number.therma_v_room_hysteresis_min') | is_number
              and states('input_number.therma_v_room_hysteresis_max') | is_number
+             and states('input_number.therma_v_room_force_exponent') | is_number
              and 15 <= states('input_number.therma_v_room_hysteresis_min') | float(0)
-                       < states('input_number.therma_v_room_hysteresis_max') | float(0)
-                       <= 30 }}
+                       < states('input_number.therma_v_room_hysteresis_max') | float(0) <= 30 }}
         state: >-
           {% set req = states('input_number.therma_v_auto_delta_request') | float(0) %}
           {% set water = states('sensor.therma_v_controlled_water_temperature') | float(0) %}
@@ -333,38 +479,141 @@ template:
           {% set cm = states('sensor.therma_v_control_mode') | int(-1) %}
           {% set hys_pos = states('input_number.therma_v_startup_hysteresis_pos') | float(3) %}
           {% set hys_neg = states('input_number.therma_v_startup_hysteresis_neg') | float(-3) %}
-          {% set shutdown_offset = states('input_number.therma_v_shutdown_offset') | float(6) %}
+          {% set release_gap = states('input_number.therma_v_water_setpoint_release_gap') | float(6) %}
           {% set hz = states('sensor.therma_v_compressor_hz') | float(0) %}
-          {% set room = states('sensor.therma_v_room_temperature_filtered') | float(20) %}
+          {% set room = states('sensor.therma_v_room_temperature_effective') | float(20) %}
+          {% set target = states('input_number.room_setpoint_heating') | float(20) %}
+          {% set room_lower = states('input_number.therma_v_room_hysteresis_min') | float(19.5) %}
           {% set room_upper = states('input_number.therma_v_room_hysteresis_max') | float(21) %}
+          {% set e = target - room %}
+          {% set room_hyst = max((target - room_lower) if e >= 0 else (room_upper - target), 0.1) %}
+          {% set water_hyst = max(hys_pos | abs, hys_neg | abs) %}
+          {% set exponent = states('input_number.therma_v_room_force_exponent') | float(2) %}
+          {% set force_allowance = water_hyst * min(((e | abs) / room_hyst) ** exponent, 1) %}
+          {# Auto readback: register 2=target, register 4=signed delta; operation mode 3 selects auto. #}
           {% set applied = states('sensor.therma_v_auto_mode_target_temperature_delta_circuit_1') | float(0) %}
           {% set water_target = states('sensor.therma_v_target_temperature_circuit_1') | float(0) %}
           {% set band_min = states('input_number.therma_v_min_water_temperature_heat') | float(20) %}
           {% set band_max = states('input_number.therma_v_max_water_temperature_heat') | float(35) %}
           {% set curve = water_target - applied %}
           {% set water_request = curve + req %}
-          {% set water_floor = max(band_min, water - hys_pos) %}
-          {% set water_ceil = min(band_max, water - hys_neg) %}
+          {% set water_floor = max(band_min, water - max(hys_pos, force_allowance)) %}
+          {% set water_ceil = min(band_max, water + max(-hys_neg, force_allowance)) %}
           {% set desired = min(max(water_request, water_floor), water_ceil) %}
-          {% set stop_override =
-               is_state('input_boolean.therma_v_room_hard_stop', 'on') and room >= room_upper %}
           {% set active = is_state('input_boolean.therma_v_controlled_startup', 'on')
                           and is_state('switch.therma_v_heating_cooling_on_off', 'on')
                           and mode == 3
                           and cm in [0, 1]
                           and hz > 1
-                          and not stop_override
                           and water_request > water - hys_pos
-                          and desired - water_request <= shutdown_offset %}
-          {% if stop_override %}
-          {{ min(max(band_min - curve, -5), 5) | round(0, 'ceil') | int }}
-          {% elif not active %}
+                          and desired - water_request <= release_gap %}
+          {% if not active %}
           {{ req | round(0, 'ceil') | int }}
           {% else %}
           {{ min(max(desired - curve, -5), 5) | round(0, 'ceil') | int }}
           {% endif %}
 
 automation:
+  # A clear room rise without normal heat demand is treated as passive gain. The condition itself
+  # is continuously recomputed; only after the hold time does it release the anti-trip layer.
+  - id: therma_v_passive_gain_stop
+    alias: "Therma V passive heat gain stop"
+    description: "Releases the start-up hold after sustained room warming without heat demand"
+    mode: restart
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.therma_v_passive_heat_surplus
+        to: "on"
+        for: "00:40:00"
+        id: arm
+      - trigger: state
+        entity_id: binary_sensor.therma_v_passive_heat_surplus
+        to: "off"
+        id: release
+      - trigger: homeassistant
+        event: start
+        id: release
+    actions:
+      - choose:
+          - conditions:
+              - condition: trigger
+                id: arm
+            sequence:
+              - action: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.therma_v_passive_gain_stop
+        default:
+          - action: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.therma_v_passive_gain_stop
+
+  # The cooling mirror: the room falls without a normal cooling request. This is mostly symmetry,
+  # because the cooling source is far too weak to create a pronounced overshoot in this house, but
+  # it keeps the anti-trip layer from holding a useless compressor run indefinitely.
+  - id: therma_v_passive_cooling_stop
+    alias: "Therma V passive cooling stop"
+    description: "Releases the start-up hold after sustained room cooling without cooling demand"
+    mode: restart
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.therma_v_passive_cooling
+        to: "on"
+        for: "00:40:00"
+        id: arm
+      - trigger: state
+        entity_id: binary_sensor.therma_v_passive_cooling
+        to: "off"
+        id: release
+      - trigger: homeassistant
+        event: start
+        id: release
+    actions:
+      - choose:
+          - conditions:
+              - condition: trigger
+                id: arm
+            sequence:
+              - action: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.therma_v_passive_cooling_stop
+        default:
+          - action: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.therma_v_passive_cooling_stop
+
+  # Slow but persistent no-demand hold. This backstop deliberately ignores the room slope and limits
+  # how long the anti-trip layer can keep the compressor alive by itself.
+  - id: therma_v_antitrip_timeout
+    alias: "Therma V anti-trip maximum hold timeout"
+    description: "Releases the start-up hold after the maximum no-demand hold time"
+    mode: restart
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.therma_v_no_demand_anti_trip_hold
+        to: "on"
+        for: "03:00:00"
+        id: arm
+      - trigger: state
+        entity_id: binary_sensor.therma_v_no_demand_anti_trip_hold
+        to: "off"
+        id: release
+      - trigger: homeassistant
+        event: start
+        id: release
+    actions:
+      - choose:
+          - conditions:
+              - condition: trigger
+                id: arm
+            sequence:
+              - action: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.therma_v_antitrip_timeout
+        default:
+          - action: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.therma_v_antitrip_timeout
+
   # The only writer of Modbus register 2 (heat/cool/room). Four ways in: the effective value
   # changing, the register changing (the pump's own logic, or a manual change on the unit), a mode
   # change, and a 15-minute heartbeat as the safety net (a Home Assistant restart or a Modbus
@@ -395,6 +644,7 @@ automation:
       - trigger: time_pattern
         minutes: "/15"
     conditions:
+      # Holding-register 0 values: 0=cool, 3=auto, 4=heat.
       - condition: template
         value_template: "{{ states('sensor.therma_v_operation_mode') | int(-1) in [0, 3, 4] }}"
     actions:
@@ -402,12 +652,14 @@ automation:
           # Auto mode: the delta on register 4. It is a signed 16-bit register, so a negative
           # delta goes out as two's complement - the same as the climate template does.
           - conditions:
+              # Operation-mode value 3 selects auto; register address 4 holds the delta.
               - condition: template
                 value_template: "{{ states('sensor.therma_v_operation_mode') | int(-1) == 3 }}"
             sequence:
               - if:
                   - condition: template
                     value_template: >-
+                      {# Compare the computed delta with the register-4 readback. #}
                       {{ states('sensor.therma_v_control_mode') | is_number
                          and states('sensor.therma_v_auto_delta_effective') | is_number
                          and (states('sensor.therma_v_auto_mode_target_temperature_delta_circuit_1') | float(0)
@@ -435,6 +687,7 @@ automation:
               - if:
                   - condition: template
                     value_template: >-
+                      {# Compare the effective target with the register-2 readback. #}
                       {% set registered = states('sensor.therma_v_target_temperature_circuit_1') %}
                       {% set effective = states('sensor.therma_v_water_setpoint_effective') | float(0) %}
                       {{ not (registered | is_number) or ((registered | float(0)) - effective) | abs > 0.5 }}
