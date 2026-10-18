@@ -111,17 +111,36 @@ script:
                                 | float(0) or states('sensor.therma_v_dhw_target_temperature') | float(50) %}
             {% set dhw_min = state_attr(ba,'dhw_min_temperature') | float(42) %}
             {% set dhw_max = state_attr(ba,'dhw_max_temperature') | float(68) %}
+            {# A due disinfection is represented by a hard 60 C minimum in the storage profile.
+               The planner stores the start of the cheapest allowed 3 h block; EMHASS may preheat
+               earlier, but these three quarters (45 min at the 15 min MPC step) must be at 60 C.
+               This leaves the heat pump and booster free to choose how to reach it and avoids
+               forcing the tank to 60 C through the whole 00:05-12:00 allowance. #}
+            {% set disinfection_due = is_state('input_boolean.dhw_disinfection_due', 'on') %}
+            {% set disinfection_start =
+                 state_attr('input_datetime.dhw_next_disinfection', 'timestamp') %}
+            {% set hold_minutes = states('input_number.dhw_disinfection_hold_minutes') | float(45) %}
+            {% set hold_steps = max(2, (hold_minutes / 15) | round(0, 'ceil') | int) %}
             {% set pump_mode = states('climate.therma_v_heating_cooling') %}
-            {% set heat_season = pump_mode in ['heat', 'auto'] %}
+            {# Auto remains unsupported by the supervisor until the delta path is implemented. #}
+            {% set heat_season = pump_mode == 'heat' %}
             {% set cool_season = pump_mode == 'cool' %}
             {% set hp_owned = is_state('input_select.therma_v_control_strategy', 'EMHASS') %}
             {% set master_on = is_state('switch.therma_v_heating_cooling_on_off', 'on') %}
-            {% set hp_heat = hp_owned and master_on and heat_season %}
-            {% set hp_cool = hp_owned and master_on and cool_season %}
-            {% set hp_dhw = hp_owned and master_on and is_state('switch.therma_v_dhw_on_off', 'on') %}
+            {% set heat_ready = is_state('input_boolean.therma_v_supervisor_space_heat_enabled', 'on') %}
+            {% set cool_ready = is_state('input_boolean.therma_v_supervisor_cooling_enabled', 'on') %}
+            {% set dhw_ready = is_state('input_boolean.therma_v_supervisor_dhw_enabled', 'on') %}
+            {# Readiness, not the current relay state: the supervisor owns the DHW coil and may turn
+               it off between plan blocks. Keeping the plan parked while the coil is off would make
+               the next MPC forget the DHW load entirely. Space heat/cool stay disabled until their
+               supervisors exist (2026-10-17). #}
+            {% set hp_heat = hp_owned and master_on and heat_ready and heat_season %}
+            {% set hp_cool = hp_owned and master_on and cool_ready and cool_season %}
+            {% set hp_dhw = hp_owned and master_on and dhw_ready %}
             {% set sp_heat = states('input_number.room_setpoint_heating') | float(20) %}
             {% set sp_cool = states('input_number.room_setpoint_cooling') | float(24) %}
             {% set margin = state_attr(ba,'room_comfort_margin_c') | float(1) %}
+            {% set comfort_penalty = states('input_number.emhass_thermal_comfort_penalty') | float(10) %}
             {% set heat_floor = min(sp_heat - margin, room_now) %}
             {% set heat_ceil = max(sp_heat + margin, room_now) %}
             {% set cool_floor = min(sp_cool - margin, room_now) %}
@@ -141,7 +160,18 @@ script:
             {% set house_mass = 18.0 %}
             {% set loss_coefficient = ((uval * env) + (vent * vol * 0.33)) / 1000 %}
             {% set dhw_draw = ([0.005] * n) if hp_dhw else ([0.0] * n) %}
-            {% set dhw_minima = ([dhw_min] * n) if hp_dhw else ([dhw_now] * n) %}
+            {% set quarter_start_ts = as_timestamp(quarter_start) %}
+            {% set mins = namespace(list=[]) %}
+            {% for i in range(n) %}
+              {% set step_ts = quarter_start_ts + i * 900 %}
+              {% set in_disinfection_hold =
+                   hp_dhw and disinfection_due and disinfection_start is not none
+                   and step_ts >= disinfection_start
+                   and step_ts < disinfection_start + hold_steps * 900 %}
+              {% set mins.list = mins.list
+                   + ([60.0] if in_disinfection_hold else [dhw_min if hp_dhw else dhw_now]) %}
+            {% endfor %}
+            {% set dhw_minima = mins.list %}
             {% set dhw_maxima = ([dhw_max] * n) if hp_dhw else ([dhw_now] * n) %}
             {% set heat_minima = ([heat_floor] if hp_heat else [room_now]) %}
             {% set heat_maxima = ([heat_ceil] * n) if hp_heat else ([room_now] * n) %}
@@ -228,6 +258,8 @@ script:
                    "thermal_inertia": {{ tau if hp_heat else 0.0 }},
                    "start_temperature": {{ room_now }},
                    "desired_temperature": {{ sp_heat if hp_heat else room_now }},
+                   "overshoot_temperature": {{ heat_ceil }},
+                   "penalty_factor": {{ comfort_penalty }},
                    "min_temperature": {{ heat_minima | to_json }},
                    "max_temperature": {{ heat_maxima | to_json }},
                    "window_area": {{ warea if hp_heat else 0 }}, "shgc": {{ shgc }},
@@ -237,6 +269,8 @@ script:
                    "thermal_inertia": {{ tau if hp_cool else 0.0 }},
                    "start_temperature": {{ room_now }},
                    "desired_temperature": {{ sp_cool if hp_cool else room_now }},
+                   "overshoot_temperature": {{ cool_floor }},
+                   "penalty_factor": {{ comfort_penalty }},
                    "min_temperature": {{ cool_minima | to_json }},
                    "max_temperature": {{ cool_maxima | to_json }},
                    "window_area": {{ warea if hp_cool else 0 }}, "shgc": {{ shgc }},

@@ -230,6 +230,18 @@ input_number:
     mode: box
     unit_of_measurement: "C"
 
+  # EMHASS soft-comfort weight for the heating/cooling room zones. A desired temperature alone is
+  # not enough: the topology also needs an overshoot threshold before it prices comfort deviations
+  # and suppresses the source beyond that threshold.
+  emhass_thermal_comfort_penalty:
+    name: "EMHASS thermal comfort penalty"
+    icon: mdi:home-thermometer-alert
+    min: 0
+    max: 100
+    step: 1
+    initial: 10
+    mode: box
+
   # Integrating controller knob (2026-09-20): the offset of the heating curve is trimmed so
   # the room lands on input_number.room_setpoint_heating. This helper carries the correction; the
   # control loop that updates it from the room error still has to be built (nothing writes it yet).
