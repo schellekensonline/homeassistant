@@ -32,10 +32,9 @@ input_select:
   #   Heuristic - the three ess_based_on_e_price_*_auto automations pick the ESS mode from the
   #               price (today's behaviour); EMHASS parks all heat-pump blocks in the plan;
   #   EMHASS    - the plan owns the pump: those three automations stand down (they would fight
-  #               the plan) and the payload sends the three thermal blocks for real, so EMHASS can
-  #               put DHW and floor heating on the cheap hours. Making the pump actually *follow*
-  #               the plan is the next step; until that exists EMHASS mode only means "the plan may
-  #               schedule it", and sensor.emhass_hp_plan_power shows the wish.
+  #               the plan). The payload follows the internal supervisor readiness gates: DHW is
+  #               implemented, while space heating and cooling stay parked until their actuator
+  #               paths are ready. sensor.therma_v_supervisor_state shows what is being executed.
   # initial is only the first-ever value (Home Assistant restores the last choice after that).
   therma_v_control_strategy:
     name: "Therma V control strategy"
