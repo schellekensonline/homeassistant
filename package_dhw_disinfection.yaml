@@ -1,9 +1,9 @@
 # DHW disinfection planning and state machine for the Therma V.
 #
 # The package owns whether a cycle is due, the allowed window, execution in Manual/Heuristic,
-# completion detection, timeout/retry and setpoint restoration. In EMHASS mode it only marks the
-# request and leaves execution to the future HP supervisor. Detection remains independent of the
-# strategy, so an unplanned hot cycle still updates dhw_last_disinfection.
+# completion detection, timeout/retry and setpoint restoration. In EMHASS mode the supervisor in
+# package_therma_v_supervisor.yaml starts this same FSM at the planned hold. Detection remains
+# independent of the strategy, so an unplanned hot cycle still updates dhw_last_disinfection.
 #
 # FSM exposed by sensor.dhw_disinfection_state:
 #   idle       - no cycle required
@@ -79,6 +79,27 @@ input_number:
     min: 1
     max: 12
     step: 0.5
+    mode: box
+    unit_of_measurement: "h"
+  # Minimum time the tank must stay at or above 60 C in the EMHASS heat topology. The detection
+  # path needs 30 minutes; 45 gives the planner one extra quarter for the final booster lift.
+  dhw_disinfection_hold_minutes:
+    name: "DHW disinfection hold time"
+    initial: 45
+    min: 30
+    max: 180
+    step: 15
+    mode: box
+    unit_of_measurement: "min"
+  # Keep enough room to heat from a cold tank and still reach the hold. Two hours proved
+  # infeasible in the heat topology; 5 h matches the observed worst-case cycle and leaves the
+  # optimizer room to preheat when energy is cheap.
+  dhw_disinfection_min_lead_hours:
+    name: "DHW disinfection minimum lead time"
+    initial: 5
+    min: 3
+    max: 12
+    step: 1
     mode: box
     unit_of_measurement: "h"
 
@@ -198,7 +219,9 @@ template:
           temperature_met: "{{ is_state('binary_sensor.dhw_disinfection_temperature_met', 'on') }}"
 
 automation:
-  # Decide whether a cycle is required and, outside EMHASS, select a future cheap block. The
+  # Decide whether a cycle is required and select a future cheap block. In Manual/Heuristic the
+  # local run automation consumes that block; in EMHASS the payload uses its start for the 60 C
+  # minimum in the heat topology and the supervisor consumes the same timestamp. The
   # hourly retry repairs the old one-shot-at-00:15 weakness when price data or the macro is
   # temporarily unavailable. A missed cycle leaves due=true and is retried; it is not an error.
   - id: dhw_disinfection_planning_auto
@@ -234,17 +257,25 @@ automation:
            >= states('input_number.dhw_max_days_between_disinfections') | float(12) }}
       cheapest_hours_start: >-
         {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
-        {{ cheapest_energy_hours(
-             sensor='sensor.electricity_buying_price',
-             attr_all='prices',
-             time_key='time',
-             value_key='price',
-             hours=3,
-             look_ahead=true,
-             include_today=true,
-             include_tomorrow=false,
-             start=states('input_datetime.dhw_disinfection_window_start'),
-             end=states('input_datetime.dhw_disinfection_window_end')) }}
+        {% set window_start = states('input_datetime.dhw_disinfection_window_start') %}
+        {% set window_end = states('input_datetime.dhw_disinfection_window_end') %}
+        {% set now_hm = now().strftime('%H:%M') %}
+        {% set lead_start = (now() + timedelta(
+             hours=states('input_number.dhw_disinfection_min_lead_hours') | float(5))).strftime('%H:%M') %}
+        {% set allowed_start = max(window_start, lead_start) %}
+        {% if now_hm < window_end and allowed_start < window_end %}
+          {{ cheapest_energy_hours(
+               sensor='sensor.electricity_buying_price',
+               attr_all='prices',
+               time_key='time',
+               value_key='price',
+               hours=3,
+               look_ahead=true,
+               include_today=true,
+               include_tomorrow=false,
+               start=allowed_start,
+               end=window_end) }}
+        {% endif %}
     actions:
       - if:
           - condition: template
@@ -260,10 +291,9 @@ automation:
                 value_template: >-
                   {% set requested =
                        state_attr('input_datetime.dhw_disinfection_cycle_requested_at', 'timestamp') %}
-                  {{ not is_state('input_select.therma_v_control_strategy', 'EMHASS')
-                     and (requested is none
-                          or now().timestamp() - requested
-                              >= (states('input_number.dhw_disinfection_retry_delay_hours') | float(3)) * 3600)
+                  {{ (requested is none
+                      or now().timestamp() - requested
+                          >= (states('input_number.dhw_disinfection_retry_delay_hours') | float(3)) * 3600)
                      and cheapest_hours_start | as_datetime is not none
                      and (cheapest_hours_start | as_datetime) > now() }}
             then:
