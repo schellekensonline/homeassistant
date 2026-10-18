@@ -87,6 +87,7 @@ input_number:
     unit_of_measurement: "K"
     icon: mdi:home-thermometer
 
+# sensor.therma_v_operation_mode uses holding-register-0 values 0=cool, 3=auto, 4=heat.
 template:
   - binary_sensor:
       - name: "Therma V HVAC run active"
@@ -97,6 +98,7 @@ template:
              and has_value('binary_sensor.therma_v_dhw_heating_state')
              and has_value('sensor.therma_v_operation_mode') }}
         state: >-
+          {# Register 0: 0=cool, 3=auto, 4=heat; other values mean no active HVAC mode. #}
           {{ is_state('binary_sensor.therma_v_compressor_state', 'on')
              and not is_state('binary_sensor.therma_v_dhw_heating_state', 'on')
              and states('sensor.therma_v_operation_mode') | int(-1) in [0, 3, 4] }}
@@ -686,6 +688,7 @@ automation:
           room: "{{ states('sensor.therma_v_room_temperature_effective') | float(20) }}"
           heat_target: "{{ states('input_number.room_setpoint_heating') | float(20) }}"
           cool_target: "{{ states('input_number.room_setpoint_cooling') | float(24) }}"
+          # op is register 0: 0=cool, 3=auto, 4=heat.
           engaged: "{{ (op | int(-1) == 4 and (heat_gate | bool)) or (op | int(-1) == 0 and (cool_gate | bool)) }}"
       - if:
           - condition: template

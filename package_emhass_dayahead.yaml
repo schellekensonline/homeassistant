@@ -15,11 +15,9 @@ rest_command:
     # retrains that model takes ~23 s (against ~5 s normally), too close to the old 30.
     timeout: 90
     content_type: "application/json"
+    # The shared payload script builds the body. The fallback is deliberately invalid so a caller
+    # that forgets `emhass_payload` fails loudly instead of sending an empty optimisation request.
     payload: >-
-      {# The body is built by script.emhass_build_payload (plan: dayahead, tomorrow from
-         00:00), so both optimisations send the same house. `emhass_payload` arrives as service
-         data; the default below is a deliberate error body so a caller that forgets to pass it
-         fails loudly in EMHASS instead of sending an empty request. #}
       {%- set body = emhass_payload | default({'error': 'emhass_payload was not passed by the caller'}) -%}
       {{ body if body is string else body | to_json }}
 
@@ -63,9 +61,7 @@ automation:
           {% set marker = states('input_datetime.emhass_dayahead_plan_date') %}
           {% set today = now().date().isoformat() %}
           {% if trigger.id | default('') in ['einde_dag', 'retry'] %}
-            {# Not before 23:50: the 23:45 MPC is still running at 23:45:00, and two EMHASS
-               optimisations at once is the collision class from 2026-09-13. The window is still
-               wide enough for a retry at 23:55. #}
+            {# Wait for 23:50 so the day plan cannot collide with the 23:45 MPC. #}
             {{ now().minute >= 50
                and marker != today
                and state_attr('sensor.emhass_price_horizon', 'covers_tomorrow') | bool(false) }}
@@ -73,8 +69,7 @@ automation:
             {# Hand-triggered (a test): always allowed; the guard decides what the prices allow. #}
             true
           {% else %}
-            {# Restart: repair only when there is no plan for the current day at all. Yesterday's
-               23:50 run covers today, so a marker of yesterday means we are fine. #}
+            {# A restart repairs only when no plan exists for the current day. #}
             {{ marker < (now().date() - timedelta(days=1)).isoformat() }}
           {% endif %}
     action:

@@ -10,11 +10,11 @@ rest_command:
     # answer, and enough room for the run that retrains the adjusted-PV model (see there).
     timeout: 90
     content_type: "application/json"
+    # The shared payload script builds the body; `emhass_payload` arrives as service data and the
+    # fallback intentionally fails inside EMHASS if the caller omits it.
     payload: >-
-      {# The body is built by script.emhass_build_payload (plan: mpc, from the current quarter
-         hour), so both optimisations send the same house. See the day-ahead command above for
-         the `emhass_payload` contract. #}
       {%- set body = emhass_payload | default({'error': 'emhass_payload was not passed by the caller'}) -%}
+      {# Dictionaries must be serialised; strings already contain the JSON body. #}
       {{ body if body is string else body | to_json }}
 
 automation:

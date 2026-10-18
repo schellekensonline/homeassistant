@@ -64,6 +64,7 @@ automation:
       - condition: template
         value_template: "{{ has_value('sensor.goodwe_export_power_limit') }}"
       - condition: template
+        # Option 0 is manual control; this automation only runs the automatic strategies.
         value_template: "{{ not is_state('input_select.goodwe_export_strategy_select', state_attr('input_select.goodwe_export_strategy_select', 'options')[ 0 ] ) }}"
     actions:
       - variables:
@@ -76,11 +77,10 @@ automation:
             {% set p1_power      = states('sensor.p1_meter_active_power_filtered') | float(0) %}
             {% set ctrl_power    = p1_power + threshold_power %} {# Positive P1 means import. #}
 
-            {# Adjust the export limit from the P1 surplus/shortfall #}
+            {# Integral P1 correction: nudge the export limit toward zero-on-meter. #}
             {% set adjustment    = (update_ratio * 100 / rated_power) * ctrl_power %}
             {% set new_limit     = current_limit + adjustment %}
             
-            {# Clamp the result strictly between 0% and 100% #}
             {{ max(min(new_limit, 100), 0) }}
             
           balanced_max: >-
@@ -91,7 +91,7 @@ automation:
             {% set total_price  = buying_price + base_price %}
             
             {% if total_price > 0 %}
-              {# Work out the base price's share of the total price #}
+              {# Export more as the base-price share of the total price grows. #}
               {% set price_ratio   = (base_price / total_price) * 100.0 %}
               {% set balanced_calc = 100.0 - price_ratio %}
               {{ max(min(balanced_calc, 100), 0) }}

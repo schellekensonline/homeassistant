@@ -247,6 +247,7 @@ automation:
            if last is not none
            else states('input_number.dhw_max_days_between_disinfections') | float(12) }}
       due_by_day: >-
+        {# Python weekday 0=Monday; the select options are ordered Monday through Sunday. #}
         {{ now().weekday()
            == state_attr('input_select.dhw_disinfection_day', 'options').index(
                 states('input_select.dhw_disinfection_day'))

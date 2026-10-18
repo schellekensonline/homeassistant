@@ -227,6 +227,8 @@ sensor:
     time_window: "00:20:00"
     round: 2
 
+# sensor.therma_v_operation_mode uses holding-register-0 values 0=cool, 3=auto, 4=heat.
+# Register address 4 is the auto-mode signed delta, not an operation-mode value.
 template:
   - binary_sensor:
       # True only when normal heating or cooling demand is already below the pump's off threshold,
@@ -258,6 +260,7 @@ template:
         state: >-
           {% set req = states('input_number.therma_v_water_target_request') | float(0) %}
           {% set water = states('sensor.therma_v_controlled_water_temperature') | float(0) %}
+          {# Register 0 mode: 0=cool, 3=auto, 4=heat; register 1 control: 0=outlet, 1=inlet, 2=room. #}
           {% set mode = states('sensor.therma_v_operation_mode') | int(-1) %}
           {% set cm = states('sensor.therma_v_control_mode') | int(-1) %}
           {% set hz = states('sensor.therma_v_compressor_hz') | float(0) %}
@@ -403,7 +406,6 @@ template:
           {% set force_blend = min(((e | abs) / room_hyst) ** exponent, 1) %}
           {% set force_allowance = water_hyst * force_blend %}
           {% set mode_num = mode | int(-1) %}
-          {# Register 0 values: 0=cool, 3=auto, 4=heat; register address 4 is the auto delta. #}
           {% set heat = mode_num in [3, 4] %}
           {% set dir = 'floor' if mode_num == 0 else 'ceil' %}
           {% set band_min = (states('input_number.therma_v_min_water_temperature_heat') if heat

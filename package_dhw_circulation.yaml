@@ -78,6 +78,8 @@ template:
              and has_value('sensor.dhw_normal_setpoint')
              and has_value('binary_sensor.therma_v_dhw_heating_state')
              and has_value('binary_sensor.therma_v_defrost_state') }}
+        # Boosters use the normal service setpoint so a 60 C disinfection target does not defer
+        # mixing until the expensive final band; the HP stays target-relative.
         state: >-
           {% set tank = states('sensor.therma_v_dhw_temperature') | float(0) %}
           {% set target = states('sensor.therma_v_dhw_target_temperature') | float(50) %}
@@ -93,8 +95,7 @@ template:
                              and is_state('binary_sensor.therma_v_defrost_state', 'off') %}
           {% set booster_active = is_state('binary_sensor.therma_v_dhw_booster_state', 'on')
                                   or is_state('binary_sensor.therma_v_dhw_booster_2_state_s1', 'on') %}
-          {# Boosters use the normal service setpoint so a 60 C disinfection target does not
-             defer mixing until the expensive final band. The HP keeps target-relative mixing. #}
+          {# Boosters compare against the normal target; the HP follows the live target. #}
           {% set threshold =
                (normal - (booster_stop_delta if circulating else 0)) if booster_active
                else (target - (stop_delta if circulating else start_delta)) %}

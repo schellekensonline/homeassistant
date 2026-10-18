@@ -21,7 +21,7 @@ template:
               num_active: "{{ states('number.sessy_api_strategy_active_inverters') | float(0) | round(0) }}"
               zom_sat:    "{{ (soc_state >= 98 and zom_state < -0.5*nom_power) or (soc_state <= 2 and zom_state > 0.5*nom_power) }}" 
               num_active_next: >-
-                {% if nom_power <= 0 %} {# prevent division by zero #}
+                {% if nom_power <= 0 %} {# Prevent division by zero. #}
                   {{ 1 | int(0) }}
                 {% else %}
                   {% set num_up   = min( 3, 1 + ((peak_state/(nom_power+hyst_power)) | int(0)) ) | int(0) %}
@@ -38,7 +38,7 @@ template:
                 {% if zom_sat %}
                   {{ 0 }}
                 {% else %}
-                  {{ zom_state / max(num_active_next, 1) }} {# divide across the target active inverters #}
+                  {{ zom_state / max(num_active_next, 1) }} {# Split demand across active inverters. #}
                 {% endif %}
           # Update number of active inverters
           - action: number.set_value
@@ -52,18 +52,14 @@ template:
               entity_id: number.sessy_api_strategy_zom_peak_state
             data:
               value: >- 
-                {% if zom_sat %} {# peak detector tracks |zom_state|, so the right number of inverters is active when saturation ends #}
+                {% if zom_sat %} {# Keep saturation demand for the next inverter count. #}
                   {{ zom_state | abs | round(2) }}
                 {% else %}
                   {{ max(zom_state | abs, decay*peak_state) | round(2) }}
                 {% endif %}
           - variables:
               active_inverter_event_data: >-
-                {# Per-inverter totals; the entity ids start with sessy_inv_, the same as the
-                   other per-inverter sensors. Earlier this read sensor.sessy_l1_... which does
-                   not exist, so every phase came out as 0 Wh and the phases were never really
-                   balanced (2026-09-13). #}
-                {% set tot_energy_l1 = states('sensor.sessy_inv_l1_imported_energy') | float(0) + states('sensor.sessy_inv_l1_exported_energy') | float(0) %}
+                {% set tot_energy_l1 = states('sensor.sessy_inv_l1_imported_energy') | float(0) + states('sensor.sessy_inv_l1_exported_energy') | float(0) %} {# Use sessy_inv_* totals; sessy_l1_* does not exist. #}
                 {% set tot_energy_l2 = states('sensor.sessy_inv_l2_imported_energy') | float(0) + states('sensor.sessy_inv_l2_exported_energy') | float(0) %}
                 {% set tot_energy_l3 = states('sensor.sessy_inv_l3_imported_energy') | float(0) + states('sensor.sessy_inv_l3_exported_energy') | float(0) %}
                 {% set active_l1 = state_attr('number.sessy_api_strategy_active_inverters', 'l1_active') | bool(false) %}
@@ -576,46 +572,36 @@ automation:
           entity_id: input_select.sessy_api_strategy
         data:
           option: >-
-            {# Get price data #}
             {% set buying_price      = states('sensor.electricity_buying_price') | float(0) %}
             {% set price_pct         = states('sensor.current_percentage_of_electricity_price') | float(50) %}
             {% set price_spread      = states('sensor.difference_in_electricity_price_today') | float(0) %}
             {% set forced_buy_price  = states('input_number.sessy_auto_api_strategy_min_forced_buy_price') | float(-0.001) %}
 
-            {# Price Settings #}
             {% set buy_pct    = states('input_number.sessy_auto_api_strategy_buy_pct') | float(0) %}
             {% set sell_pct   = states('input_number.sessy_auto_api_strategy_sell_pct') | float(100) %}
             {% set min_price_spread = states('input_number.sessy_auto_api_strategy_min_spread') | float(1) %}
 
-            {# Surplus data as volumes in Wh, from the surplus sensor's attributes. The volume
-               decides, not a ratio: buying is only useful for the free room that the remaining
-               PV will not fill, and selling only for the part of the pack above the reserve for
-               the rest of today plus tonight (2026-09-14). #}
-            {% set remain_wh   = state_attr('sensor.sessy_api_strategy_estimated_energy_surplus','remain_wh') | float(0) %}
+            {% set remain_wh   = state_attr('sensor.sessy_api_strategy_estimated_energy_surplus','remain_wh') | float(0) %} {# Trade gates use Wh volumes, not ratios. #}
             {% set buy_room_wh = state_attr('sensor.sessy_api_strategy_estimated_energy_surplus','buy_room_wh') | float(0) %}
             {% set sellable_wh = state_attr('sensor.sessy_api_strategy_estimated_energy_surplus','sellable_wh') | float(0) %}
             {% set soc_target  = state_attr('sensor.sessy_api_strategy_estimated_energy_surplus','soc_target') | float(100) %}
 
-            {# Battery data #}
             {% set soc = states('sensor.sessy_battery_state_of_charge') | float(0) %}
 
-            {# Settings #}
             {% set surplus_margin_charge    = states('input_number.sessy_api_strategy_surplus_margin_charge') | float(0) %}
             {% set surplus_margin_discharge = states('input_number.sessy_api_strategy_surplus_margin_discharge') | float(0) %}
             {% set min_buy_room_wh          = states('input_number.sessy_api_strategy_min_buy_room_wh') | float(500) %}
             {% set min_sell_wh              = states('input_number.sessy_api_strategy_min_sell_wh') | float(500) %}
 
-            {# Gates #}
-            {% set forced_buy = buying_price <= forced_buy_price %}  {# negative net price: always worth it #}
+            {% set forced_buy = buying_price <= forced_buy_price %}  {# Negative net price: always charge. #}
             {% set can_buy    = (buy_room_wh >= min_buy_room_wh) and (soc < soc_target - 1) %}
             {% set can_sell   = sellable_wh >= min_sell_wh %}
             {% set buy_big    = buy_room_wh >= surplus_margin_charge * remain_wh %}
             {% set sell_big   = sellable_wh >= surplus_margin_discharge * remain_wh %}
 
-            {# 2. Decision Logic #}
-            {% if price_spread >= min_price_spread %}    {# Spread sufficient (e.g. >25ct) -> Execute proportional trading (sell surplus only) #}
+            {% if price_spread >= min_price_spread %}    {# Wide spread: trade proportionally. #}
 
-              {% if price_pct > sell_pct %}  {# Price is high: sell what we do not need tonight #}
+              {% if price_pct > sell_pct %}  {# High price: sell surplus. #}
                 {% if can_sell %}
                   Proportional Discharge
                 {% else %}
@@ -633,9 +619,9 @@ automation:
                 Zero on Meter
               {% endif %}
               
-            {% else %} {# Spread is too narrow (e.g. <25ct) -> buying makes no sense #}
+            {% else %} {# Narrow spread: buy only across a clear gap. #}
 
-              {% if price_pct > sell_pct %}  {# Price is high: only sell a clear surplus #}
+              {% if price_pct > sell_pct %}  {# High price: sell only a clear surplus. #}
                 {% if sell_big %}
                   Proportional Discharge
                 {% elif can_sell %}
@@ -644,7 +630,7 @@ automation:
                   Zero on Meter
                 {% endif %}
               
-              {% elif price_pct < buy_pct %}  {# Price is low: no discharging, and buy only across a clear gap #}
+              {% elif price_pct < buy_pct %}  {# Low price: do not discharge; buy only across a clear gap. #}
                 {% if forced_buy %}
                   Proportional Charge
                 {% elif can_buy and buy_big %}
@@ -686,69 +672,49 @@ automation:
           entity_id: number.sessy_api_strategy_zom_state
         data:
           value: >-
-            {# 1. Get relevant input data  #}
             {% set strategy     = states('input_select.sessy_api_strategy') %}
-            {# The ZoM input: P1, or P1 minus the heat pump when the exclude switch is on. Fall
-               back to raw P1 when the template sensor is not ready yet (right after a reload), so
-               the calculation never sees an unknown and cannot drift. #}
-            {% set p1_power     = states('sensor.sessy_zom_input_power') | float(states('sensor.p1_meter_3c39e72e6af0_active_power') | float(0)) %}
+            {% set p1_power     = states('sensor.sessy_zom_input_power') | float(states('sensor.p1_meter_3c39e72e6af0_active_power') | float(0)) %} {# Fall back to raw P1 while the ZoM source is unavailable. #}
             {% set zom_state    = states('number.sessy_api_strategy_zom_state') | float(0) %}
             {% set soc          = states('sensor.sessy_battery_state_of_charge') | float(0) %}
-            {# 2. Get relevant settings #}
             {% set max_charge_power    = states('input_number.sessy_api_strategy_max_charge_power') | float(0) %}
             {% set max_discharge_power = states('input_number.sessy_api_strategy_max_discharge_power') | float(0) %}
             {% set max_prop_charge_power = states('input_number.sessy_api_strategy_max_prop_charge_power') | float(0) %}
             {% set max_prop_discharge_power = states('input_number.sessy_api_strategy_max_prop_discharge_power') | float(0) %}
-            {# The ZoM clip has its own limits since 2026-10-07, the siblings of the prop pair; the
-               pair above stays the overarching limit (and the plan cap). No fallback on purpose:
-               see the deploy order at the helpers in the input_number block. #}
-            {% set max_zom_charge_power    = states('input_number.sessy_api_strategy_max_zom_charge_power') | float(0) %}
+            {% set max_zom_charge_power    = states('input_number.sessy_api_strategy_max_zom_charge_power') | float(0) %} {# No fallback: deploy both ZoM helpers before reload. #}
             {% set max_zom_discharge_power = states('input_number.sessy_api_strategy_max_zom_discharge_power') | float(0) %}
-            {# Charge ceiling and discharge floor from the same reserve model as the auto strategy:
-               the SoC that belongs to the rest of today plus tonight (2026-09-14). #}
             {% set soc_target = state_attr('sensor.sessy_api_strategy_estimated_energy_surplus','soc_target') | float(100) %}
             {% set remain_wh  = state_attr('sensor.sessy_api_strategy_estimated_energy_surplus','remain_wh') | float(0) %}
             {% set usable_wh  = state_attr('sensor.sessy_api_strategy_estimated_energy_surplus','usable_wh') | float(0) %}
-            {% set soc_floor  = 0 if usable_wh <= 0 else 100 * remain_wh / usable_wh %}
+            {% set soc_floor  = 0 if usable_wh <= 0 else 100 * remain_wh / usable_wh %} {# Reserve floor covers the rest of today and tonight. #}
             
-            {# 3. Zero on Meter (ZOM) algorithm #}
             {% set zom_gain      = 0.5 %}
             {% set zom           = min(max(zom_state + (zom_gain*p1_power), -max_zom_charge_power), max_zom_discharge_power) %}
             {% set zom_discharge = max(zom, 0) %}
             {% set zom_charge    = min(zom, 0) %}
-            {# The floor EMHASS asks for this quarter, 0 outside EMHASS mode: with it the plan sets
-               a floor in the direction it wants, and the house may still pull more out of the pack
-               (2026-10-04). Zero keeps every mode exactly as it was. #}
-            {% set zom_floor     = states('input_number.sessy_zom_power_floor') | float(0) %}
+            {% set zom_floor     = states('input_number.sessy_zom_power_floor') | float(0) %} {# Nonzero floor holds the plan's charge or discharge direction. #}
             {% set zom_planned   = max(zom_discharge, zom_floor) if zom_floor > 0
                                    else (min(zom_charge, zom_floor) if zom_floor < 0 else zom) %}
 
-            {# 4. Strategy selection and calculation #}
             {% set setpoint %}
               {% if strategy == 'Zero on Meter' %}
                   {{ zom_planned }}
 
               {% elif strategy == 'Zero on Meter Support' %}
-                {{ max(zom_discharge, zom_floor) }} {# no charging for high energy prices #}
+                {{ max(zom_discharge, zom_floor) }} {# Discharge only at high prices. #}
 
               {% elif strategy == 'Zero on Meter Charge' %}
-                {{ min(zom_charge, zom_floor) }} {# no discharging for low energy prices #}
+                {{ min(zom_charge, zom_floor) }} {# Charge only at low prices. #}
 
               {% elif strategy == 'Proportional Charge' %}
-              {# Buys energy or absorbs PV: never charges above soc_target, the level that is useful
-                 today (the remaining need plus the room the remaining PV cannot fill). Above that
-                 only free PV is worth taking. #}
-                {% set prop_gain = max(0.0, (soc_target - soc) / 100.0) %}
+                {% set prop_gain = max(0.0, (soc_target - soc) / 100.0) %} {# Above soc_target, only free PV is useful. #}
                 {% set prop_power = -1 * (prop_gain * max_prop_charge_power) %}
                 {# Selects the highest charging request (most negative value) #}
 
                 {{ min(prop_power, zom_charge) }}
 
-              {% elif strategy == 'Proportional Discharge' %}
-              {# Sells energy or supports the house: never discharges below soc_floor, the SoC that
-                 still covers the rest of today plus tonight, so a sell cannot eat into the reserve. #}
+              {% elif strategy == 'Proportional Discharge' %} {# Never sell below the reserve floor. #}
                 {% if soc <= soc_floor %}
-                  {{ max(zom_discharge, 0) }} {# only cover the house, no export #}
+                  {{ max(zom_discharge, 0) }} {# Cover the house without exporting. #}
                 {% else %}
                   {% set prop_gain = soc / 100.0 %}
                   {% set prop_power = prop_gain * max_prop_discharge_power %}
@@ -760,11 +726,7 @@ automation:
                 0
               {% endif %}
             {% endset %}
-            {# 5. The overarching saturation (2026-10-07): whatever a strategy asks, the
-               setpoint stays inside the hardware / plan limits. It is the same pair as the range of
-               the number this feeds, so a strategy limit set above it (or a plan floor that does
-               not fit) can never lead to a rejected write - which is what happened on 05-10. #}
-            {{ max(min(setpoint | float(0), max_discharge_power), -max_charge_power) | int }}
+            {{ max(min(setpoint | float(0), max_discharge_power), -max_charge_power) | int }} {# Clamp to the hardware/plan limits to avoid rejected writes. #}
 
 
   # EMHASS mode (design, 2026-10-04): the plan's intent for this quarter picks both the ZoM

@@ -57,6 +57,7 @@ template:
         # sensor.therma_v_water_setpoint_effective and sensor.therma_v_auto_delta_effective.
         target_temperature: >-
           {% set tc = states('input_select.therma_v_temperature_control') %}
+          {# Register 0: 0=cool, 3=auto, 4=heat. #}
           {% set mode = states('sensor.therma_v_operation_mode') | int(-1) %}
           {% if tc == 'Room control (P)' or (tc == 'Heating-curve' and mode == 4) %}
           {{ states('input_number.room_setpoint_heating') }}
@@ -89,6 +90,7 @@ template:
               # (`mode | int(-1)`), which is immune to that normalisation. It only became visible
               # when the cool band was narrowed to 10..20 and a heat request of 25 came back as 20.
               mode: "{{ states('sensor.therma_v_operation_mode') }}"
+              # Register 1: 0=outlet, 1=inlet, 2=room; values below 2 use water control.
               water_control: "{{ states('sensor.therma_v_control_mode') | int(-1) < 2 }}"
               # Who the slider belongs to. True while the temperature control select drives this
               # regime, so the service call sets the *room* setpoint instead of a water/delta value

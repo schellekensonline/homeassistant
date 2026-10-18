@@ -91,7 +91,8 @@ template:
           {% set low     = cheapest_energy_hours( sensor='sensor.electricity_selling_price', attr_all='prices',time_key='time', value_key='price', mode='min', use_hourly_avg=false, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) | float(0) %}
           {% set current = states('sensor.electricity_selling_price') | float(0) %}
 
-          {{ ( (current-low) / max(high-low,0.0001) * 100 ) | round(1, default=0) }} {# max to prevent dix0 #}
+          {# The spread floor prevents division by zero when no price range exists. #}
+          {{ ( (current-low) / max(high-low,0.0001) * 100 ) | round(1, default=0) }}
 
       # Difference between the most and least expensive hour today
       - name: "Difference in electricity price today"
@@ -101,9 +102,10 @@ template:
         availability: >
           {% set prices = state_attr('sensor.electricity_selling_price', 'prices') | default([], true) %}
           {{ states('sensor.electricity_buying_price') | is_number and prices | count > 1 }}
+        # The macro can return no number before prices are published; float(0) keeps the
+        # subtraction numeric instead of raising a TypeError.
         state: >
           {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
-          {# | float(0): when the macro returns no number (e.g. prices not published yet) the subtraction raised a TypeError #}
           {% set high = cheapest_energy_hours( sensor='sensor.electricity_selling_price', attr_all='prices',time_key='time', value_key='price', mode='max', use_hourly_avg=false, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) | float(0) %}
           {% set low = cheapest_energy_hours( sensor='sensor.electricity_selling_price', attr_all='prices',time_key='time', value_key='price', mode='min', use_hourly_avg=false, hours='all', look_ahead=false, include_today=true, include_tomorrow=false) | float(0) %}
           
@@ -220,6 +222,8 @@ template:
         {% set VAT      = states('input_number.electric_energy_vat') | float(0.21) %}
         {{ (price + sell_fee) * (1 + VAT) }}
       attributes:
+        # Build from a fresh fetch when available. On a failed or partial fetch, preserve known
+        # future quarters, drop past entries and never replace a good list with an empty one.
         prices: >-
           {% set sell_fee = states('input_number.electric_energy_selling_fee_ex') | float(0) %}
           {% set VAT      = states('input_number.electric_energy_vat') | float(0.21) %}
@@ -231,13 +235,7 @@ template:
              if previous_prices is defined and previous_prices is iterable and previous_prices is not string
              else [] %}
           {% set fresh = today + tomorrow %}
-          {# Build from a fresh fetch when there is one; on a failed fetch keep the last
-             known list untouched instead of re-parsing it with the raw-price keys.
-             A *partial* fetch happens too (2026-10-03 14:00: today came back, tomorrow did not,
-             and the rebuild silently dropped tomorrow - which then starves the MPC horizon and
-             the 23:50 day-plan run), so keep the future quarters we already had that the fresh
-             fetch does not mention. Day-ahead prices for a quarter do not change once published,
-             so re-using them is safe; anything in the past is dropped so the list stays bounded. #}
+          {# Merge fresh prices while retaining known future quarters from the previous list. #}
           {% if fresh | count > 0 %}
             {% set ns = namespace(list=[], times=[]) %}
             {% for entry in fresh %}

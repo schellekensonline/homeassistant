@@ -40,33 +40,37 @@ script:
           boolean:
     sequence:
       - variables:
+          # Both plans start at the current quarter hour. EMHASS's day-ahead horizon also starts
+          # at run time and maps price lists positionally, so pass the available prices from now.
+          # Round the prices and cap the horizon to the available quarters.
+          #
+          # The night reserve is the 22:00-07:00 house forecast times the margin plus a fixed
+          # allowance. The house forecast excludes the heat pump. Until a complete night window
+          # is available, use the flat night-share fallback; clamp the final SOC to 5-90%.
+          #
+          # Heat topology has four flows in a fixed order: HP -> DHW, heating, cooling and booster
+          # -> DHW. The HP flows share a mutually exclusive actuator group; the booster is
+          # independent. Disabled flows are parked at a fixed temperature without thermal loss.
+          #
+          # A due disinfection forces the planned hold block to 60 C, while EMHASS may preheat
+          # earlier. Readiness, not current relay state, keeps a flow enabled in the plan.
+          # Convert the controller's heating curve to EMHASS's outdoor-temperature convention.
+          # House thermal mass is explicit; losses combine envelope UA and ventilation.
+          # The battery limits mirror the Sessy strategy helpers on every plan.
+          # The MPC publish-data call needs the custom thermal IDs; the day-ahead publishes its
+          # saved, prefixed entities and leaves them out.
           body: >-
             {% set day_ahead = plan | default('mpc', true) == 'dayahead' %}
             {% set send_thermal = thermal | default(true) | bool %}
-            {# Both plans start at the current quarter hour, rounded down so the filter is stable
-               within it: EMHASS's day-ahead horizon starts at the run time too
-               (`get_forecast_dates` floors "now") and it applies a passed price *list* positionally
-               from that start. Sending only tomorrow's quarters therefore shifted the whole price
-               curve by the run-time-to-midnight gap - measured 10:45 on a 13:15 run on 2026-10-03,
-               all 96 values wrong (see the notes). Send from now, like the MPC. #}
+            {# Floor the run start so both plans use the same current-quarter price window. #}
             {% set minute = now().minute %}
             {% set quarter_start = now().replace(minute=(minute - (minute % 15)), second=0, microsecond=0).isoformat() %}
             {% set incl = state_attr('sensor.electricity_buying_price', 'prices') | selectattr('time', '>=', quarter_start) | map(attribute='price') | list %}
             {% set excl = state_attr('sensor.electricity_selling_price', 'prices') | selectattr('time', '>=', quarter_start) | map(attribute='price') | list %}
-            {# Round to 4 decimals; EMHASS expects plain floats in the JSON body, and the horizon
-               may never exceed the list length: Nord Pool only publishes tomorrow after ~13:00, so
-               asking for 96 quarters while the list is shorter gets the run rejected with
-               "length should be 96". #}
             {% set incl_rounded = incl | map('round', 4) | list %}
             {% set excl_rounded = excl | map('round', 4) | list %}
+            {# Cap to the available price quarters; EMHASS rejects a horizon/length mismatch. #}
             {% set n = min(96, incl_rounded | length) %}
-            {# Terminal target: the night reserve, not a fixed 60 %. Preferred basis (
-               2026-09-26): the model's own load forecast over one full night window (22:00-07:00),
-               which *derives* the night share instead of assuming the Sessy's flat 25 % of the
-               daily average, plus a 10 % margin for forecast error and for the gap between
-               sunrise and real PV surplus. Falls back to that 25 % rule when the forecast does
-               not cover a complete window (right after a restart, or before the first run of the
-               day). Clamped to 5-90 %. #}
             {% set fc = state_attr('sensor.p_load_forecast', 'forecasts') or [] %}
             {% set acc = namespace(wh=0.0, n=0, started=False) %}
             {% for x in fc %}
@@ -81,20 +85,11 @@ script:
             {% endfor %}
             {% set avg_wh = (states('input_number.night_energy_in_percent_of_daily_used_in_home') | float(25) / 100)
                             * (states('sensor.average_daily_energy_used_in_home') | float(0)) * 1000 %}
-            {# The forecast only sees the house, never the heat pump, so the reserve carries both a
-               factor on the forecast and a fixed allowance: see input_number.emhass_reserve_*. #}
             {% set reserve_margin = states('input_number.emhass_reserve_margin') | float(1.15) %}
             {% set reserve_fixed_wh = states('input_number.emhass_reserve_fixed_wh') | float(2000) %}
+            {# Fall back to flat night share without a full forecast; margin and fixed Wh cover heat-pump load. #}
             {% set reserve_wh = (acc.wh if acc.n >= 30 else avg_wh) * reserve_margin + reserve_fixed_wh %}
             {% set reserve_soc = min(max(reserve_wh / 15960, 0.05), 0.90) %}
-            {# --- Heat topology: one compressor plus the electric DHW booster --------------------
-               2026-10-17. The topology replaces the three classic thermal batteries with four
-               flows in a stable order: 0 = HP -> DHW, 1 = HP -> house heating, 2 = HP -> house
-               cooling, 3 = electric booster -> DHW. The first three keep their historical
-               p_deferrable meanings. The HP flows share one physical compressor and are in one
-               mutual-exclusion actuator group; Jan confirmed the 1.5 kW Shelly booster may run
-               in parallel. Every storage is parked as a fixed-temperature zero-loss store while
-               the strategy is not EMHASS or the physical mode/coil is unavailable. #}
             {% set ba = 'sensor.building_parameters' %}
             {% set room_now = states('sensor.therma_v_room_temperature') | float(20.5) %}
             {% set uval = state_attr(ba,'u_value') | float(0.55) %}
@@ -111,11 +106,6 @@ script:
                                 | float(0) or states('sensor.therma_v_dhw_target_temperature') | float(50) %}
             {% set dhw_min = state_attr(ba,'dhw_min_temperature') | float(42) %}
             {% set dhw_max = state_attr(ba,'dhw_max_temperature') | float(68) %}
-            {# A due disinfection is represented by a hard 60 C minimum in the storage profile.
-               The planner stores the start of the cheapest allowed 3 h block; EMHASS may preheat
-               earlier, but these three quarters (45 min at the 15 min MPC step) must be at 60 C.
-               This leaves the heat pump and booster free to choose how to reach it and avoids
-               forcing the tank to 60 C through the whole 00:05-12:00 allowance. #}
             {% set disinfection_due = is_state('input_boolean.dhw_disinfection_due', 'on') %}
             {% set disinfection_start =
                  state_attr('input_datetime.dhw_next_disinfection', 'timestamp') %}
@@ -125,15 +115,12 @@ script:
             {# Auto remains unsupported by the supervisor until the delta path is implemented. #}
             {% set heat_season = pump_mode == 'heat' %}
             {% set cool_season = pump_mode == 'cool' %}
+            {# Readiness, not relay state, keeps planned capacity available while control cycles. #}
             {% set hp_owned = is_state('input_select.therma_v_control_strategy', 'EMHASS') %}
             {% set master_on = is_state('switch.therma_v_heating_cooling_on_off', 'on') %}
             {% set heat_ready = is_state('input_boolean.therma_v_supervisor_space_heat_enabled', 'on') %}
             {% set cool_ready = is_state('input_boolean.therma_v_supervisor_cooling_enabled', 'on') %}
             {% set dhw_ready = is_state('input_boolean.therma_v_supervisor_dhw_enabled', 'on') %}
-            {# Readiness, not the current relay state: the supervisor owns the DHW coil and may turn
-               it off between plan blocks. Keeping the plan parked while the coil is off would make
-               the next MPC forget the DHW load entirely. Space heat/cool stay disabled until their
-               supervisors exist (2026-10-17). #}
             {% set hp_heat = hp_owned and master_on and heat_ready and heat_season %}
             {% set hp_cool = hp_owned and master_on and cool_ready and cool_season %}
             {% set hp_dhw = hp_owned and master_on and dhw_ready %}
@@ -145,25 +132,21 @@ script:
             {% set heat_ceil = max(sp_heat + margin, room_now) %}
             {% set cool_floor = min(sp_cool - margin, room_now) %}
             {% set cool_ceil  = max(sp_cool + margin, room_now) %}
-            {# The actual heat-mode controller uses T_flow = target + slope * (target - outdoor)
-               + offset. EMHASS uses T_flow = curve.offset - curve.slope * outdoor, so the
-               equivalent offset at 0 C is target * (1 + slope) + offset. #}
             {% set curve_slope = states('input_number.therma_v_heating_curve_slope') | float(0.444) %}
             {% set curve_actual_offset = states('input_number.therma_v_heating_curve_offset') | float(0) %}
+            {# Convert controller curve to EMHASS's offset form and opposite slope sign. #}
             {% set curve_offset = sp_heat * (1 + curve_slope) + curve_actual_offset %}
             {% set curve_min_supply = states('input_number.therma_v_min_water_temperature_heat') | float(20) %}
             {% set curve_max_supply = states('input_number.therma_v_max_water_temperature_heat') | float(42) %}
-            {# House-zone parameters. The thermal mass is deliberately an explicit model value
-               rather than derived from the 4.7 m3 floor only: EMHASS tracks the room now, which
-               is the quantity the eventual supervisor will use. The loss coefficient is the
-               envelope UA plus the ventilation term (0.33 Wh/m3K). #}
             {% set house_mass = 18.0 %}
+            {# Convert envelope plus ventilation loss to kW/K for the house model. #}
             {% set loss_coefficient = ((uval * env) + (vent * vol * 0.33)) / 1000 %}
             {% set dhw_draw = ([0.005] * n) if hp_dhw else ([0.0] * n) %}
             {% set quarter_start_ts = as_timestamp(quarter_start) %}
             {% set mins = namespace(list=[]) %}
             {% for i in range(n) %}
               {% set step_ts = quarter_start_ts + i * 900 %}
+              {# DHW planner owns the start time; force 60 C only across its hold steps. #}
               {% set in_disinfection_hold =
                    hp_dhw and disinfection_due and disinfection_start is not none
                    and step_ts >= disinfection_start
@@ -182,23 +165,12 @@ script:
               "load_cost_forecast": {{ incl_rounded | to_json }},
               "prod_price_forecast": {{ excl_rounded | to_json }},
               "prediction_horizon": {{ n }},
-              {# Battery power limits, coupled to the Sessy API strategy helpers (2026-10-05):
-                 these are the same knobs the ZoM layer clips its setpoint with, and now they also
-                 cap what EMHASS may plan, so the plan cannot ask for power the actuator is not
-                 allowed to deliver. They travel as runtime parameters (associations.csv maps both
-                 to plant_conf), so the shared builder gives them to the MPC and the day-ahead
-                 alike; changing a helper takes effect on the next quarter-hour plan. #}
+              {# Match actuator limits so EMHASS cannot plan power the Sessy will clip. #}
               "battery_charge_power_max": {{ states('input_number.sessy_api_strategy_max_charge_power') | int(6000) }},
               "battery_discharge_power_max": {{ states('input_number.sessy_api_strategy_max_discharge_power') | int(3000) }},
               "soc_init": {{ (states('sensor.sessy_battery_state_of_charge') | float(60) / 100) | round(3) }},
               "soc_final": {{ reserve_soc | round(3) }}{% if not day_ahead and send_thermal %},
-              {# Make the MPC publish the thermal model's predicted store temperatures (
-                 2026-10-10). The shared builder already sends the three thermal batteries, but
-                 EMHASS's /action/publish-data only posts the sensors named in these custom id
-                 lists, and the built-in default does not include the predicted temperatures -
-                 which is why sensor.temp_predicted* only existed under the day-ahead's saved,
-                 prefixed entities. The day-ahead saves and publishes its own entities, so it is
-                 left alone here. #}
+              {# Only the MPC publish path needs these explicit thermal sensor IDs. #}
               "custom_predicted_temperature_id": [
                 {"entity_id": "sensor.temp_predicted0"},
                 {"entity_id": "sensor.temp_predicted1"},
@@ -217,11 +189,10 @@ script:
                 {"entity_id": "sensor.p_deferrable2"},
                 {"entity_id": "sensor.p_deferrable3"}
               ]{% endif %}{% if day_ahead %},
-              {# Keep the day-ahead plan out of the MPC's sensors (2026-10-03): the run saves its
-                 built entities under this prefix and the automation publishes those, so the two
-                 plans no longer share entity ids. See the notes, "03-10: the day-ahead plan". #}
+              {# Save and publish day-ahead entities under a separate namespace from the MPC. #}
               "entity_save": true,
               "publish_prefix": "dayahead_"{% endif %}{% if send_thermal %},
+              {# Flow order maps to p_deferrable0-3; the HP flows share one compressor. #}
               "heat_topology": {
                 "sources": [
                   {"id": "hp_dhw", "type": "heatpump",

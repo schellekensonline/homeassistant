@@ -27,8 +27,7 @@ template:
           {% set tot_bat  = states('sensor.sessy_grid_total_power') | float(0) %}              {# positive = battery discharge #}
           {% set tot_hp   = states('sensor.therma_v_electric_power') | float(0) %}             {# positive = heatpump consumption #}
 
-          {# house consumption = grid import + PV + battery discharge, minus the steerable heatpump #}
-          {# clamp at 0: brief P1 transients can momentarily make the balance negative, which is physically impossible #}
+          {# P1 transients can briefly make the balance negative. #}
           {{ max(tot_p1 + tot_pv + tot_bat - tot_hp, 0) | round(2) }}
 
       # The day plan's value for the *current* quarter, so it can go on a history graph next to

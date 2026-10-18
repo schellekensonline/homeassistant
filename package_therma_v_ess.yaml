@@ -270,9 +270,11 @@ automation:
         value_template: >-
           {% set options = state_attr('input_select.therma_v_ess_select', 'options') | default([], true) %}
           {% set selected = states('input_select.therma_v_ess_select') %}
+          {# Select-option index encodes the state written to register 9. #}
           {% set selected_idx = options.index(selected) if selected in options else none %}
           {% set last_write = state_attr('input_datetime.therma_v_ess_last_write', 'timestamp') %}
           {% set readback_grace = 600 %}
+          {# sensor.therma_v_energy_state is the register-11 readback of register 9. #}
           {{ selected_idx is not none
              and states('sensor.therma_v_energy_state') | is_number
              and (states('sensor.therma_v_energy_state') | int(0) - selected_idx) | abs > 0
@@ -310,4 +312,5 @@ automation:
               address: 9
               slave: 1
               hub: modbus_gateway_therma_v
+              # The leading character of each option is the register-9 state code.
               value: "{{ states('input_select.therma_v_ess_select')[0] | int(0) }}"

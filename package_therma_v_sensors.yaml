@@ -84,11 +84,10 @@ template:
         {% set pt_cop = states('sensor.therma_v_thermal_power') | float("unknown") %}
         {% set pe_cop = states('sensor.therma_v_electric_power') | float("unknown") %}
         {{ pt_cop|is_number and pe_cop|is_number and pe_cop > 0 }}
+      # Use the 5 s compressor-Hz register for the running signal instead of the slower discrete state.
       state: >
         {% set pt_cop = states('sensor.therma_v_thermal_power') | float(0) | abs %}
         {% set pe_cop = states('sensor.therma_v_electric_power') | float(0) %}
-        {# Compressor running is read from the Hz register (5 s) instead of the 30 s discrete
-           state since 2026-10-10. #}
         {% set on_cop  = (states('sensor.therma_v_compressor_hz') | float(0)) > 1 %}
 
         {% if (pt_cop > 500.0) and on_cop and (pe_cop > 0.0) %}
