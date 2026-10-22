@@ -1,23 +1,12 @@
 # Therma V temperature control. Design 2026-10-11 (Jan), extended 2026-10-15. What lives in here:
 # the weather-compensation curve ("stooklijn") for heat mode, the room correction (proportional plus
-# a quadratic term) for heat *and* auto, a weather-anticipation offset for the morning sun, and the
-# calibrated room-to-water force progression. Cooling is deliberately not in here: it is dewpoint-limited
-# (package_therma_v_dewpoint.yaml), so cool keeps its fixed water setpoint.
+# a quadratic term) for heat *and* auto, and a weather-anticipation offset for the morning sun.
+# Cooling is deliberately not in here: it is dewpoint-limited (package_therma_v_dewpoint.yaml), so
+# cool keeps its fixed water setpoint.
 #
-# The start/stop force is calibrated in the units that matter: when the room error reaches the room
-# hysteresis, the request reaches one water hysteresis away from the measured water temperature.
-# A power curve (square by default, cube optional) shapes the approach; beyond the calibration point
-# it stays at full force. There is no latched start/stop flag and no absolute 20/42 C jump.
-#
-# Jan, 2026-10-15, about the band minimum: the pump is oversized, so it cannot modulate below about
-# 24-25 C flow in mild weather (23 C only below ~10 C outdoor, at a poor COP) and it will cycle
-# there no matter what we ask. The 20 C band minimum is therefore not a physical limit but our "as
-# low as we go" - and because the pump's own restart trip sits at `target + hysteresis_neg`, asking
-# for 20 makes it stay off far longer. The calibrated force reaches the same anti-trip boundary with
-# a much smaller room error, so it does not need to wait for an indoor temperature near 18 C.
-#
-# The force is continuous through zero room error, so there is no entry/release Schmitt trigger to
-# flap. The heat pump retains its own minimum run/off time.
+# The room correction is the only room-to-water boost. The pump's own start/stop hysteresis stays in
+# the start-up layer. The controller must not anchor a boost to the measured water temperature: the
+# request would then rise with the water it is heating and form a positive feedback loop.
 #
 # What it does: input_select.therma_v_temperature_control decides who owns the request.
 #   Off              - the climate slider owns it (the behaviour before this package)
@@ -30,8 +19,15 @@
 # implementation, not a copy, and no HACS dependency, because custom_components/ is outside git:
 #
 #   classic:  T_flow = T_room_target + slope * (T_room_target - T_outdoor) + offset
-#   room:     T_flow = classic + room_influence * e + room_gain_quadratic * e * |e|
+#   room:     T_flow = classic + room_influence * e + quadratic_gain * e * |e|
 #                      - anticipation   with e = T_room_target - T_room_actual
+#
+# The quadratic gain is derived from a single calibration point:
+#
+#   quadratic_gain = water_hysteresis / room_error_at_quadratic_water_hysteresis^2
+#
+# At that room error the quadratic term alone contributes one water hysteresis. The linear term
+# remains separate and is not included in that calibration point.
 #
 # clamped to the season band (therma_v_min/max_water_temperature_heat). Jan's curve for a 20 C room
 # setpoint (2026-10-11) runs through two anchors: 20 C flow at 20 C outdoor and 40 C flow at -25 C
@@ -65,8 +61,7 @@
 # with the filter entities below; this comment intentionally does not duplicate them.
 #
 # The room correction is deliberately *progressive* (Jan, 2026-10-15): a small error stays gentle, a
-# big one bites hard, and there is no step in the water target. The calibrated force above adds the
-# repeatable room-hysteresis to water-hysteresis mapping used for start and stop.
+# big one bites hard, and there is no step in the water target.
 #
 # The anticipation reacts to the outdoor *trend*, not the level: on a sunny morning the outdoor probe
 # can climb 3-5 K/h (measured on 2026-10-15: 9.0 -> 28.3 C in one day) while the slab still gives off
@@ -138,53 +133,18 @@ input_number:
     icon: mdi:arrow-expand-horizontal
 
   # --- Room control (2026-10-15) ----------------------------------------------------------------
-  # The quadratic part of the room gain. Together with the linear part
-  # (therma_v_heating_curve_room_influence, 1.0) the water target moves by
-  # `influence * e + quadratic * e * |e|`, so with 1.0 / 0.5: 0.5 K room error -> 0.6 K water,
-  # 1 K -> 1.5 K, 2 K -> 4 K. Big errors only, and without a step in the output.
-  therma_v_room_gain_quadratic:
-    name: "Therma V room gain quadratic"
-    min: 0
-    max: 2
-    step: 0.05
-    initial: 0.5
+  # Room error at which the quadratic correction alone contributes one water hysteresis. The live
+  # quadratic gain is thus `water_hysteresis / this_value^2`; only the quadratic part uses this
+  # calibration, while the linear room influence remains separate.
+  therma_v_room_error_at_quadratic_water_hysteresis:
+    name: "Therma V room error for one quadratic water hysteresis"
+    min: 0.5
+    max: 5
+    step: 0.1
+    initial: 2.0
     mode: box
+    unit_of_measurement: "K"
     icon: mdi:chart-bell-curve-cumulative
-
-  # Absolute room-temperature bounds. The distance from the setpoint to each bound is the room
-  # hysteresis used to calibrate the water force below.
-  therma_v_room_hysteresis_min:
-    name: "Therma V room temperature lower bound"
-    min: 15
-    max: 30
-    step: 0.1
-    initial: 19.5
-    mode: box
-    unit_of_measurement: "°C"
-    icon: mdi:thermometer-low
-
-  therma_v_room_hysteresis_max:
-    name: "Therma V room temperature upper bound"
-    min: 15
-    max: 30
-    step: 0.1
-    # initial: 21.0 # Dashboard helper: restore the live value instead.
-    mode: box
-    unit_of_measurement: "°C"
-    icon: mdi:thermometer-high
-
-  # Power used to translate room error into water force. At |room error| = room hysteresis the
-  # request reaches exactly one water hysteresis away from the measured water. Below that point the
-  # square responds more strongly; the cube holds back longer and then rises faster near and beyond
-  # the calibration point.
-  therma_v_room_force_exponent:
-    name: "Therma V room force exponent"
-    min: 2
-    max: 3
-    step: 1
-    initial: 2
-    mode: box
-    icon: mdi:function-variant
 
   # Weather anticipation (morning sun): K water per K/h of outdoor rise, and its ceiling.
   therma_v_room_anticipation_gain:
@@ -210,6 +170,9 @@ sensor:
   # The slow inputs for the curve. The outdoor unit's own probe jumps at defrost and mode
   # transitions; the wired remote is 0.1 C resolution on a 10 s poll. Both get an outlier reject
   # (a spike outside the median band is replaced by the median) and then a time-based moving average.
+  # The room source first passes a trigger-based spike guard: a repeated 10 C Modbus glitch can fill
+  # the four-sample median window itself, so the guard holds the last plausible value before this
+  # filter sees it.
   - platform: filter
     name: "Therma V outside temperature filtered"
     unique_id: therma_v_outside_temperature_filtered
@@ -225,13 +188,13 @@ sensor:
   - platform: filter
     name: "Therma V room temperature filtered"
     unique_id: therma_v_room_temperature_filtered
-    entity_id: sensor.therma_v_room_temperature
+    entity_id: sensor.therma_v_room_temperature_glitch_filtered
     filters:
       - filter: outlier
         window_size: 4
         radius: 1.5
       - filter: time_simple_moving_average
-        window_size: "00:20"
+        window_size: "00:15"
         precision: 2
 
   # The weather anticipation. The source is already a time-based average, and this derivative then
@@ -247,13 +210,63 @@ sensor:
 
 # sensor.therma_v_operation_mode uses holding-register-0 values 0=cool, 3=auto, 4=heat.
 template:
+  # The wired-remote register occasionally drops to 10 C for one poll interval and returns on the
+  # next. A relative jump over 3 K is held at the previous accepted value; a real shift that lasts
+  # five minutes is accepted through the second trigger, so the guard cannot latch forever.
+  - trigger:
+      - trigger: state
+        entity_id: sensor.therma_v_room_temperature
+        id: update
+        not_to:
+          - unavailable
+          - unknown
+      - trigger: state
+        entity_id: sensor.therma_v_room_temperature
+        id: sustained
+        for: "00:05:00"
+        not_to:
+          - unavailable
+          - unknown
+      - trigger: time_pattern
+        minutes: "/1"
+        id: heartbeat
+    sensor:
+      - name: "Therma V room temperature glitch filtered"
+        unique_id: therma_v_room_temperature_glitch_filtered
+        state_class: measurement
+        device_class: temperature
+        unit_of_measurement: "°C"
+        state: >-
+          {% set source_state = trigger.to_state.state
+                                if trigger.to_state is defined
+                                else states('sensor.therma_v_room_temperature') %}
+          {% set previous_state = this.state %}
+          {% if source_state | is_number %}
+            {% set source = source_state | float %}
+            {% if trigger.id == 'sustained'
+                  or not (previous_state | is_number)
+                  or (source - (previous_state | float)) | abs <= 3.0 %}
+              {{ source }}
+            {% else %}
+              {{ previous_state }}
+            {% endif %}
+          {% else %}
+            {{ previous_state }}
+          {% endif %}
+        attributes:
+          source_temperature: >-
+            {{ trigger.to_state.state if trigger.to_state is defined
+               else states('sensor.therma_v_room_temperature') }}
+          max_jump: 3.0
+          confirmation_time: "00:05:00"
+
   - sensor:
       # A time-based SMA is event-driven. If the source reports one bad sample and then stays
       # stable, the filter can remain at that bad value because it has nothing new to expire.
-      # The room controller therefore uses the smoothed value only while it agrees with the raw
-      # sensor; a divergence over 2 K falls back to the raw value. Indoor temperature cannot move
-      # that far inside one averaging window, so a larger gap is a sensor/filter fault, not control
-      # information.
+      # The room controller therefore uses the smoothed value only while it agrees with the
+      # accepted source after the spike guard; a divergence over 2 K falls back to that accepted
+      # value. Indoor temperature cannot move that far inside one averaging window, so a larger gap
+      # is a sensor/filter fault, not control information.
       - name: "Therma V room temperature effective"
         unique_id: therma_v_room_temperature_effective
         state_class: measurement
@@ -261,25 +274,26 @@ template:
         unit_of_measurement: "°C"
         availability: >-
           {{ states('sensor.therma_v_room_temperature') | is_number
+             and states('sensor.therma_v_room_temperature_glitch_filtered') | is_number
              and states('sensor.therma_v_room_temperature_filtered') | is_number }}
         state: >-
-          {% set raw = states('sensor.therma_v_room_temperature') | float(0) %}
+          {% set raw = states('sensor.therma_v_room_temperature_glitch_filtered') | float(0) %}
           {% set filtered = states('sensor.therma_v_room_temperature_filtered') | float(0) %}
           {{ raw if (filtered - raw) | abs > 2.0 else filtered }}
         attributes:
           raw_temperature: "{{ states('sensor.therma_v_room_temperature') }}"
+          glitch_temperature: "{{ states('sensor.therma_v_room_temperature_glitch_filtered') }}"
           filtered_temperature: "{{ states('sensor.therma_v_room_temperature_filtered') }}"
           fallback_active: >-
             {{ (states('sensor.therma_v_room_temperature_filtered') | float(0)
-                - states('sensor.therma_v_room_temperature') | float(0)) | abs > 2.0 }}
+                - states('sensor.therma_v_room_temperature_glitch_filtered') | float(0)) | abs > 2.0 }}
           max_filter_deviation: 2.0
 
       # The curve itself, clamped to the season band and rounded to 0.1. This is the raw curve: the
       # hysteresis lives one step further down, between this sensor and the water request, so both
       # values stay visible (the curve here, the value the controller holds in the request helper).
-      # The room correction is linear plus quadratic for a smooth approach. At the configured room
-      # bound the calibrated force reaches one water hysteresis from the measured water; the final
-      # season-band clamp still applies.
+      # The room correction is linear plus quadratic for a smooth approach. The final season-band
+      # clamp applies to the complete request.
       - name: "Therma V heating curve flow temperature"
         unique_id: therma_v_heating_curve_flow_temperature
         icon: mdi:chart-bell-curve-cumulative
@@ -292,23 +306,12 @@ template:
              and has_value('input_number.therma_v_heating_curve_slope')
              and has_value('input_number.therma_v_heating_curve_offset')
              and has_value('input_number.therma_v_heating_curve_room_influence')
-             and has_value('input_number.therma_v_min_water_temperature_heat')
-             and has_value('input_number.therma_v_max_water_temperature_heat')
-             and has_value('sensor.therma_v_room_temperature_effective')
-             and has_value('sensor.therma_v_controlled_water_temperature')
-             and has_value('input_number.therma_v_room_hysteresis_min')
-             and has_value('input_number.therma_v_room_hysteresis_max')
-             and has_value('input_number.therma_v_room_force_exponent')
+             and has_value('input_number.therma_v_room_error_at_quadratic_water_hysteresis')
              and has_value('input_number.therma_v_startup_hysteresis_pos')
              and has_value('input_number.therma_v_startup_hysteresis_neg')
-             and states('input_number.therma_v_room_hysteresis_min') | is_number
-             and states('input_number.therma_v_room_hysteresis_max') | is_number
-             and states('input_number.therma_v_room_force_exponent') | is_number
-             and states('input_number.therma_v_startup_hysteresis_pos') | is_number
-             and states('input_number.therma_v_startup_hysteresis_neg') | is_number
-             and 2 <= states('input_number.therma_v_room_force_exponent') | float(0) <= 3
-             and 15 <= states('input_number.therma_v_room_hysteresis_min') | float(0)
-                       < states('input_number.therma_v_room_hysteresis_max') | float(0) <= 30 }}
+             and has_value('input_number.therma_v_min_water_temperature_heat')
+             and has_value('input_number.therma_v_max_water_temperature_heat')
+             and has_value('sensor.therma_v_room_temperature_effective') }}
         state: >-
           {% set slope = states('input_number.therma_v_heating_curve_slope') | float(1.0) %}
           {% set offset = states('input_number.therma_v_heating_curve_offset') | float(0) %}
@@ -322,9 +325,11 @@ template:
           {% set target = plan_target | float(base_target) if use_plan else base_target %}
           {% set t_out = states('sensor.therma_v_outside_temperature_filtered') | float(10) %}
           {% set t_room = states('sensor.therma_v_room_temperature_effective') | float(target) %}
-          {% set water = states('sensor.therma_v_controlled_water_temperature') | float(target) %}
           {% set g1 = states('input_number.therma_v_heating_curve_room_influence') | float(1.0) %}
-          {% set g2 = states('input_number.therma_v_room_gain_quadratic') | float(0.5) %}
+          {% set quad_room_error = states('input_number.therma_v_room_error_at_quadratic_water_hysteresis') | float(1.5) %}
+          {% set water_hyst = max(states('input_number.therma_v_startup_hysteresis_pos') | float(2.5) | abs,
+                                  states('input_number.therma_v_startup_hysteresis_neg') | float(-2.5) | abs) %}
+          {% set g2 = water_hyst / (quad_room_error * quad_room_error) if quad_room_error > 0 else 0 %}
           {% set a_gain = states('input_number.therma_v_room_anticipation_gain') | float(0.5) %}
           {% set a_max = states('input_number.therma_v_room_anticipation_max') | float(2) %}
           {% set trend = states('sensor.therma_v_outside_temperature_trend') | float(0) %}
@@ -335,22 +340,10 @@ template:
           {% set room_control = is_state('input_select.therma_v_temperature_control', 'Room control (P)') %}
           {% set curve_on = not is_state('input_select.therma_v_temperature_control', 'Off') %}
           {% set e = target - t_room %}
-          {% set room_lower = states('input_number.therma_v_room_hysteresis_min') | float(19.5) %}
-          {% set room_upper = states('input_number.therma_v_room_hysteresis_max') | float(21) %}
-          {% set exponent = states('input_number.therma_v_room_force_exponent') | float(2) %}
-          {% set room_hyst = max((target - room_lower) if e >= 0 else (room_upper - target), 0.1) %}
-          {% set water_hyst = max(states('input_number.therma_v_startup_hysteresis_pos') | float(2.8) | abs,
-                                  states('input_number.therma_v_startup_hysteresis_neg') | float(-2.8) | abs) %}
-          {% set ratio = (e | abs) / room_hyst %}
-          {% set force_blend = min(ratio ** exponent, 1) %}
-          {% set direction = 1 if e > 0 else (-1 if e < 0 else 0) %}
           {% set room_corr = g1 * e + g2 * e * (e | abs) if room_control else 0 %}
           {# A rising outdoor trend lowers the request; a falling trend raises it. #}
           {% set anticipation = min(max(-a_gain * trend, -a_max), a_max) if curve_on else 0 %}
-          {% set normal = target + slope * (target - t_out) + offset + room_corr + anticipation %}
-          {% set force_target = max(normal, water + water_hyst) if direction > 0
-                                else (min(normal, water - water_hyst) if direction < 0 else normal) %}
-          {% set request = normal + (force_target - normal) * force_blend %}
+          {% set request = target + slope * (target - t_out) + offset + room_corr + anticipation %}
           {{ min(max(request, lo), hi) | round(1) }}
         attributes:
           outdoor_temperature: "{{ states('sensor.therma_v_outside_temperature_filtered') }}"
@@ -386,35 +379,22 @@ template:
                               and plan | is_number %}
             {% set effective = plan | float(base) if use_plan else base %}
             {{ (effective - states('sensor.therma_v_room_temperature_effective') | float(0)) | round(2) }}
-          room_gain_quadratic: "{{ states('input_number.therma_v_room_gain_quadratic') }}"
+          room_error_at_quadratic_water_hysteresis: >-
+            {{ states('input_number.therma_v_room_error_at_quadratic_water_hysteresis') }}
+          room_gain_quadratic: >-
+            {% set room_error = states('input_number.therma_v_room_error_at_quadratic_water_hysteresis') | float(0) %}
+            {% set water_hyst = max(states('input_number.therma_v_startup_hysteresis_pos') | float(2.5) | abs,
+                                    states('input_number.therma_v_startup_hysteresis_neg') | float(-2.5) | abs) %}
+            {{ (water_hyst / (room_error * room_error)) | round(3) if room_error > 0 else 0 }}
+          water_hysteresis: >-
+            {{ max(states('input_number.therma_v_startup_hysteresis_pos') | float(2.5) | abs,
+                   states('input_number.therma_v_startup_hysteresis_neg') | float(-2.5) | abs) | round(2) }}
           outdoor_trend: "{{ states('sensor.therma_v_outside_temperature_trend') }}"
           anticipation: >-
             {{ min(max(-(states('input_number.therma_v_room_anticipation_gain') | float(0.5))
                         * (states('sensor.therma_v_outside_temperature_trend') | float(0)),
                         -(states('input_number.therma_v_room_anticipation_max') | float(2))),
                        (states('input_number.therma_v_room_anticipation_max') | float(2))) | round(2) }}
-          room_force: >-
-            {% set e = (states('input_number.room_setpoint_heating') | float(20))
-                       - (states('sensor.therma_v_room_temperature_effective') | float(20)) %}
-            {% if e > 0 %}start{% elif e < 0 %}stop{% else %}normal{% endif %}
-          room_force_blend: >-
-            {% set target = states('input_number.room_setpoint_heating') | float(20) %}
-            {% set room = states('sensor.therma_v_room_temperature_effective') | float(target) %}
-            {% set e = target - room %}
-            {% set lower = states('input_number.therma_v_room_hysteresis_min') | float(19.5) %}
-            {% set upper = states('input_number.therma_v_room_hysteresis_max') | float(21) %}
-            {% set room_hyst = max((target - lower) if e >= 0 else (upper - target), 0.1) %}
-            {% set exponent = states('input_number.therma_v_room_force_exponent') | float(2) %}
-            {{ min(((e | abs) / room_hyst) ** exponent, 1) | round(3) }}
-          room_hysteresis: >-
-            {% set target = states('input_number.room_setpoint_heating') | float(20) %}
-            {% set room = states('sensor.therma_v_room_temperature_effective') | float(target) %}
-            {% set lower = states('input_number.therma_v_room_hysteresis_min') | float(19.5) %}
-            {% set upper = states('input_number.therma_v_room_hysteresis_max') | float(21) %}
-            {{ max((target - lower) if target >= room else (upper - target), 0.1) | round(2) }}
-          water_hysteresis: >-
-            {{ max(states('input_number.therma_v_startup_hysteresis_pos') | float(2.8) | abs,
-                   states('input_number.therma_v_startup_hysteresis_neg') | float(-2.8) | abs) | round(2) }}
           # The two anchors Jan's curve is defined by (2026-10-11), so the abstract slope/level can
           # be checked without doing the arithmetic: 40.0 at -25 C outdoor, 20.0 at +20 C outdoor.
           curve_at_plus20c_outdoor: >-
@@ -507,45 +487,26 @@ automation:
               - condition: template
                 value_template: >-
                   {{ states('sensor.therma_v_room_temperature_effective') | is_number
-                     and states('sensor.therma_v_controlled_water_temperature') | is_number
                      and states('sensor.therma_v_target_temperature_circuit_1') | is_number
-                     and states('sensor.therma_v_auto_mode_target_temperature_delta_circuit_1') | is_number
-                     and states('input_number.therma_v_room_hysteresis_min') | is_number
-                     and states('input_number.therma_v_room_hysteresis_max') | is_number
-                     and states('input_number.therma_v_room_force_exponent') | is_number
-                     and states('input_number.therma_v_startup_hysteresis_pos') | is_number
-                     and states('input_number.therma_v_startup_hysteresis_neg') | is_number
-                     and 15 <= states('input_number.therma_v_room_hysteresis_min') | float(0)
-                               < states('input_number.therma_v_room_hysteresis_max') | float(0) <= 30 }}
+                     and states('sensor.therma_v_auto_mode_target_temperature_delta_circuit_1') | is_number }}
             sequence:
-              # Auto keeps the pump's own curve, so the calibrated force is converted back into a
-              # register-4 delta. At the room-hysteresis point it aims one water hysteresis away
-              # from the measured water; register 4 then limits the result to -5..+5.
+              # Auto keeps the pump's own curve, so only the room correction becomes a register-4
+              # delta. Register 4 then limits the result to -5..+5.
               - if:
                   - condition: template
                     value_template: >-
                       {% set e = (states('input_number.room_setpoint_heating') | float(20))
                                  - (states('sensor.therma_v_room_temperature_effective') | float(20)) %}
-                      {% set target = states('input_number.room_setpoint_heating') | float(20) %}
-                      {% set room = states('sensor.therma_v_room_temperature_effective') | float(target) %}
-                      {% set water = states('sensor.therma_v_controlled_water_temperature') | float(0) %}
                       {% set curve = (states('sensor.therma_v_target_temperature_circuit_1') | float(0))
                                      - (states('sensor.therma_v_auto_mode_target_temperature_delta_circuit_1') | float(0)) %}
-                      {% set lower = states('input_number.therma_v_room_hysteresis_min') | float(19.5) %}
-                      {% set upper = states('input_number.therma_v_room_hysteresis_max') | float(21) %}
-                      {% set room_hyst = max((target - lower) if e >= 0 else (upper - target), 0.1) %}
-                      {% set water_hyst = max(states('input_number.therma_v_startup_hysteresis_pos') | float(2.8) | abs,
-                                              states('input_number.therma_v_startup_hysteresis_neg') | float(-2.8) | abs) %}
-                      {% set exponent = states('input_number.therma_v_room_force_exponent') | float(2) %}
-                      {% set blend = min(((e | abs) / room_hyst) ** exponent, 1) %}
-                      {% set direction = 1 if e > 0 else (-1 if e < 0 else 0) %}
+                      {% set quad_room_error = states('input_number.therma_v_room_error_at_quadratic_water_hysteresis') | float(1.5) %}
+                      {% set water_hyst = max(states('input_number.therma_v_startup_hysteresis_pos') | float(2.5) | abs,
+                                              states('input_number.therma_v_startup_hysteresis_neg') | float(-2.5) | abs) %}
+                      {% set g2 = water_hyst / (quad_room_error * quad_room_error) if quad_room_error > 0 else 0 %}
                       {% set normal_water = curve
                                             + (states('input_number.therma_v_heating_curve_room_influence') | float(1)) * e
-                                            + (states('input_number.therma_v_room_gain_quadratic') | float(0.5)) * e * (e | abs) %}
-                      {% set force_target = max(normal_water, water + water_hyst) if direction > 0
-                                            else (min(normal_water, water - water_hyst) if direction < 0 else normal_water) %}
-                      {% set wanted_water = normal_water + (force_target - normal_water) * blend %}
-                      {% set want = min(max(wanted_water - curve, -5), 5) | round(0) | int %}
+                                            + g2 * e * (e | abs) %}
+                      {% set want = min(max(normal_water - curve, -5), 5) | round(0) | int %}
                       {{ want != (states('input_number.therma_v_auto_delta_request') | int(0)) }}
                 then:
                   - action: input_number.set_value
@@ -555,24 +516,14 @@ automation:
                       value: >-
                         {% set e = (states('input_number.room_setpoint_heating') | float(20))
                                    - (states('sensor.therma_v_room_temperature_effective') | float(20)) %}
-                        {% set target = states('input_number.room_setpoint_heating') | float(20) %}
-                        {% set room = states('sensor.therma_v_room_temperature_effective') | float(target) %}
-                        {% set water = states('sensor.therma_v_controlled_water_temperature') | float(0) %}
                         {% set curve = (states('sensor.therma_v_target_temperature_circuit_1') | float(0))
                                        - (states('sensor.therma_v_auto_mode_target_temperature_delta_circuit_1') | float(0)) %}
-                        {% set lower = states('input_number.therma_v_room_hysteresis_min') | float(19.5) %}
-                        {% set upper = states('input_number.therma_v_room_hysteresis_max') | float(21) %}
-                        {% set room_hyst = max((target - lower) if e >= 0 else (upper - target), 0.1) %}
-                        {% set water_hyst = max(states('input_number.therma_v_startup_hysteresis_pos') | float(2.8) | abs,
-                                                states('input_number.therma_v_startup_hysteresis_neg') | float(-2.8) | abs) %}
-                        {% set exponent = states('input_number.therma_v_room_force_exponent') | float(2) %}
-                        {% set blend = min(((e | abs) / room_hyst) ** exponent, 1) %}
-                        {% set direction = 1 if e > 0 else (-1 if e < 0 else 0) %}
+                        {% set quad_room_error = states('input_number.therma_v_room_error_at_quadratic_water_hysteresis') | float(1.5) %}
+                        {% set water_hyst = max(states('input_number.therma_v_startup_hysteresis_pos') | float(2.5) | abs,
+                                                states('input_number.therma_v_startup_hysteresis_neg') | float(-2.5) | abs) %}
+                        {% set g2 = water_hyst / (quad_room_error * quad_room_error) if quad_room_error > 0 else 0 %}
                         {% set normal_water = curve
                                               + (states('input_number.therma_v_heating_curve_room_influence') | float(1)) * e
-                                              + (states('input_number.therma_v_room_gain_quadratic') | float(0.5)) * e * (e | abs) %}
-                        {% set force_target = max(normal_water, water + water_hyst) if direction > 0
-                                              else (min(normal_water, water - water_hyst) if direction < 0 else normal_water) %}
-                        {% set wanted_water = normal_water + (force_target - normal_water) * blend %}
-                        {% set want = min(max(wanted_water - curve, -5), 5) | round(0) | int %}
+                                              + g2 * e * (e | abs) %}
+                        {% set want = min(max(normal_water - curve, -5), 5) | round(0) | int %}
                         {{ want }}
