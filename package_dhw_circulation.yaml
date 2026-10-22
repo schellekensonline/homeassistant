@@ -144,6 +144,15 @@ automation:
     triggers:
       - trigger: state
         entity_id: binary_sensor.dhw_circulation_mixing_required
+      # A Shelly dropout at cycle end can hide both switch states when the timer must start.
+      # Re-evaluate when the relay returns, and once a minute as the independent watchdog.
+      - trigger: state
+        entity_id:
+          - switch.dhw_circulation_switch
+          - switch.shelly_plug_s3
+        to: "on"
+      - trigger: time_pattern
+        minutes: "/1"
       - trigger: homeassistant
         event: start
     actions:
