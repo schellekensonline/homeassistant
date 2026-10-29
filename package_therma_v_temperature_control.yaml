@@ -167,16 +167,16 @@ input_number:
     icon: mdi:arrow-down-bold-outline
 
 sensor:
-  # The slow inputs for the curve. The outdoor unit's own probe jumps at defrost and mode
-  # transitions; the wired remote is 0.1 C resolution on a 10 s poll. Both get an outlier reject
-  # (a spike outside the median band is replaced by the median) and then a time-based moving average.
-  # The room source first passes a trigger-based spike guard: a repeated 10 C Modbus glitch can fill
-  # the four-sample median window itself, so the guard holds the last plausible value before this
-  # filter sees it.
+  # The filters are fed by one-minute template samples, not directly by the event-driven Modbus
+  # entities. A time_simple_moving_average only recalculates when its source emits, so a static
+  # register would otherwise keep old points in the window forever. The sample sensors re-emit the
+  # current value every minute (with a changing sampled_at attribute), making the windows genuinely
+  # time-based. The room's spike guard stays in front so a short invalid register value never enters
+  # the average.
   - platform: filter
     name: "Therma V outside temperature filtered"
     unique_id: therma_v_outside_temperature_filtered
-    entity_id: sensor.therma_v_outside_temperature
+    entity_id: sensor.therma_v_outside_temperature_sampled
     filters:
       - filter: outlier
         window_size: 4
@@ -197,9 +197,9 @@ sensor:
         window_size: "00:15"
         precision: 2
 
-  # The weather anticipation. The source is already a time-based average, and this derivative then
-  # averages over an hour on top of it, so the trend does not jump. One-sided use is not enough
-  # (Jan, 2026-10-15): a fast *fall* should add a degree, a fast rise should take one off.
+  # Both derivatives are calculated only after the time-weighted smoothing chain. Their source
+  # samples continue to arrive every minute, so dT/dt is evaluated on time rather than on register
+  # change events. The outdoor trend averages an hour, the room trend 20 minutes.
   - platform: derivative
     name: "Therma V outside temperature trend"
     unique_id: therma_v_outside_temperature_trend
@@ -210,9 +210,43 @@ sensor:
 
 # sensor.therma_v_operation_mode uses holding-register-0 values 0=cool, 3=auto, 4=heat.
 template:
+  # Clocked sample source for the outdoor time-weighted average. The changing sampled_at attribute
+  # forces a state event every minute even when the Modbus value is unchanged.
+  - trigger:
+      - trigger: state
+        entity_id: sensor.therma_v_outside_temperature
+        id: update
+        not_to:
+          - unavailable
+          - unknown
+      - trigger: time_pattern
+        minutes: "/1"
+        id: heartbeat
+    sensor:
+      - name: "Therma V outside temperature sampled"
+        unique_id: therma_v_outside_temperature_sampled
+        state_class: measurement
+        device_class: temperature
+        unit_of_measurement: "°C"
+        availability: >-
+          {{ trigger.to_state.state | is_number if trigger.to_state is defined
+             else states('sensor.therma_v_outside_temperature') | is_number
+                  or this.state | is_number }}
+        state: >-
+          {% set source_state = trigger.to_state.state
+                                if trigger.id == 'update'
+                                else states('sensor.therma_v_outside_temperature') %}
+          {{ source_state if source_state | is_number else this.state }}
+        attributes:
+          source_temperature: >-
+            {{ trigger.to_state.state if trigger.id == 'update'
+               else states('sensor.therma_v_outside_temperature') }}
+          sampled_at: "{{ now().isoformat() }}"
+
   # The wired-remote register occasionally drops to 10 C for one poll interval and returns on the
   # next. A relative jump over 3 K is held at the previous accepted value; a real shift that lasts
-  # five minutes is accepted through the second trigger, so the guard cannot latch forever.
+  # five minutes is accepted through the second trigger, so the guard cannot latch forever. The
+  # one-minute heartbeat plus sampled_at makes this the clocked source for the room average too.
   - trigger:
       - trigger: state
         entity_id: sensor.therma_v_room_temperature
@@ -259,14 +293,14 @@ template:
                else states('sensor.therma_v_room_temperature') }}
           max_jump: 3.0
           confirmation_time: "00:05:00"
+          sampled_at: "{{ now().isoformat() }}"
 
   - sensor:
-      # A time-based SMA is event-driven. If the source reports one bad sample and then stays
-      # stable, the filter can remain at that bad value because it has nothing new to expire.
-      # The room controller therefore uses the smoothed value only while it agrees with the
-      # accepted source after the spike guard; a divergence over 2 K falls back to that accepted
-      # value. Indoor temperature cannot move that far inside one averaging window, so a larger gap
-      # is a sensor/filter fault, not control information.
+      # The clocked samples prevent a stable register from leaving the moving-average window stale.
+      # The effective value still uses the smoothed value only while it agrees with the accepted
+      # source after the spike guard; a divergence over 2 K falls back to that accepted value.
+      # Indoor temperature cannot move that far inside one averaging window, so a larger gap is a
+      # sensor/filter fault, not control information.
       - name: "Therma V room temperature effective"
         unique_id: therma_v_room_temperature_effective
         state_class: measurement
