@@ -39,13 +39,22 @@ script:
         selector:
           boolean:
       preview_dhw:
-        name: "Preview the DHW plan"
+        name: "Legacy DHW preview flag"
         description: >-
-          Include the DHW heat-pump flow in a dry-run even while the heat-pump strategy is not
-          EMHASS. This only changes the generated payload; the caller must use the dry-run endpoint.
+          Compatibility alias for preview_mode: dhw. Prefer preview_mode for new callers.
         default: false
         selector:
           boolean:
+      preview_mode:
+        name: "Preview one thermal flow"
+        description: >-
+          Activate exactly one thermal flow in a hypothetical dry-run, independent of the live
+          strategy, season and supervisor gates. This only changes the generated payload; the
+          caller must use the dry-run endpoint.
+        default: "none"
+        selector:
+          select:
+            options: ["none", "dhw", "heat", "cool"]
       dry_run:
         name: "Dry-run payload"
         description: >-
@@ -81,6 +90,10 @@ script:
             {% set send_thermal = thermal | default(true) | bool %}
             {% set preview_dhw = preview_dhw | default(false) | bool %}
             {% set dry_run = dry_run | default(false) | bool %}
+            {% set requested_preview = preview_mode | default('none', true) %}
+            {% set preview_mode = 'dhw' if preview_dhw
+                 else (requested_preview if requested_preview in ['dhw', 'heat', 'cool'] else 'none') %}
+            {% set previewing = preview_mode != 'none' %}
             {# Floor the run start so both plans use the same current-quarter price window. #}
             {% set minute = now().minute %}
             {% set quarter_start = now().replace(minute=(minute - (minute % 15)), second=0, microsecond=0).isoformat() %}
@@ -142,10 +155,12 @@ script:
             {% set heat_ready = is_state('input_boolean.therma_v_supervisor_space_heat_enabled', 'on') %}
             {% set cool_ready = is_state('input_boolean.therma_v_supervisor_cooling_enabled', 'on') %}
             {% set dhw_ready = is_state('input_boolean.therma_v_supervisor_dhw_enabled', 'on') %}
-            {% set hp_heat = hp_owned and master_on and heat_ready and heat_season %}
-            {% set hp_cool = hp_owned and master_on and cool_ready and cool_season %}
-            {# Dry-run previews may model DHW without transferring ownership to the EMHASS supervisor. #}
-            {% set hp_dhw = (hp_owned or preview_dhw) and master_on and dhw_ready %}
+            {# Previews bypass ownership and supervisor gates so a parked flow can still be inspected. #}
+            {% set hp_dhw = preview_mode == 'dhw' if previewing else (hp_owned and master_on and dhw_ready) %}
+            {% set hp_heat = preview_mode == 'heat' if previewing
+                 else (hp_owned and master_on and heat_ready and heat_season) %}
+            {% set hp_cool = preview_mode == 'cool' if previewing
+                 else (hp_owned and master_on and cool_ready and cool_season) %}
             {% set hp_space = hp_heat or hp_cool %}
             {% set sp_heat = states('input_number.room_setpoint_heating') | float(20) %}
             {% set sp_cool = states('input_number.room_setpoint_cooling') | float(24) %}

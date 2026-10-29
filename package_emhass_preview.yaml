@@ -1,0 +1,241 @@
+# EMHASS package: hypothetical DHW, heating and cooling dry-runs.
+# Each preview activates exactly one thermal flow, bypasses the live control gates and never
+# publishes or saves a plan. The compact result is fired as an event so the three dashboard
+# sensors survive a restart and can render the latest requested preview.
+rest_command:
+  emhass_dry_run_naive_mpc_optim:
+    url: "http://localhost:5000/api/v1/dry-run/naive-mpc-optim"
+    method: POST
+    timeout: 150
+    content_type: "application/json"
+    payload: >-
+      {%- set body = emhass_payload | default({'error': 'emhass_payload was not passed by the caller'}) -%}
+      {{ body if body is string else body | to_json }}
+
+template:
+  - trigger:
+      - trigger: event
+        event_type: emhass_preview_completed
+        event_data:
+          mode: dhw
+    sensor:
+      - name: "EMHASS DHW preview"
+        unique_id: emhass_dhw_preview
+        state: "{{ trigger.event.data.status | default('unknown') }}"
+        attributes:
+          mode: "{{ trigger.event.data.mode | default('dhw') }}"
+          completed_at: "{{ trigger.event.data.completed_at | default(none) }}"
+          duration_s: "{{ trigger.event.data.duration_s | default(0) }}"
+          planned_electricity_kwh: "{{ trigger.event.data.planned_electricity_kwh | default(0) }}"
+          hp_electricity_kwh: "{{ trigger.event.data.hp_electricity_kwh | default(0) }}"
+          booster_electricity_kwh: "{{ trigger.event.data.booster_electricity_kwh | default(0) }}"
+          nonzero_quarters: "{{ trigger.event.data.nonzero_quarters | default(0) }}"
+          temperature_start_c: "{{ trigger.event.data.temperature_start_c | default(none) }}"
+          temperature_end_c: "{{ trigger.event.data.temperature_end_c | default(none) }}"
+          temperature_min_c: "{{ trigger.event.data.temperature_min_c | default(none) }}"
+          temperature_max_c: "{{ trigger.event.data.temperature_max_c | default(none) }}"
+          temperature_target_c: "{{ trigger.event.data.temperature_target_c | default(none) }}"
+          solver_status: "{{ trigger.event.data.solver_status | default('unknown') }}"
+          error_message: "{{ trigger.event.data.error_message | default(none) }}"
+          plan: "{{ trigger.event.data.plan | default([]) }}"
+
+  - trigger:
+      - trigger: event
+        event_type: emhass_preview_completed
+        event_data:
+          mode: heat
+    sensor:
+      - name: "EMHASS heat preview"
+        unique_id: emhass_heat_preview
+        state: "{{ trigger.event.data.status | default('unknown') }}"
+        attributes:
+          mode: "{{ trigger.event.data.mode | default('heat') }}"
+          completed_at: "{{ trigger.event.data.completed_at | default(none) }}"
+          duration_s: "{{ trigger.event.data.duration_s | default(0) }}"
+          planned_electricity_kwh: "{{ trigger.event.data.planned_electricity_kwh | default(0) }}"
+          hp_electricity_kwh: "{{ trigger.event.data.hp_electricity_kwh | default(0) }}"
+          booster_electricity_kwh: "{{ trigger.event.data.booster_electricity_kwh | default(0) }}"
+          nonzero_quarters: "{{ trigger.event.data.nonzero_quarters | default(0) }}"
+          temperature_start_c: "{{ trigger.event.data.temperature_start_c | default(none) }}"
+          temperature_end_c: "{{ trigger.event.data.temperature_end_c | default(none) }}"
+          temperature_min_c: "{{ trigger.event.data.temperature_min_c | default(none) }}"
+          temperature_max_c: "{{ trigger.event.data.temperature_max_c | default(none) }}"
+          temperature_target_c: "{{ trigger.event.data.temperature_target_c | default(none) }}"
+          solver_status: "{{ trigger.event.data.solver_status | default('unknown') }}"
+          error_message: "{{ trigger.event.data.error_message | default(none) }}"
+          plan: "{{ trigger.event.data.plan | default([]) }}"
+
+  - trigger:
+      - trigger: event
+        event_type: emhass_preview_completed
+        event_data:
+          mode: cool
+    sensor:
+      - name: "EMHASS cool preview"
+        unique_id: emhass_cool_preview
+        state: "{{ trigger.event.data.status | default('unknown') }}"
+        attributes:
+          mode: "{{ trigger.event.data.mode | default('cool') }}"
+          completed_at: "{{ trigger.event.data.completed_at | default(none) }}"
+          duration_s: "{{ trigger.event.data.duration_s | default(0) }}"
+          planned_electricity_kwh: "{{ trigger.event.data.planned_electricity_kwh | default(0) }}"
+          hp_electricity_kwh: "{{ trigger.event.data.hp_electricity_kwh | default(0) }}"
+          booster_electricity_kwh: "{{ trigger.event.data.booster_electricity_kwh | default(0) }}"
+          nonzero_quarters: "{{ trigger.event.data.nonzero_quarters | default(0) }}"
+          temperature_start_c: "{{ trigger.event.data.temperature_start_c | default(none) }}"
+          temperature_end_c: "{{ trigger.event.data.temperature_end_c | default(none) }}"
+          temperature_min_c: "{{ trigger.event.data.temperature_min_c | default(none) }}"
+          temperature_max_c: "{{ trigger.event.data.temperature_max_c | default(none) }}"
+          temperature_target_c: "{{ trigger.event.data.temperature_target_c | default(none) }}"
+          solver_status: "{{ trigger.event.data.solver_status | default('unknown') }}"
+          error_message: "{{ trigger.event.data.error_message | default(none) }}"
+          plan: "{{ trigger.event.data.plan | default([]) }}"
+
+script:
+  emhass_preview_plan:
+    alias: "Run an EMHASS plan preview"
+    description: >-
+      Build and dry-run one hypothetical thermal flow. This never publishes a plan or changes
+      the live heat-pump strategy.
+    mode: single
+    fields:
+      mode:
+        name: "Thermal flow"
+        description: "Exactly one of DHW, space heating or space cooling."
+        default: "dhw"
+        selector:
+          select:
+            options: ["dhw", "heat", "cool"]
+    sequence:
+      - variables:
+          preview_mode: >-
+            {{ mode | default('dhw', true)
+               if mode | default('dhw', true) in ['dhw', 'heat', 'cool'] else 'dhw' }}
+      - action: script.emhass_build_payload
+        data:
+          plan: dayahead
+          thermal: true
+          preview_mode: "{{ preview_mode }}"
+          dry_run: true
+        response_variable: preview_payload
+      - action: rest_command.emhass_dry_run_naive_mpc_optim
+        data:
+          emhass_payload: "{{ preview_payload.body }}"
+        response_variable: preview_response
+        continue_on_error: true
+      - variables:
+          preview_http_status: "{{ preview_response.status | default(0) | int(0) }}"
+          preview_raw_content: "{{ preview_response.content | default({}) }}"
+      - variables:
+          preview_body: >-
+            {% set raw = preview_raw_content %}
+            {{ raw if raw is mapping else raw | from_json }}
+      - variables:
+          preview_ok: >-
+            {{ preview_http_status in [200, 201]
+               and preview_body.status | default('') == 'ok'
+               and not (preview_body.infeasible | default(false) | bool) }}
+          preview_result: >-
+            {% set plan = preview_body.plan | default([]) %}
+            {% set heater = 0 if preview_mode == 'dhw' else 1 %}
+            {% set acc = namespace(items=[], hp_kwh=0.0, booster_kwh=0.0,
+                                 total_kwh=0.0, nonzero=0, temp_min=none, temp_max=none) %}
+            {% for entry in plan %}
+              {% set hp_w = (entry.P_deferrable0 if preview_mode == 'dhw'
+                             else entry.P_deferrable1) | float(0) %}
+              {% set booster_w = entry.P_deferrable2 | float(0) if preview_mode == 'dhw' else 0 %}
+              {% set total_w = hp_w + booster_w %}
+              {% set temperature = entry['predicted_temp_heater' ~ heater] | float(0) %}
+              {% set target = entry['target_temp_heater' ~ heater] | default(none) %}
+              {% set acc.hp_kwh = acc.hp_kwh + hp_w * 0.25 / 1000 %}
+              {% set acc.booster_kwh = acc.booster_kwh + booster_w * 0.25 / 1000 %}
+              {% set acc.total_kwh = acc.total_kwh + total_w * 0.25 / 1000 %}
+              {% set acc.nonzero = acc.nonzero + (1 if total_w > 0 else 0) %}
+              {% set acc.temp_min = temperature if acc.temp_min is none
+                                     or temperature < acc.temp_min else acc.temp_min %}
+              {% set acc.temp_max = temperature if acc.temp_max is none
+                                     or temperature > acc.temp_max else acc.temp_max %}
+              {# Arrays keep the full horizon below the recorder's 16 KiB attribute limit. #}
+              {% set acc.items = acc.items + [[
+                entry.timestamp, total_w | round(0), hp_w | round(0), booster_w | round(0),
+                temperature, target
+              ]] %}
+            {% endfor %}
+            {{ {
+              'mode': preview_mode,
+              'status': 'ok' if preview_ok else 'failed',
+              'completed_at': preview_body.timestamp | default(now().isoformat()),
+              'duration_s': preview_body.duration_total_seconds | default(0) | round(1),
+              'planned_electricity_kwh': acc.total_kwh | round(3),
+              'hp_electricity_kwh': acc.hp_kwh | round(3),
+              'booster_electricity_kwh': acc.booster_kwh | round(3),
+              'nonzero_quarters': acc.nonzero,
+              'temperature_start_c': acc.items[0][4] if acc.items else none,
+              'temperature_end_c': acc.items[-1][4] if acc.items else none,
+              'temperature_min_c': acc.temp_min,
+              'temperature_max_c': acc.temp_max,
+              'temperature_target_c': acc.items[0][5] if acc.items else none,
+              'solver_status': (preview_body.plan[0].optim_status if preview_body.plan else none)
+                               | default('unknown'),
+              'error_message': preview_body.error_message | default(none),
+              'plan': acc.items
+            } }}
+      - event: emhass_preview_completed
+        event_data:
+          mode: "{{ preview_result.mode }}"
+          status: "{{ preview_result.status }}"
+          completed_at: "{{ preview_result.completed_at }}"
+          duration_s: "{{ preview_result.duration_s }}"
+          planned_electricity_kwh: "{{ preview_result.planned_electricity_kwh }}"
+          hp_electricity_kwh: "{{ preview_result.hp_electricity_kwh }}"
+          booster_electricity_kwh: "{{ preview_result.booster_electricity_kwh }}"
+          nonzero_quarters: "{{ preview_result.nonzero_quarters }}"
+          temperature_start_c: "{{ preview_result.temperature_start_c }}"
+          temperature_end_c: "{{ preview_result.temperature_end_c }}"
+          temperature_min_c: "{{ preview_result.temperature_min_c }}"
+          temperature_max_c: "{{ preview_result.temperature_max_c }}"
+          temperature_target_c: "{{ preview_result.temperature_target_c }}"
+          solver_status: "{{ preview_result.solver_status }}"
+          error_message: "{{ preview_result.error_message }}"
+          plan: "{{ preview_result.plan }}"
+      - if:
+          - condition: template
+            value_template: "{{ not preview_ok }}"
+        then:
+          - action: persistent_notification.create
+            data:
+              title: "EMHASS {{ preview_mode }} preview failed"
+              notification_id: "emhass_preview_{{ preview_mode }}"
+              message: >-
+                The dry-run failed with HTTP {{ preview_http_status }}.
+                {{ preview_body.error_message | default('No error message from EMHASS.') }}
+                The live plan and heat-pump strategy were not changed.
+      - stop: "EMHASS preview complete"
+        response_variable: preview_result
+
+  emhass_preview_dhw:
+    alias: "Preview the EMHASS DHW plan"
+    description: "Run a DHW-only dry-run and update the DHW preview chart."
+    mode: single
+    sequence:
+      - action: script.emhass_preview_plan
+        data:
+          mode: dhw
+
+  emhass_preview_heat:
+    alias: "Preview the EMHASS heat plan"
+    description: "Run a space-heating-only dry-run and update the heat preview chart."
+    mode: single
+    sequence:
+      - action: script.emhass_preview_plan
+        data:
+          mode: heat
+
+  emhass_preview_cool:
+    alias: "Preview the EMHASS cool plan"
+    description: "Run a space-cooling-only dry-run and update the cool preview chart."
+    mode: single
+    sequence:
+      - action: script.emhass_preview_plan
+        data:
+          mode: cool
