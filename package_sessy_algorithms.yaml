@@ -320,7 +320,7 @@ input_select:
 
   sessy_api_strategy:
     name: "Sessy API Strategy"
-    icon: mdi:battery-cog
+    icon: mdi:battery-sync
     options:
       - "Manual"
       - "Zero on Meter"

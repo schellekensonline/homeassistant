@@ -92,7 +92,7 @@ script:
 input_select:
   sessy_strategy:
     name: "Sessy Strategy"
-    icon: mdi:battery-cog
+    icon: mdi:battery-sync
     options:
       - "POWER_STRATEGY_NOM"
       - "POWER_STRATEGY_ROI"

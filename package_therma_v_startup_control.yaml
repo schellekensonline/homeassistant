@@ -298,7 +298,7 @@ template:
 
       - name: "Therma V passive heat surplus"
         unique_id: therma_v_passive_heat_surplus
-        icon: mdi:home-thermometer-alert
+        icon: mdi:home-thermometer-outline
         availability: >-
           {{ has_value('binary_sensor.therma_v_no_demand_anti_trip_hold')
              and has_value('sensor.therma_v_room_temperature_trend')

@@ -188,7 +188,7 @@ input_number:
   # 1.15 and 2000 Wh the reserve lands around 30 % of the pack; see the notes for the reasoning.
   emhass_reserve_margin:
     name: "EMHASS night reserve factor"
-    icon: mdi:shield-battery
+    icon: mdi:shield-check
     min: 0.5
     max: 2
     step: 0.05
@@ -234,7 +234,7 @@ input_number:
   # and suppresses the source beyond that threshold.
   emhass_thermal_comfort_penalty:
     name: "EMHASS thermal comfort penalty"
-    icon: mdi:home-thermometer-alert
+    icon: mdi:thermometer-alert
     min: 0
     max: 100
     step: 1
