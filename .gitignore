@@ -23,3 +23,13 @@
 ## INCLUDE
 # Gitignore file
 !/.gitignore
+
+# Track ordinary Home Assistant helper scripts. Keep credentials and key material out even when
+# they are placed under this directory in the future.
+!scripts/
+!scripts/**
+scripts/**/*.env
+scripts/**/*.key
+scripts/**/*.pem
+scripts/**/*secret*
+scripts/**/*token*

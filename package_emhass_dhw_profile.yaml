@@ -1,0 +1,52 @@
+# EMHASS package: learned DHW draw profiles.
+# The external learner infers hot-water energy from the tank balance and fires the compact
+# weekday/weekend profiles here. Their state is restored after a Home Assistant restart.
+template:
+  - trigger:
+      - trigger: event
+        event_type: emhass_dhw_profile_learned
+    sensor:
+      - name: "EMHASS DHW draw profile"
+        unique_id: emhass_dhw_draw_profile
+        state: "{{ trigger.event.data.status | default('unknown') }}"
+        attributes:
+          weekday: "{{ trigger.event.data.weekday | default([]) }}"
+          weekend: "{{ trigger.event.data.weekend | default([]) }}"
+          weekday_days: "{{ trigger.event.data.weekday_days | default(0) }}"
+          weekend_days: "{{ trigger.event.data.weekend_days | default(0) }}"
+          weekday_kwh: "{{ trigger.event.data.weekday_kwh | default(0) }}"
+          weekend_kwh: "{{ trigger.event.data.weekend_kwh | default(0) }}"
+          events: "{{ trigger.event.data.events | default(0) }}"
+          thermal_loss_kw: "{{ trigger.event.data.thermal_loss_kw | default(0) }}"
+          tank_capacity_kwh_per_k: >-
+            {{ trigger.event.data.tank_capacity_kwh_per_k | default(0) }}
+          history_start: "{{ trigger.event.data.history_start | default(none) }}"
+          history_end: "{{ trigger.event.data.history_end | default(none) }}"
+          learned_at: "{{ trigger.event.data.learned_at | default(none) }}"
+          method: "{{ trigger.event.data.method | default('unknown') }}"
+          schedule_windows: "{{ trigger.event.data.schedule_windows | default({}) }}"
+
+shell_command:
+  emhass_learn_dhw_profile: >-
+    python3 /config/scripts/emhass/emhass-dhw-learn-profile.py
+    --host http://localhost:8123
+    --secrets /config/emhass-secrets.yaml
+    --days 42 --push --quiet
+
+automation:
+  - id: emhass_learn_dhw_profile_auto
+    alias: "EMHASS learn DHW draw profile auto"
+    description: >-
+      Weekly robust refit of the weekday and weekend DHW draw profile from the tank balance and
+      water-meter events.
+    mode: single
+    trigger:
+      - platform: time
+        at: "02:00:00"
+    condition:
+      - condition: time
+        weekday:
+          - sun
+    action:
+      - action: shell_command.emhass_learn_dhw_profile
+        data: {}

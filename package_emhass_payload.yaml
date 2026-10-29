@@ -179,8 +179,23 @@ script:
             {% set house_mass = 18.0 %}
             {# Convert envelope plus ventilation loss to kW/K for the house model. #}
             {% set loss_coefficient = ((uval * env) + (vent * vol * 0.33)) / 1000 %}
-            {# Calibrate the tank-loss model first; tap-water draw is deliberately not modelled yet. #}
-            {% set dhw_draw = [0.0] * n %}
+            {# Apply the learned weekday/weekend draw profile on the absolute local clock. #}
+            {% set weekday_draw = state_attr('sensor.emhass_dhw_draw_profile', 'weekday') | default([]) %}
+            {% set weekend_draw = state_attr('sensor.emhass_dhw_draw_profile', 'weekend') | default([]) %}
+            {% set draw_ready = is_state('sensor.emhass_dhw_draw_profile', 'ready')
+                                and weekday_draw | length == 96 and weekend_draw | length == 96 %}
+            {% set draw_values = namespace(list=[]) %}
+            {% if hp_dhw and draw_ready %}
+              {% for i in range(n) %}
+                {% set point = now() + timedelta(minutes=15 * i) %}
+                {% set profile = weekend_draw if point.weekday() >= 5 else weekday_draw %}
+                {% set slot = point.hour * 4 + (point.minute // 15) %}
+                {% set draw_values.list = draw_values.list + [profile[slot] | float(0)] %}
+              {% endfor %}
+            {% else %}
+              {% set draw_values.list = [0.0] * n %}
+            {% endif %}
+            {% set dhw_draw = draw_values.list %}
             {% set quarter_start_ts = as_timestamp(quarter_start) %}
             {% set mins = namespace(list=[]) %}
             {% set maxes = namespace(list=[]) %}
@@ -277,7 +292,7 @@ script:
                   {"id": "dhw",
                    "volume": {{ state_attr(ba,'dhw_volume_m3') | float(0.3) }},
                    "density": 997, "heat_capacity": 4.184,
-                   "thermal_loss": {{ state_attr(ba,'dhw_thermal_loss_kw') | float(0.19) if hp_dhw else 0.0 }},
+                   "thermal_loss": {{ state_attr(ba,'dhw_thermal_loss_kw') | float(0.10) if hp_dhw else 0.0 }},
                    "start_temperature": {{ dhw_now }},
                    "min_temperature": {{ dhw_minima | to_json }},
                    "max_temperature": {{ dhw_maxima | to_json }}},

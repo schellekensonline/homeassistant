@@ -80,6 +80,7 @@ homeassistant:
     emhass_payload_pack:        !include package_emhass_payload.yaml
     emhass_mpc_pack:            !include package_emhass_mpc.yaml
     emhass_preview_pack:        !include package_emhass_preview.yaml
+    emhass_dhw_profile_pack:    !include package_emhass_dhw_profile.yaml
     emhass_dayahead_pack:       !include package_emhass_dayahead.yaml
     emhass_ml_pack:             !include package_emhass_ml.yaml
     emhass_watchdog_pack:       !include package_emhass_watchdog.yaml
