@@ -8,11 +8,11 @@ template:
     - name: "B Hyve zone active"
       unique_id: b_hyve_zone_active_sensor
       state: >
-        {% set flower_box_wall = is_state('switch.bloembak_muur_zone','on') %}
-        {% set border_back     = is_state('switch.border_achter_zone','on') %}
-        {% set lawn_left_right = is_state('switch.gazon_links_rechts_zone','on') %}
-        {% set lawn_center     = is_state('switch.gazon_midden_zone','on') %}
-        {% set front_garden    = is_state('switch.voor_zijtuin_zone','on') %}
+        {% set flower_box_wall = is_state('valve.smart_indoor_timer_bloembak_muur_zone','open') %}
+        {% set border_back     = is_state('valve.smart_indoor_timer_border_achter_zone','open') %}
+        {% set lawn_left_right = is_state('valve.smart_indoor_timer_gazon_links_rechts_zone','open') %}
+        {% set lawn_center     = is_state('valve.smart_indoor_timer_gazon_midden_zone','open') %}
+        {% set front_garden    = is_state('valve.smart_indoor_timer_voor_zijtuin_zone','open') %}
 
         {{ flower_box_wall or border_back or lawn_left_right or lawn_center or front_garden }}
       icon: >
@@ -41,10 +41,10 @@ automation:
         entity_id: input_boolean.no_birds_on_lawn_mode
         state: "on"
     actions:
-      - action: switch.turn_on
+      - action: valve.open_valve
         target:
-          entity_id: switch.gazon_links_rechts_zone
+          entity_id: valve.smart_indoor_timer_gazon_links_rechts_zone
       - delay: "00:00:15"
-      - action: switch.turn_off
+      - action: valve.close_valve
         target:
-          entity_id: switch.gazon_links_rechts_zone
+          entity_id: valve.smart_indoor_timer_gazon_links_rechts_zone
