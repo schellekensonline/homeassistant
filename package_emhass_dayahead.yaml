@@ -3,17 +3,18 @@
 # build and publish it, with the two checks around it: tomorrow's prices arriving late and no day
 # plan before midnight.
 rest_command:
-  # Day-ahead optimisation over the next 24 hours; runs once a day when new prices arrive.
+  # Day plan over the coming day. It deliberately uses the naive-MPC endpoint because that action
+  # honours prediction_horizon; only its timeout differs from the quarter-hour MPC.
   emhass_dayahead_optim:
-    url: "http://localhost:5000/action/dayahead-optim"
+    url: "http://localhost:5000/action/naive-mpc-optim"
     method: POST
     # EMHASS asks Home Assistant for the recent history before it can optimise, so a run
     # can take longer than the 10 second default of rest_command. Timing out here means
     # Home Assistant abandons a run that EMHASS keeps working on, which collides with the
     # next scheduled run (that is what broke the run just after midnight).
-    # Raised to 90 on 2026-09-20: with the adjusted-PV correction enabled, the run that
-    # retrains that model takes ~23 s (against ~5 s normally), too close to the old 30.
-    timeout: 90
+    # The day-plan payload overrides EMHASS's 45 s solver limit to 120 s. Keep this HTTP timeout
+    # above that so Home Assistant does not abandon a solve that is still making progress.
+    timeout: 150
     content_type: "application/json"
     # The shared payload script builds the body. The fallback is deliberately invalid so a caller
     # that forgets `emhass_payload` fails loudly instead of sending an empty optimisation request.
@@ -108,7 +109,7 @@ automation:
       # works at any moment (it shortens the window when tomorrow's prices are not in yet) - that
       # is what keeps this automation safe to trigger by hand. The day-ahead action would insist on
       # a full 24 h of prices and reject the run outside the ~13:00-23:45 window.
-      - action: rest_command.emhass_naive_mpc_optim
+      - action: rest_command.emhass_dayahead_optim
         data:
           emhass_payload: "{{ dayahead_payload.body }}"
         # Same as the MPC: no answer, or an answer without status 200, means the run failed.
@@ -137,7 +138,7 @@ automation:
               plan: dayahead
               thermal: false
             response_variable: dayahead_payload_fallback
-          - action: rest_command.emhass_naive_mpc_optim
+          - action: rest_command.emhass_dayahead_optim
             data:
               emhass_payload: "{{ dayahead_payload_fallback.body }}"
             response_variable: dayahead_retry

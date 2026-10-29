@@ -785,8 +785,7 @@ automation:
           # switch as the measured side, so "off" is exactly today's behaviour.
           grid: >-
             {% set hp = (states('sensor.p_deferrable0') | float(0)
-                         + states('sensor.p_deferrable1') | float(0)
-                         + states('sensor.p_deferrable2') | float(0))
+                         + states('sensor.p_deferrable1') | float(0))
                         if is_state('input_boolean.sessy_zom_exclude_heat_pump','on') else 0 %}
             {{ (states('sensor.p_grid_forecast') | float(0)) - hp }}
           sell: "{{ batt > band and grid < -band }}"

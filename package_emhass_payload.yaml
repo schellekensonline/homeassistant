@@ -38,6 +38,22 @@ script:
         default: true
         selector:
           boolean:
+      preview_dhw:
+        name: "Preview the DHW plan"
+        description: >-
+          Include the DHW heat-pump flow in a dry-run even while the heat-pump strategy is not
+          EMHASS. This only changes the generated payload; the caller must use the dry-run endpoint.
+        default: false
+        selector:
+          boolean:
+      dry_run:
+        name: "Dry-run payload"
+        description: >-
+          Use the day-plan solver timeout without requesting saved or published entities. The
+          caller must still use the dry-run endpoint.
+        default: false
+        selector:
+          boolean:
     sequence:
       - variables:
           # Both plans start at the current quarter hour. EMHASS's day-ahead horizon also starts
@@ -48,9 +64,10 @@ script:
           # allowance. The house forecast excludes the heat pump. Until a complete night window
           # is available, use the flat night-share fallback; clamp the final SOC to 5-90%.
           #
-          # Heat topology has four flows in a fixed order: HP -> DHW, heating, cooling and booster
-          # -> DHW. The HP flows share a mutually exclusive actuator group; the booster is
-          # independent. Disabled flows are parked at a fixed temperature without thermal loss.
+          # Heat topology has three flows: HP -> DHW, HP -> shared house zone, and booster -> DHW.
+          # The house zone switches direction from the heat-pump mode rather than keeping separate
+          # heating and cooling stores. The two HP flows share one mutually exclusive actuator
+          # group; the booster is independent. Disabled flows are parked without losses.
           #
           # A due disinfection forces the planned hold block to 60 C, while EMHASS may preheat
           # earlier. Readiness, not current relay state, keeps a flow enabled in the plan.
@@ -62,6 +79,8 @@ script:
           body: >-
             {% set day_ahead = plan | default('mpc', true) == 'dayahead' %}
             {% set send_thermal = thermal | default(true) | bool %}
+            {% set preview_dhw = preview_dhw | default(false) | bool %}
+            {% set dry_run = dry_run | default(false) | bool %}
             {# Floor the run start so both plans use the same current-quarter price window. #}
             {% set minute = now().minute %}
             {% set quarter_start = now().replace(minute=(minute - (minute % 15)), second=0, microsecond=0).isoformat() %}
@@ -106,6 +125,8 @@ script:
                                 | float(0) or states('sensor.therma_v_dhw_target_temperature') | float(50) %}
             {% set dhw_min = state_attr(ba,'dhw_min_temperature') | float(42) %}
             {% set dhw_max = state_attr(ba,'dhw_max_temperature') | float(68) %}
+            {% set dhw_boost_max = min(dhw_max,
+                                       states('input_number.therma_v_supervisor_booster_max_temperature') | float(dhw_max)) %}
             {% set disinfection_due = is_state('input_boolean.dhw_disinfection_due', 'on') %}
             {% set disinfection_start =
                  state_attr('input_datetime.dhw_next_disinfection', 'timestamp') %}
@@ -123,7 +144,9 @@ script:
             {% set dhw_ready = is_state('input_boolean.therma_v_supervisor_dhw_enabled', 'on') %}
             {% set hp_heat = hp_owned and master_on and heat_ready and heat_season %}
             {% set hp_cool = hp_owned and master_on and cool_ready and cool_season %}
-            {% set hp_dhw = hp_owned and master_on and dhw_ready %}
+            {# Dry-run previews may model DHW without transferring ownership to the EMHASS supervisor. #}
+            {% set hp_dhw = (hp_owned or preview_dhw) and master_on and dhw_ready %}
+            {% set hp_space = hp_heat or hp_cool %}
             {% set sp_heat = states('input_number.room_setpoint_heating') | float(20) %}
             {% set sp_cool = states('input_number.room_setpoint_cooling') | float(24) %}
             {% set margin = state_attr(ba,'room_comfort_margin_c') | float(1) %}
@@ -141,9 +164,12 @@ script:
             {% set house_mass = 18.0 %}
             {# Convert envelope plus ventilation loss to kW/K for the house model. #}
             {% set loss_coefficient = ((uval * env) + (vent * vol * 0.33)) / 1000 %}
-            {% set dhw_draw = ([0.005] * n) if hp_dhw else ([0.0] * n) %}
+            {# Calibrate the tank-loss model first; tap-water draw is deliberately not modelled yet. #}
+            {% set dhw_draw = [0.0] * n %}
             {% set quarter_start_ts = as_timestamp(quarter_start) %}
             {% set mins = namespace(list=[]) %}
+            {% set maxes = namespace(list=[]) %}
+            {% set booster_costs = namespace(list=[]) %}
             {% for i in range(n) %}
               {% set step_ts = quarter_start_ts + i * 900 %}
               {# DHW planner owns the start time; force 60 C only across its hold steps. #}
@@ -153,18 +179,30 @@ script:
                    and step_ts < disinfection_start + hold_steps * 900 %}
               {% set mins.list = mins.list
                    + ([60.0] if in_disinfection_hold else [dhw_min if hp_dhw else dhw_now]) %}
+              {# The booster only gets a normal tariff for negative prices or the hygiene hold. #}
+              {% set booster_allowed = hp_dhw and (in_disinfection_hold or incl_rounded[i] < 0) %}
+              {% set maxes.list = maxes.list
+                   + ([dhw_boost_max if booster_allowed else 53.0] if hp_dhw else [dhw_now]) %}
+              {% set booster_costs.list = booster_costs.list
+                   + [incl_rounded[i] if booster_allowed else incl_rounded[i] + 10.0] %}
             {% endfor %}
             {% set dhw_minima = mins.list %}
-            {% set dhw_maxima = ([dhw_max] * n) if hp_dhw else ([dhw_now] * n) %}
+            {% set dhw_maxima = maxes.list %}
             {% set heat_minima = ([heat_floor] if hp_heat else [room_now]) %}
             {% set heat_maxima = ([heat_ceil] * n) if hp_heat else ([room_now] * n) %}
             {% set cool_minima = ([cool_floor] * n) if hp_cool else ([room_now] * n) %}
             {% set cool_maxima = ([cool_ceil] * n) if hp_cool else ([room_now] * n) %}
+            {# One physical room/slab state; only the active direction is imposed on this run. #}
+            {% set space_minima = cool_minima if hp_cool else heat_minima %}
+            {% set space_maxima = cool_maxima if hp_cool else heat_maxima %}
+            {% set space_target = sp_cool if hp_cool else (sp_heat if hp_heat else room_now) %}
+            {% set space_overshoot = cool_floor if hp_cool else heat_ceil %}
 
             {
               "load_cost_forecast": {{ incl_rounded | to_json }},
               "prod_price_forecast": {{ excl_rounded | to_json }},
               "prediction_horizon": {{ n }},
+              {% if day_ahead or dry_run %}"lp_solver_timeout": 120,{% endif %}
               {# Match actuator limits so EMHASS cannot plan power the Sessy will clip. #}
               "battery_charge_power_max": {{ states('input_number.sessy_api_strategy_max_charge_power') | int(6000) }},
               "battery_discharge_power_max": {{ states('input_number.sessy_api_strategy_max_discharge_power') | int(3000) }},
@@ -174,46 +212,51 @@ script:
               "custom_predicted_temperature_id": [
                 {"entity_id": "sensor.temp_predicted0"},
                 {"entity_id": "sensor.temp_predicted1"},
-                {"entity_id": "sensor.temp_predicted2"},
-                {"entity_id": "sensor.temp_predicted3"}
+                {"entity_id": "sensor.temp_predicted2"}
               ],
               "custom_heating_demand_id": [
                 {"entity_id": "sensor.heating_demand0"},
                 {"entity_id": "sensor.heating_demand1"},
-                {"entity_id": "sensor.heating_demand2"},
-                {"entity_id": "sensor.heating_demand3"}
+                {"entity_id": "sensor.heating_demand2"}
               ],
               "custom_deferrable_forecast_id": [
                 {"entity_id": "sensor.p_deferrable0"},
                 {"entity_id": "sensor.p_deferrable1"},
-                {"entity_id": "sensor.p_deferrable2"},
-                {"entity_id": "sensor.p_deferrable3"}
-              ]{% endif %}{% if day_ahead %},
+                {"entity_id": "sensor.p_deferrable2"}
+              ]{% endif %}{% if day_ahead and not dry_run %},
               {# Save and publish day-ahead entities under a separate namespace from the MPC. #}
               "entity_save": true,
               "publish_prefix": "dayahead_"{% endif %}{% if send_thermal %},
-              {# Flow order maps to p_deferrable0-3; the HP flows share one compressor. #}
+              {# Three loads map sequentially to p_deferrable0 (DHW), p_deferrable1 (space) and
+                 p_deferrable2 (booster); p_deferrable3 is retired. The HP flows share one
+                 compressor. #}
               "heat_topology": {
                 "sources": [
                   {"id": "hp_dhw", "type": "heatpump",
-                   "nominal_power": {{ hp_nom }}, "treat_as_semi_cont": false,
+                   "nominal_power": {{ hp_nom }}, "min_power": 3100,
+                   "treat_as_semi_cont": false,
                    "supply_temperature": {{ min(dhw_target, 53) }},
-                   "carnot_efficiency": {{ state_attr(ba,'dhw_carnot_efficiency') | float(0.42) }},
-                   "max_supply_temperature": 53, "max_thermal_power": 9000},
-                  {"id": "hp_heat", "type": "heatpump",
-                   "nominal_power": {{ hp_nom }}, "treat_as_semi_cont": false,
+                   "carnot_efficiency": {{ state_attr(ba,'dhw_carnot_efficiency') | float(0.26) }},
+                   "max_supply_temperature": 55, "max_thermal_power": 9000},
+                  {"id": "hp_space", "type": "heatpump",
+                   "nominal_power": {{ hp_nom }}, "min_power": 550,
+                   "treat_as_semi_cont": false,
+                   {% if hp_cool %}
+                   "supply_temperature": {{ state_attr(ba,'cooling_supply_temperature') | float(16) }},
+                   {% else %}
                    "heating_curve": {"slope": {{ curve_slope }}, "offset": {{ curve_offset }},
                                      "min_supply": {{ curve_min_supply }},
                                      "max_supply": {{ curve_max_supply }}},
-                   "carnot_efficiency": {{ state_attr(ba,'carnot_efficiency_heating') | float(0.45) }},
-                   "max_thermal_power": 9000},
-                  {"id": "hp_cool", "type": "heatpump",
-                   "nominal_power": {{ hp_nom }}, "treat_as_semi_cont": false,
-                   "supply_temperature": {{ state_attr(ba,'cooling_supply_temperature') | float(16) }},
-                   "carnot_efficiency": {{ state_attr(ba,'carnot_efficiency_heating') | float(0.45) }},
+                   {% endif %}
+                   {% if hp_cool %}
+                   "carnot_efficiency": {{ state_attr(ba,'carnot_efficiency_cooling') | float(0.45) }},
+                   {% else %}
+                   "carnot_efficiency": {{ state_attr(ba,'carnot_efficiency_heating') | float(0.26) }},
+                   {% endif %}
                    "max_thermal_power": 9000},
                   {"id": "booster", "type": "electric", "efficiency": 1.0,
-                   "nominal_power": 1500, "treat_as_semi_cont": true}
+                   "nominal_power": 1500, "treat_as_semi_cont": true,
+                   "cost_track": "booster_gate"}
                 ],
                 "storage": [
                   {"id": "dhw",
@@ -221,45 +264,34 @@ script:
                    "density": 997, "heat_capacity": 4.184,
                    "thermal_loss": {{ state_attr(ba,'dhw_thermal_loss_kw') | float(0.19) if hp_dhw else 0.0 }},
                    "start_temperature": {{ dhw_now }},
-                   "desired_temperature": {{ dhw_target }},
                    "min_temperature": {{ dhw_minima | to_json }},
                    "max_temperature": {{ dhw_maxima | to_json }}},
-                  {"id": "house_heat", "thermal_mass": {{ house_mass }},
-                   "loss_coefficient": {{ loss_coefficient if hp_heat else 0.0 }},
-                   "thermal_inertia": {{ tau if hp_heat else 0.0 }},
+                  {"id": "house", "thermal_mass": {{ house_mass }},
+                   "loss_coefficient": {{ loss_coefficient if hp_space else 0.0 }},
+                   "thermal_inertia": {{ tau if hp_space else 0.0 }},
                    "start_temperature": {{ room_now }},
-                   "desired_temperature": {{ sp_heat if hp_heat else room_now }},
-                   "overshoot_temperature": {{ heat_ceil }},
+                   "desired_temperature": {{ space_target }},
+                   "overshoot_temperature": {{ space_overshoot }},
                    "penalty_factor": {{ comfort_penalty }},
-                   "min_temperature": {{ heat_minima | to_json }},
-                   "max_temperature": {{ heat_maxima | to_json }},
-                   "window_area": {{ warea if hp_heat else 0 }}, "shgc": {{ shgc }},
-                   "comfort_sense": "heat"},
-                  {"id": "house_cool", "thermal_mass": {{ house_mass }},
-                   "loss_coefficient": {{ loss_coefficient if hp_cool else 0.0 }},
-                   "thermal_inertia": {{ tau if hp_cool else 0.0 }},
-                   "start_temperature": {{ room_now }},
-                   "desired_temperature": {{ sp_cool if hp_cool else room_now }},
-                   "overshoot_temperature": {{ cool_floor }},
-                   "penalty_factor": {{ comfort_penalty }},
-                   "min_temperature": {{ cool_minima | to_json }},
-                   "max_temperature": {{ cool_maxima | to_json }},
-                   "window_area": {{ warea if hp_cool else 0 }}, "shgc": {{ shgc }},
-                   "comfort_sense": "cool"}
+                   "min_temperature": {{ space_minima | to_json }},
+                   "max_temperature": {{ space_maxima | to_json }},
+                   "window_area": {{ warea if hp_space else 0 }}, "shgc": {{ shgc }},
+                   "comfort_sense": "{{ 'cool' if hp_cool else 'heat' }}"}
                 ],
                 "consumers": [
                   {"id": "dhw_draw", "type": "profile", "target": "dhw",
                    "profile": {{ dhw_draw | to_json }}}
                 ],
+                "cost_tracks": {
+                  "booster_gate": {{ booster_costs.list | to_json }}
+                },
                 "flows": [
                   {"from": "hp_dhw", "to": "dhw"},
-                  {"from": "hp_heat", "to": "house_heat"},
-                  {"from": "hp_cool", "to": "house_cool"},
+                  {"from": "hp_space", "to": "house"},
                   {"from": "booster", "to": "dhw"}
                 ],
                 "actuator_groups": [
-                  {"flows": [["hp_dhw", "dhw"], ["hp_heat", "house_heat"],
-                             ["hp_cool", "house_cool"]],
+                  {"flows": [["hp_dhw", "dhw"], ["hp_space", "house"]],
                    "mutual_exclusion": true, "max_combined_power": {{ hp_nom }}}
                 ]
               }{% endif %}

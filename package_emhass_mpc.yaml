@@ -17,6 +17,61 @@ rest_command:
       {# Dictionaries must be serialised; strings already contain the JSON body. #}
       {{ body if body is string else body | to_json }}
 
+  # Same payload, but the v1 dry-run endpoint validates and solves without replacing the live
+  # plan, publishing sensors or writing result/cache files.
+  emhass_dry_run_naive_mpc_optim:
+    url: "http://localhost:5000/api/v1/dry-run/naive-mpc-optim"
+    method: POST
+    timeout: 150
+    content_type: "application/json"
+    payload: >-
+      {%- set body = emhass_payload | default({'error': 'emhass_payload was not passed by the caller'}) -%}
+      {{ body if body is string else body | to_json }}
+
+script:
+  emhass_preview_dhw:
+    alias: "Preview the EMHASS DHW plan"
+    description: >-
+      Build a DHW-only thermal payload and run it through EMHASS dry-run. This never publishes a
+      plan or changes the live actuator strategy.
+    mode: single
+    sequence:
+      - action: script.emhass_build_payload
+        data:
+          plan: dayahead
+          thermal: true
+          preview_dhw: true
+          dry_run: true
+        response_variable: preview_payload
+      - action: rest_command.emhass_dry_run_naive_mpc_optim
+        data:
+          emhass_payload: "{{ preview_payload.body }}"
+        response_variable: preview_response
+        continue_on_error: true
+      - variables:
+          preview_failed: >-
+            {{ preview_response is not defined
+               or preview_response.status | default(0) | int(0) not in [200, 201] }}
+          preview_result: >-
+            {{ {'status': preview_response.status | default(0) | int(0),
+                'body': preview_response.content | default('')}
+               if preview_response is defined else
+               {'status': 0, 'body': 'no response from EMHASS dry-run'} }}
+      - if:
+          - condition: template
+            value_template: "{{ preview_failed }}"
+        then:
+          - action: persistent_notification.create
+            data:
+              title: "EMHASS DHW preview failed"
+              notification_id: emhass_preview_dhw
+              message: >-
+                The dry-run failed with HTTP
+                {{ preview_response.status | default('no answer') }}. The live plan and heat-pump
+                strategy were not changed.
+      - stop: "EMHASS DHW preview"
+        response_variable: preview_result
+
 automation:
   - id: emhass_execute_mpc_optimization_auto
     alias: "EMHASS execute MPC optimization auto"

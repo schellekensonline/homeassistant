@@ -6,10 +6,11 @@
 # is implemented as well, but their readiness gates stay off until each mode is tested separately.
 # Auto mode remains a passthrough until its delta path has its own supervisor.
 #
-# The quarter-hour MPC sets sensor.p_deferrable0 (HP -> DHW) and sensor.p_deferrable3 (electric
-# booster -> DHW). While deferring, the effective setpoint follows the tank just below its current
-# temperature so the thermostat sees no demand. When a run is planned, the effective setpoint
-# returns to the normal thermostat target. Disinfection uses 53/60 C to force the required run.
+# The quarter-hour MPC sets sensor.p_deferrable0 (HP -> DHW) and sensor.p_deferrable2 (electric
+# booster -> DHW); sensor.p_deferrable1 is the single shared space zone in either heat or cool mode.
+# While deferring, the effective setpoint follows the tank just below its current temperature so the
+# thermostat sees no demand. When a run is planned, the effective setpoint returns to the normal
+# thermostat target. Disinfection uses 53/60 C to force the required run.
 # The DHW coil is Modbus coil 1 (DHW operation enable), not a physical valve.
 
 input_boolean:
@@ -131,7 +132,7 @@ template:
              and has_value('input_number.dhw_setpoint_state')
              and has_value('sensor.therma_v_dhw_temperature')
              and has_value('sensor.p_deferrable0')
-             and has_value('sensor.p_deferrable3')
+             and has_value('sensor.p_deferrable2')
              and has_value('binary_sensor.emhass_forecast_fresh') }}
         state: >-
           {% set strategy = states('input_select.therma_v_control_strategy') %}
@@ -227,7 +228,7 @@ template:
           normal_setpoint: "{{ states('input_number.dhw_setpoint_state') | float(50) }}"
           tank_follow_offset: "{{ states('input_number.therma_v_supervisor_dhw_defer_offset') | float(1) }}"
           dhw_plan_power: "{{ states('sensor.p_deferrable0') | float(0) }}"
-          booster_plan_power: "{{ states('sensor.p_deferrable3') | float(0) }}"
+          booster_plan_power: "{{ states('sensor.p_deferrable2') | float(0) }}"
           dhw_temperature: "{{ states('sensor.therma_v_dhw_temperature') | float(0) }}"
 
       - name: "Therma V room setpoint plan"
@@ -243,8 +244,7 @@ template:
              and has_value('input_number.room_setpoint_heating')
              and has_value('input_number.room_setpoint_cooling')
              and has_value('sensor.therma_v_operation_mode')
-             and has_value('sensor.p_deferrable1')
-             and has_value('sensor.p_deferrable2') }}
+             and has_value('sensor.p_deferrable1') }}
         state: >-
           {% set strategy = states('input_select.therma_v_control_strategy') %}
           {% set mode = states('sensor.therma_v_operation_mode') | int(-1) %}
@@ -268,21 +268,20 @@ template:
           {% set threshold = states('input_number.therma_v_supervisor_power_threshold') | float(100) %}
           {% set offset = states('input_number.therma_v_supervisor_room_defer_offset') | float(0.5) %}
           {% set force = states('input_number.therma_v_supervisor_room_force_offset') | float(0.5) %}
-          {% set p_heat = states('sensor.p_deferrable1') | float(0) %}
-          {% set p_cool = states('sensor.p_deferrable2') | float(0) %}
+          {% set p_space = states('sensor.p_deferrable1') | float(0) %}
           {% set recovery = is_state('input_boolean.therma_v_supervisor_hvac_recovery', 'on') %}
           {% if strategy != 'EMHASS' or not gate or not master or mode not in [0, 4] %}
           {{ base | round(1) }}
           {% elif not fresh or recovery %}
           {{ base | round(1) }}
           {% elif mode == 4 %}
-          {% if p_heat > threshold %}
+          {% if p_space > threshold %}
           {{ min(high, base + force) | round(1) }}
           {% else %}
           {{ max(low, base - offset) | round(1) }}
           {% endif %}
           {% elif mode == 0 %}
-          {% if p_cool > threshold %}
+          {% if p_space > threshold %}
           {{ max(low, base - force) | round(1) }}
           {% else %}
           {{ min(high, base + offset) | round(1) }}
@@ -316,7 +315,7 @@ template:
             {% elif op == 4 %}
             {{ 'heat force' if states('sensor.p_deferrable1') | float(0) > threshold else 'heat defer' }}
             {% elif op == 0 %}
-            {{ 'cool force' if states('sensor.p_deferrable2') | float(0) > threshold else 'cool defer' }}
+            {{ 'cool force' if states('sensor.p_deferrable1') | float(0) > threshold else 'cool defer' }}
             {% else %}
             passthrough
             {% endif %}
@@ -326,8 +325,8 @@ template:
                else states('input_number.room_setpoint_cooling') }}
           defer_offset: "{{ states('input_number.therma_v_supervisor_room_defer_offset') | float(0.5) }}"
           force_offset: "{{ states('input_number.therma_v_supervisor_room_force_offset') | float(0.5) }}"
-          heat_plan_power: "{{ states('sensor.p_deferrable1') | float(0) }}"
-          cool_plan_power: "{{ states('sensor.p_deferrable2') | float(0) }}"
+          space_plan_power: "{{ states('sensor.p_deferrable1') | float(0) }}"
+          space_plan_mode: "{{ 'heat' if op == 4 else ('cool' if op == 0 else 'idle') }}"
 
       - name: "Therma V supervisor state"
         unique_id: therma_v_supervisor_state
@@ -336,7 +335,7 @@ template:
           {{ has_value('input_select.therma_v_control_strategy')
              and has_value('input_boolean.therma_v_supervisor_dhw_enabled')
              and has_value('sensor.p_deferrable0')
-             and has_value('sensor.p_deferrable3')
+             and has_value('sensor.p_deferrable2')
              and has_value('binary_sensor.emhass_forecast_fresh') }}
         state: >-
           {% set strategy = states('input_select.therma_v_control_strategy') %}
@@ -347,7 +346,7 @@ template:
                           and mode_since is not none
                           and last_mpc >= mode_since %}
           {% set hp = states('sensor.p_deferrable0') | float(0) %}
-          {% set booster = states('sensor.p_deferrable3') | float(0) %}
+          {% set booster = states('sensor.p_deferrable2') | float(0) %}
           {% set temp = states('sensor.therma_v_dhw_temperature') | float(0) %}
           {% set min_temp = state_attr('sensor.building_parameters', 'dhw_min_temperature') | float(42) %}
           {% set threshold = states('input_number.therma_v_supervisor_power_threshold') | float(100) %}
@@ -391,7 +390,7 @@ template:
           space_heat_enabled: "{{ is_state('input_boolean.therma_v_supervisor_space_heat_enabled', 'on') }}"
           cooling_enabled: "{{ is_state('input_boolean.therma_v_supervisor_cooling_enabled', 'on') }}"
           dhw_plan_power: "{{ states('sensor.p_deferrable0') | float(0) }}"
-          booster_plan_power: "{{ states('sensor.p_deferrable3') | float(0) }}"
+          booster_plan_power: "{{ states('sensor.p_deferrable2') | float(0) }}"
           dhw_temperature: "{{ states('sensor.therma_v_dhw_temperature') | float(0) }}"
           plan_setpoint: "{{ states('sensor.therma_v_dhw_plan_setpoint') }}"
           plan_setpoint_mode: "{{ state_attr('sensor.therma_v_dhw_plan_setpoint', 'mode') }}"
@@ -427,7 +426,7 @@ automation:
           - input_datetime.emhass_last_mpc
           - input_datetime.therma_v_supervisor_mode_since
           - sensor.p_deferrable0
-          - sensor.p_deferrable3
+          - sensor.p_deferrable2
           - sensor.therma_v_dhw_temperature
           - sensor.therma_v_dhw_plan_setpoint
           - input_number.therma_v_supervisor_dhw_defer_offset
@@ -454,7 +453,7 @@ automation:
              and has_value('sensor.therma_v_dhw_temperature')
              and has_value('sensor.therma_v_dhw_plan_setpoint')
              and has_value('sensor.p_deferrable0')
-             and has_value('sensor.p_deferrable3')
+             and has_value('sensor.p_deferrable2')
              and has_value('input_datetime.therma_v_supervisor_mode_since') }}
     actions:
       - variables:
@@ -467,9 +466,10 @@ automation:
                and (last_mpc | float(0)) >= (mode_since | float(0)) }}
           master_on: "{{ is_state('switch.therma_v_heating_cooling_on_off', 'on') }}"
           active: "{{ is_state('input_boolean.dhw_disinfection_active', 'on') }}"
+          negative_price: "{{ states('sensor.electricity_buying_price') | float(0) < 0 }}"
           threshold: "{{ states('input_number.therma_v_supervisor_power_threshold') | float(100) }}"
           temp: "{{ states('sensor.therma_v_dhw_temperature') | float(0) }}"
-          booster_power: "{{ states('sensor.p_deferrable3') | float(0) }}"
+          booster_power: "{{ states('sensor.p_deferrable2') | float(0) }}"
           booster_max: "{{ states('input_number.therma_v_supervisor_booster_max_temperature') | float(66) }}"
           next_ts: "{{ state_attr('input_datetime.dhw_next_disinfection', 'timestamp') }}"
           lead_hours: "{{ states('input_number.dhw_disinfection_min_lead_hours') | float(5) }}"
@@ -485,10 +485,13 @@ automation:
                and now().timestamp() >= (next_ts | float(0))
                and now().timestamp() < (next_ts | float(0)) + (hold_minutes | float(45)) * 60 }}
           disinfection: "{{ (active | bool) or (hold | bool) }}"
-          booster_limit: "{{ booster_max if (disinfection | bool) else (60 if (prepare | bool) else 55) }}"
+          # Booster is a hard-gated last resort: negative price or an active/scheduled hygiene run.
+          booster_permitted: "{{ (negative_price | bool) or (disinfection | bool) }}"
+          booster_limit: "{{ booster_max if (booster_permitted | bool) else 55 }}"
           booster_wanted: >-
             {{ (master_on | bool) and (fresh | bool)
                and (booster_power | float(0)) > (threshold | float(100))
+               and (booster_permitted | bool)
                and (temp | float(0)) < (booster_limit | float(55)) }}
           desired_target: "{{ states('sensor.therma_v_dhw_plan_setpoint') | float(50) }}"
       # Keep the DHW function enabled while the supervisor owns a live EMHASS run. The setpoint
