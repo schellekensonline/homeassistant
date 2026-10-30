@@ -134,8 +134,7 @@ script:
             {% set tau = state_attr(ba,'slab_inertia_time_constant_h') | float(2) %}
             {% set hp_nom = state_attr(ba,'heatpump_electric_max_w') | float(3000) %}
             {% set dhw_now = states('sensor.therma_v_dhw_temperature') | float(50) %}
-            {% set dhw_target = state_attr('climate.therma_v_dhw','temperature')
-                                | float(0) or states('sensor.therma_v_dhw_target_temperature') | float(50) %}
+            {% set dhw_target = states('input_number.therma_v_dhw_target_request') | float(50) %}
             {% set dhw_min = state_attr(ba,'dhw_min_temperature') | float(42) %}
             {% set dhw_max = state_attr(ba,'dhw_max_temperature') | float(68) %}
             {% set dhw_boost_max = min(dhw_max,

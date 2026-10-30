@@ -211,12 +211,15 @@ template:
         hvac_modes: "{{ ['off', 'auto'] }}"
         hvac_mode: "{{ 'off' if is_state('switch.therma_v_dhw_on_off', 'off') else 'auto' }}"
         set_temperature:
-          - action: modbus.write_register
-            data:
-              address: 8
-              slave: 1
-              hub: modbus_gateway_therma_v
-              value: "{{ ((temperature | float(0)) * 10) | int }}"
+          - if:
+              - condition: template
+                value_template: "{{ temperature is number }}"
+            then:
+              - action: input_number.set_value
+                target:
+                  entity_id: input_number.therma_v_dhw_target_request
+                data:
+                  value: "{{ temperature | float(50) }}"
         set_hvac_mode:
           - choose:
               - conditions:

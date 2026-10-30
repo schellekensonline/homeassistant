@@ -331,7 +331,7 @@ automation:
         target:
           entity_id: input_number.dhw_setpoint_state
         data:
-          value: "{{ state_attr('climate.therma_v_dhw', 'temperature') | float(50) }}"
+          value: "{{ states('input_number.therma_v_dhw_target_request') | float(50) }}"
       - action: input_datetime.set_datetime
         target:
           entity_id: input_datetime.dhw_disinfection_started

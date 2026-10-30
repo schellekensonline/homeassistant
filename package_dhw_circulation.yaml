@@ -112,7 +112,7 @@ template:
              and has_value('input_number.dhw_setpoint_state')
              and has_value('input_boolean.dhw_disinfection_active') }}
         state: >-
-          {% set live = states('sensor.therma_v_dhw_target_temperature') | float(50) %}
+          {% set live = states('input_number.therma_v_dhw_target_request') | float(50) %}
           {% set stored = states('input_number.dhw_setpoint_state') | float(50) %}
           {{ stored if is_state('input_boolean.dhw_disinfection_active', 'on') else live }}
 

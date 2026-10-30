@@ -42,6 +42,17 @@ input_datetime:
     has_time: true
 
 input_number:
+  # The user-facing DHW request. The climate entity writes this helper; only the chase sensor and
+  # the register writer connect it to Modbus register 8.
+  therma_v_dhw_target_request:
+    name: "Therma V DHW target request"
+    min: 40
+    max: 70
+    step: 1
+    initial: 50
+    mode: slider
+    unit_of_measurement: "°C"
+    icon: mdi:water-thermometer
   therma_v_supervisor_power_threshold:
     name: "Therma V supervisor power threshold"
     min: 0
@@ -116,11 +127,9 @@ template:
              or is_state('binary_sensor.therma_v_dhw_booster_state', 'on')
              or is_state('binary_sensor.therma_v_dhw_booster_2_state_s1', 'on') }}
   - sensor:
-      # The DHW equivalent of the water-temperature request layer: the live service setpoint stays
-      # in dhw_setpoint_state, and EMHASS shifts it up/down around that value. The heat pump always
-      # keeps the DHW function enabled while the supervisor owns it; this setpoint decides whether
-      # the internal thermostat sees demand.
-      - name: "Therma V DHW plan setpoint"
+      # DHW chase layer: normal service request in, temporary effective setpoint out. It has no
+      # side effects; the separate writer owns Modbus register 8.
+      - name: "Therma V DHW setpoint effective"
         unique_id: therma_v_dhw_plan_setpoint
         icon: mdi:water-thermometer
         device_class: temperature
@@ -129,11 +138,8 @@ template:
         availability: >-
           {{ has_value('input_select.therma_v_control_strategy')
              and has_value('input_boolean.therma_v_supervisor_dhw_enabled')
-             and has_value('input_number.dhw_setpoint_state')
-             and has_value('sensor.therma_v_dhw_temperature')
-             and has_value('sensor.p_deferrable0')
-             and has_value('sensor.p_deferrable2')
-             and has_value('binary_sensor.emhass_forecast_fresh') }}
+             and has_value('input_number.therma_v_dhw_target_request')
+             and has_value('sensor.therma_v_dhw_temperature') }}
         state: >-
           {% set strategy = states('input_select.therma_v_control_strategy') %}
           {% set gate = is_state('input_boolean.therma_v_supervisor_dhw_enabled', 'on') %}
@@ -144,7 +150,7 @@ template:
                           and last_mpc is not none
                           and mode_since is not none
                           and last_mpc >= mode_since %}
-          {% set normal = states('input_number.dhw_setpoint_state') | float(50) %}
+          {% set normal = states('input_number.therma_v_dhw_target_request') | float(50) %}
           {% set defer = states('input_number.therma_v_supervisor_dhw_defer_offset') | float(1) %}
           {% set hp = states('sensor.p_deferrable0') | float(0) %}
           {% set threshold = states('input_number.therma_v_supervisor_power_threshold') | float(100) %}
@@ -225,7 +231,7 @@ template:
             {% else %}
             defer
             {% endif %}
-          normal_setpoint: "{{ states('input_number.dhw_setpoint_state') | float(50) }}"
+          normal_setpoint: "{{ states('input_number.therma_v_dhw_target_request') | float(50) }}"
           tank_follow_offset: "{{ states('input_number.therma_v_supervisor_dhw_defer_offset') | float(1) }}"
           dhw_plan_power: "{{ states('sensor.p_deferrable0') | float(0) }}"
           booster_plan_power: "{{ states('sensor.p_deferrable2') | float(0) }}"
@@ -392,8 +398,8 @@ template:
           dhw_plan_power: "{{ states('sensor.p_deferrable0') | float(0) }}"
           booster_plan_power: "{{ states('sensor.p_deferrable2') | float(0) }}"
           dhw_temperature: "{{ states('sensor.therma_v_dhw_temperature') | float(0) }}"
-          plan_setpoint: "{{ states('sensor.therma_v_dhw_plan_setpoint') }}"
-          plan_setpoint_mode: "{{ state_attr('sensor.therma_v_dhw_plan_setpoint', 'mode') }}"
+          effective_setpoint: "{{ states('sensor.therma_v_dhw_setpoint_effective') }}"
+          effective_setpoint_mode: "{{ state_attr('sensor.therma_v_dhw_setpoint_effective', 'mode') }}"
           dhw_switch: "{{ states('switch.therma_v_dhw_on_off') }}"
           booster_switch: "{{ states('switch.dhw_booster_2_switch') }}"
           disinfection_due: "{{ is_state('input_boolean.dhw_disinfection_due', 'on') }}"
@@ -409,6 +415,44 @@ template:
           next_disinfection: "{{ states('input_datetime.dhw_next_disinfection') }}"
 
 automation:
+  # The only writer of DHW target register 8. The climate entity writes the request helper, the
+  # effective sensor applies the plan/chase logic, and this automation performs the Modbus write.
+  - id: therma_v_apply_dhw_setpoint_auto
+    alias: "Therma V apply DHW setpoint auto"
+    description: "Writes the effective DHW setpoint to Modbus register 8"
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id: sensor.therma_v_dhw_setpoint_effective
+      - trigger: state
+        entity_id: sensor.therma_v_dhw_target_temperature
+      - trigger: state
+        entity_id: input_select.therma_v_control_strategy
+      - trigger: homeassistant
+        event: start
+      - trigger: time_pattern
+        minutes: "/15"
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ has_value('sensor.therma_v_dhw_setpoint_effective')
+             and has_value('sensor.therma_v_dhw_target_temperature') }}
+    actions:
+      - if:
+          - condition: template
+            value_template: >-
+              {{ (states('sensor.therma_v_dhw_setpoint_effective') | float(0)
+                  - states('sensor.therma_v_dhw_target_temperature') | float(0)) | abs >= 0.5 }}
+        then:
+          - action: modbus.write_register
+            data:
+              address: 8
+              slave: 1
+              hub: modbus_gateway_therma_v
+              value: >-
+                {{ (states('sensor.therma_v_dhw_setpoint_effective') | float(50) * 10) | round(0) | int }}
+
   # Apply the DHW/booster plan. The HP follows the effective setpoint offset; the external booster
   # remains a quarter-hour on/off threshold.
   - id: therma_v_supervisor_dhw_apply
@@ -428,7 +472,7 @@ automation:
           - sensor.p_deferrable0
           - sensor.p_deferrable2
           - sensor.therma_v_dhw_temperature
-          - sensor.therma_v_dhw_plan_setpoint
+          - sensor.therma_v_dhw_setpoint_effective
           - input_number.therma_v_supervisor_dhw_defer_offset
           - input_boolean.therma_v_supervisor_dhw_recovery
           - binary_sensor.therma_v_dhw_run_active
@@ -451,7 +495,7 @@ automation:
           {{ has_value('switch.therma_v_dhw_on_off')
              and has_value('switch.dhw_booster_2_switch')
              and has_value('sensor.therma_v_dhw_temperature')
-             and has_value('sensor.therma_v_dhw_plan_setpoint')
+             and has_value('sensor.therma_v_dhw_setpoint_effective')
              and has_value('sensor.p_deferrable0')
              and has_value('sensor.p_deferrable2')
              and has_value('input_datetime.therma_v_supervisor_mode_since') }}
@@ -493,7 +537,6 @@ automation:
                and (booster_power | float(0)) > (threshold | float(100))
                and (booster_permitted | bool)
                and (temp | float(0)) < (booster_limit | float(55)) }}
-          desired_target: "{{ states('sensor.therma_v_dhw_plan_setpoint') | float(50) }}"
       # Keep the DHW function enabled while the supervisor owns a live EMHASS run. The setpoint
       # offset determines whether heat is requested; the coil is only permission to operate DHW.
       - choose:
@@ -534,22 +577,6 @@ automation:
               - action: switch.turn_off
                 target:
                   entity_id: switch.dhw_booster_2_switch
-      # This is the intermediate setpoint layer: tank-following while deferring, the normal
-      # thermostat target when a run is planned, and 53 C/60 C during disinfection. Only write when
-      # the climate entity really differs, so this cannot spam Modbus writes.
-      - if:
-          - condition: template
-            value_template: >-
-              {{ has_value('climate.therma_v_dhw')
-                 and (state_attr('climate.therma_v_dhw', 'temperature') | float(0)
-                      - desired_target | float(0)) | abs >= 0.5 }}
-        then:
-          - action: climate.set_temperature
-            target:
-              entity_id: climate.therma_v_dhw
-            data:
-              temperature: "{{ desired_target | float(50) }}"
-
   # Start the existing disinfection FSM in EMHASS mode at the same timestamp the planner uses.
   # The 45-minute topology hold consists of this 15-minute local preheat plus the following 30
   # minutes at 60 C, which is exactly the detection threshold.
@@ -590,7 +617,7 @@ automation:
         target:
           entity_id: input_number.dhw_setpoint_state
         data:
-          value: "{{ state_attr('climate.therma_v_dhw', 'temperature') | float(50) }}"
+          value: "{{ states('input_number.therma_v_dhw_target_request') | float(50) }}"
       - action: input_boolean.turn_off
         target:
           entity_id: input_boolean.therma_v_supervisor_dhw_recovery
@@ -766,6 +793,11 @@ automation:
           entity_id: input_datetime.dhw_disinfection_started
         data:
           timestamp: "{{ now().timestamp() }}"
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.dhw_setpoint_state
+        data:
+          value: "{{ states('input_number.therma_v_dhw_target_request') | float(50) }}"
       - action: input_boolean.turn_on
         target:
           entity_id: input_boolean.dhw_disinfection_active
@@ -825,14 +857,3 @@ automation:
       - action: input_boolean.turn_off
         target:
           entity_id: input_boolean.therma_v_supervisor_hvac_recovery
-      - if:
-          - condition: template
-            value_template: >-
-              {{ has_value('climate.therma_v_dhw')
-                 and not is_state('input_boolean.dhw_disinfection_active', 'on') }}
-        then:
-          - action: climate.set_temperature
-            target:
-              entity_id: climate.therma_v_dhw
-            data:
-              temperature: "{{ states('input_number.dhw_setpoint_state') | float(50) }}"
