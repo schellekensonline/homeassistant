@@ -3,6 +3,14 @@
 input_boolean:
   heatmeisters_cool_active:
     name: "HeatMeister cooling active"
+  heatmeisters_startup_boost_active:
+    name: "HeatMeister startup boost active"
+
+input_datetime:
+  heatmeisters_startup_boost_until:
+    name: "HeatMeister startup boost until"
+    has_date: true
+    has_time: true
 
 input_number:
   heatmeisters_master_fan_state:
@@ -81,6 +89,12 @@ automation:
         state: "off"
       - condition: template
         value_template: "{{ states('climate.therma_v_heating_cooling') not in ['cool', 'unknown', 'unavailable'] }}"
+      - condition: state
+        entity_id: input_boolean.heatmeisters_cool_active
+        state: "off"
+      - condition: state
+        entity_id: input_boolean.heatmeisters_startup_boost_active
+        state: "off"
     actions:
       - action: input_number.set_value
         target:
@@ -110,6 +124,14 @@ automation:
           value: >-
             {{ states('number.heatbooster_computer_room_fan_speed')
                | float(states('input_number.heatmeisters_computer_fan_state') | float(0)) }}
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.heatmeisters_startup_boost_until
+        data:
+          timestamp: "{{ (now().timestamp() + 15 * 60) | int }}"
+      - action: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.heatmeisters_startup_boost_active
       - choose:
           - conditions:
               - condition: numeric_state
@@ -158,8 +180,46 @@ automation:
                   entity_id: number.heatbooster_computer_room_fan_speed
                 data:
                   value: "{{ states('input_number.heatmeisters_start_up_fan_speed') }}"
-      - delay:
-          minutes: 15
+  # Finish the boost from the persisted latch instead of an in-flight delay. A restart ends the
+  # boost early and restores the saved user speeds; failed writes stay latched for a later retry.
+  # The same automation reconciles cooling entry and a heat-pump shutdown.
+  - id: heatmeisters_finish_startup_boost_auto
+    alias: "HeatMeisters finish startup boost auto"
+    description: "Restores user fan speeds after the startup boost"
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: homeassistant
+        event: start
+        id: ha_start
+      - trigger: time_pattern
+        minutes: "/1"
+        id: heartbeat
+      - trigger: state
+        entity_id: switch.therma_v_heating_cooling_on_off
+        to: "off"
+        id: heat_pump_off
+      - trigger: state
+        entity_id: climate.therma_v_heating_cooling
+        to: "cool"
+        id: cooling_start
+    conditions:
+      - condition: state
+        entity_id: input_boolean.heatmeisters_startup_boost_active
+        state: "on"
+      - or:
+          - condition: trigger
+            id: ha_start
+          - condition: trigger
+            id: heat_pump_off
+          - condition: trigger
+            id: cooling_start
+          - condition: template
+            value_template: >-
+              {% set deadline = state_attr('input_datetime.heatmeisters_startup_boost_until',
+                                           'timestamp') %}
+              {{ deadline is none or now().timestamp() >= deadline }}
+    actions:
       - action: number.set_value
         continue_on_error: true
         target:
@@ -184,10 +244,26 @@ automation:
           entity_id: number.heatbooster_computer_room_fan_speed
         data:
           value: "{{ states('input_number.heatmeisters_computer_fan_state') }}"
+      - delay:
+          seconds: 2
+      - if:
+          - condition: template
+            value_template: >-
+              {{ (states('number.heatbooster_master_bedroom_fan_speed') | float(-1)
+                  - states('input_number.heatmeisters_master_fan_state') | float(0)) | abs < 0.5
+                 and (states('number.heatbooster_chris_bedroom_fan_speed') | float(-1)
+                      - states('input_number.heatmeisters_chris_fan_state') | float(0)) | abs < 0.5
+                 and (states('number.heatbooster_julia_bedroom_fan_speed') | float(-1)
+                      - states('input_number.heatmeisters_julia_fan_state') | float(0)) | abs < 0.5
+                 and (states('number.heatbooster_computer_room_fan_speed') | float(-1)
+                      - states('input_number.heatmeisters_computer_fan_state') | float(0)) | abs < 0.5 }}
+        then:
+          - action: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.heatmeisters_startup_boost_active
 
-  # While cooling, keep every booster at or above the configured cooling speed. The 5-minute
-  # heartbeat retries if the climate transition was missed while the Modbus switch was
-  # temporarily unavailable.
+  # Enter the cooling regime once and save the user speeds. A startup boost must finish first so
+  # its temporary speeds are never captured as user values.
   - id: heatmeisters_on_when_cooling_auto
     alias: "HeatMeisters on when cooling auto"
     description: "Keeps the fan speeds at the cooling minimum while cooling"
@@ -204,6 +280,11 @@ automation:
       - trigger: state
         entity_id: climate.therma_v_heating_cooling
         to: "cool"
+      - trigger: state
+        entity_id: input_boolean.heatmeisters_startup_boost_active
+        to: "off"
+      - trigger: homeassistant
+        event: start
       - trigger: time_pattern
         minutes: "/5"
     conditions:
@@ -220,6 +301,9 @@ automation:
         value_template: "{{ is_state('climate.therma_v_heating_cooling', 'cool') }}"
       - condition: state
         entity_id: input_boolean.heatmeisters_cool_active
+        state: "off"
+      - condition: state
+        entity_id: input_boolean.heatmeisters_startup_boost_active
         state: "off"
     actions:
       - action: input_number.set_value
@@ -253,6 +337,84 @@ automation:
       - action: input_boolean.turn_on
         target:
           entity_id: input_boolean.heatmeisters_cool_active
+      - choose:
+          - conditions:
+              - condition: numeric_state
+                entity_id: number.heatbooster_master_bedroom_fan_speed
+                below: input_number.heatmeisters_cooling_fan_speed
+            sequence:
+              - action: number.set_value
+                continue_on_error: true
+                target:
+                  entity_id: number.heatbooster_master_bedroom_fan_speed
+                data:
+                  value: "{{ states('input_number.heatmeisters_cooling_fan_speed') }}"
+      - choose:
+          - conditions:
+              - condition: numeric_state
+                entity_id: number.heatbooster_chris_bedroom_fan_speed
+                below: input_number.heatmeisters_cooling_fan_speed
+            sequence:
+              - action: number.set_value
+                continue_on_error: true
+                target:
+                  entity_id: number.heatbooster_chris_bedroom_fan_speed
+                data:
+                  value: "{{ states('input_number.heatmeisters_cooling_fan_speed') }}"
+      - choose:
+          - conditions:
+              - condition: numeric_state
+                entity_id: number.heatbooster_julia_bedroom_fan_speed
+                below: input_number.heatmeisters_cooling_fan_speed
+            sequence:
+              - action: number.set_value
+                continue_on_error: true
+                target:
+                  entity_id: number.heatbooster_julia_bedroom_fan_speed
+                data:
+                  value: "{{ states('input_number.heatmeisters_cooling_fan_speed') }}"
+      - choose:
+          - conditions:
+              - condition: numeric_state
+                entity_id: number.heatbooster_computer_room_fan_speed
+                below: input_number.heatmeisters_cooling_fan_speed
+            sequence:
+              - action: number.set_value
+                continue_on_error: true
+                target:
+                  entity_id: number.heatbooster_computer_room_fan_speed
+                data:
+                  value: "{{ states('input_number.heatmeisters_cooling_fan_speed') }}"
+
+  # Reassert the cooling minimum independently from the initial save. This is the restart and
+  # device-recovery path used while heatmeisters_cool_active is already on.
+  - id: heatmeisters_reconcile_cooling_auto
+    alias: "HeatMeisters reconcile cooling auto"
+    description: "Reasserts the cooling minimum after restart or device recovery"
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: homeassistant
+        event: start
+      - trigger: time_pattern
+        minutes: "/5"
+    conditions:
+      - condition: state
+        entity_id: switch.therma_v_heating_cooling_on_off
+        state: "on"
+      - condition: state
+        entity_id: binary_sensor.therma_v_defrost_state
+        state: "off"
+      - condition: state
+        entity_id: binary_sensor.therma_v_dhw_heating_state
+        state: "off"
+      - condition: state
+        entity_id: climate.therma_v_heating_cooling
+        state: "cool"
+      - condition: state
+        entity_id: input_boolean.heatmeisters_cool_active
+        state: "on"
+    actions:
       - choose:
           - conditions:
               - condition: numeric_state
