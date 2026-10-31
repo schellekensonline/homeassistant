@@ -319,3 +319,57 @@ rest_command:
     timeout: 60
     content_type: "application/json"
     payload: "{{ config_json }}"
+
+automation:
+  # One-shot ownership handover shared by the heat pump and Sessy. The ESS mode is reset because
+  # EMHASS assumes nominal heat-pump power; the HP is excluded from ZoM because its actual and
+  # planned power are already represented by EMHASS.
+  - id: therma_v_ess_normal_on_emhass_handover
+    alias: "EMHASS handover: ESS normal and heat pump excluded from ZoM"
+    description: "Initializes ESS and ZoM ownership when EMHASS takes control"
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id: input_select.therma_v_control_strategy
+        to: "EMHASS"
+      - trigger: homeassistant
+        event: start
+    conditions:
+      - condition: state
+        entity_id: input_select.therma_v_control_strategy
+        state: "EMHASS"
+      # Do not keep rewriting either helper after the one-shot handover has completed.
+      - condition: or
+        conditions:
+          - condition: template
+            value_template: >-
+              {% set options = state_attr('input_select.therma_v_ess_select', 'options')
+                               | default([], true) %}
+              {{ options | length > 2
+                 and states('input_select.therma_v_ess_select') != options[2] }}
+          - condition: state
+            entity_id: input_boolean.sessy_zom_exclude_heat_pump
+            state: "off"
+    actions:
+      - if:
+          - condition: template
+            value_template: >-
+              {% set options = state_attr('input_select.therma_v_ess_select', 'options')
+                               | default([], true) %}
+              {{ options | length > 2
+                 and states('input_select.therma_v_ess_select') != options[2] }}
+        then:
+          - action: input_select.select_option
+            target:
+              entity_id: input_select.therma_v_ess_select
+            data:
+              option: '{{ state_attr("input_select.therma_v_ess_select", "options")[2] }}'
+      - if:
+          - condition: state
+            entity_id: input_boolean.sessy_zom_exclude_heat_pump
+            state: "off"
+        then:
+          - action: input_boolean.turn_on
+            target:
+              entity_id: input_boolean.sessy_zom_exclude_heat_pump

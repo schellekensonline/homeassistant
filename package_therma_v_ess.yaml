@@ -249,34 +249,6 @@ automation:
             data:
               option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 7 ] }}' # Low power state.
 
-  # EMHASS assumes the heat pump's normal min/nominal power. Never carry a heuristic
-  # power-saving/high-power ESS state across the handover; the synchronizer below writes register 9.
-  - id: therma_v_ess_normal_on_emhass_handover
-    alias: "Therma V ESS normal on EMHASS handover"
-    description: "Selects normal ESS operation whenever EMHASS takes ownership"
-    mode: single
-    max_exceeded: silent
-    triggers:
-      - trigger: state
-        entity_id: input_select.therma_v_control_strategy
-        to: "EMHASS"
-      - trigger: homeassistant
-        event: start
-    conditions:
-      - condition: state
-        entity_id: input_select.therma_v_control_strategy
-        state: "EMHASS"
-      - condition: template
-        value_template: >-
-          {{ states('input_select.therma_v_ess_select')
-             != state_attr('input_select.therma_v_ess_select', 'options')[2] }}
-    actions:
-      - action: input_select.select_option
-        target:
-          entity_id: input_select.therma_v_ess_select
-        data:
-          option: '{{ state_attr("input_select.therma_v_ess_select", "options")[ 2 ] }}'
-
   # Keep the input select and Modbus register 9 in sync. sensor.therma_v_energy_state reads the
   # heat pump's current state back from register 11. The catch-up trigger repairs a missed write
   # only after the readback grace period; its action must use the select state because a template
