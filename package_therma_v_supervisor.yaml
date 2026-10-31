@@ -197,10 +197,10 @@ template:
                states('sensor.therma_v_operation_mode') | int(-1) == 4
                and is_state('input_select.therma_v_control_strategy', 'EMHASS')
                and is_state('input_boolean.therma_v_supervisor_space_heat_enabled', 'on') %}
-          {{ is_state('binary_sensor.therma_v_hvac_run_active', 'on')
-             and not is_state('binary_sensor.therma_v_heat_plan_ready', 'on')
-             and (is_state('input_boolean.therma_v_supervisor_hvac_recovery', 'on')
-                  or heat_owned_waiting) }}
+          {{ not is_state('binary_sensor.therma_v_heat_plan_ready', 'on')
+             and (heat_owned_waiting
+                  or (is_state('binary_sensor.therma_v_hvac_run_active', 'on')
+                      and is_state('input_boolean.therma_v_supervisor_hvac_recovery', 'on'))) }}
         attributes:
           heat_plan_ready: "{{ is_state('binary_sensor.therma_v_heat_plan_ready', 'on') }}"
           recovery: "{{ is_state('input_boolean.therma_v_supervisor_hvac_recovery', 'on') }}"
@@ -689,7 +689,8 @@ template:
           next_disinfection: "{{ states('input_datetime.dhw_next_disinfection') }}"
 
   # Proposed heat actuator profile: 2 h energy-preserving blocks, directional edge correction,
-  # then a 15 min first-order filter with immediate OFF and the physical 550 W minimum.
+  # bridge an isolated single-quarter OFF between active neighbours, then a 15 min first-order
+  # filter with immediate OFF and the physical 550 W minimum.
   # This sensor is computed even while the heat gate is off, but does not write any actuator.
   - trigger:
       - trigger: state
@@ -791,13 +792,33 @@ template:
           {% endif %}
           {% set edge_groups.values = edge_groups.values + [corrected] %}
         {% endfor %}
+        {% set raw_edges = namespace(values=[]) %}
+        {% for group_values in edge_groups.values %}
+          {% for value in group_values %}
+            {% set raw_edges.values = raw_edges.values + [value] %}
+          {% endfor %}
+        {% endfor %}
+        {% set bridged_edges = namespace(values=raw_edges.values, count=0) %}
+        {% for value in raw_edges.values %}
+          {% set idx = loop.index0 %}
+          {% if value <= 0 and idx > 0 and idx + 1 < (raw_edges.values | length)
+                and raw_edges.values[idx - 1] > 0 and raw_edges.values[idx + 1] > 0 %}
+            {% set bridge_power =
+                 [min_power, [raw_edges.values[idx - 1], raw_edges.values[idx + 1]] | min] | max %}
+            {% set values = bridged_edges.values %}
+            {% set bridged_edges.values =
+                 values[:idx] + [bridge_power] + values[idx + 1:] %}
+            {% set bridged_edges.count = bridged_edges.count + 1 %}
+          {% endif %}
+        {% endfor %}
         {% set profile_points = namespace(list=[]) %}
         {% set filtered = namespace(value=seeded_iir) %}
+        {% set point_number = namespace(value=0) %}
         {% for group_values in groups.values %}
           {% set group_idx = loop.index0 %}
           {% for point in group_values %}
             {% set point_idx = loop.index0 %}
-            {% set target = edge_groups.values[group_idx][point_idx] %}
+            {% set target = bridged_edges.values[point_number.value] %}
             {% if target <= 0 %}
               {% set filtered.value = 0.0 %}
             {% else %}
@@ -810,8 +831,10 @@ template:
               'raw': point.raw | round(0),
               'blocked': blocked_groups.values[group_idx][point_idx] | round(1),
               'edge': target | round(1),
+              'edge_unbridged': raw_edges.values[point_number.value] | float(0) | round(1),
               'iir': filtered.value | round(1)
             }] %}
+            {% set point_number.value = point_number.value + 1 %}
           {% endfor %}
         {% endfor %}
         {% set current = namespace(found=false, value=0.0, raw=0.0, edge=0.0, iir=0.0) %}
@@ -859,7 +882,8 @@ template:
           'thermal_power': q_thermal,
           'quarter': quarter | int,
           'alpha': 0.6321205588,
-          'min_power': min_power
+          'min_power': min_power,
+          'single_quarter_bridges': bridged_edges.count
         } }}
     sensor:
       - name: "Therma V heat plan processed power"
@@ -885,6 +909,7 @@ template:
           quarter: "{{ heat_profile.quarter }}"
           filter_alpha: "{{ heat_profile.alpha }}"
           min_power: "{{ heat_profile.min_power }}"
+          single_quarter_bridges: "{{ heat_profile.single_quarter_bridges }}"
           points: "{{ heat_profile.points }}"
 
 automation:
@@ -904,10 +929,14 @@ automation:
       - trigger: state
         entity_id: sensor.therma_v_heat_plan_processed_power
         attribute: quarter
+        # Let the template recompute for the new quarter before its edge is consumed. Firing at the
+        # exact boundary can otherwise advance the IIR from the previous quarter's edge.
+        for: "00:00:05"
       - trigger: homeassistant
         event: start
       - trigger: time_pattern
         minutes: "/1"
+        seconds: 5
     conditions:
       - condition: template
         value_template: >-
@@ -1324,9 +1353,9 @@ automation:
             EMHASS HVAC handover armed for mode
             {{ states('sensor.therma_v_operation_mode') }}; waiting for the next MPC
 
-  # An active space run keeps its current water target when EMHASS ownership is lost. The target
-  # hold releases as soon as the compressor cycle ends, then the normal temperature controller owns
-  # the next request. While ownership is being acquired, the same hold bridges the stale-plan gap.
+  # EMHASS acquisition keeps the current water target until a post-handover MPC exists, even if the
+  # compressor is idle, so P/curve cannot write during the bridge. On ownership loss, an active
+  # cycle keeps that same target until it ends; the normal controller then owns the next request.
   - id: therma_v_supervisor_hvac_recovery
     alias: "Therma V supervisor HVAC recovery"
     description: "Holds the current water target through an HVAC ownership handover"

@@ -170,8 +170,9 @@ script:
             {% set acc = namespace(items=[], hp_kwh=0.0, booster_kwh=0.0,
                                  total_kwh=0.0, heat_demand_kwh=0.0, nonzero=0,
                                  temp_min=none, temp_max=none) %}
-            {# Heat/cool preview uses the actuator profile: two-hour blocks, directional edges and
-               a 15 min first-order filter with immediate OFF and the modelled source minimum. #}
+            {# Heat/cool preview uses the actuator profile: two-hour blocks, directional edges,
+               a single-quarter OFF bridge, then a 15 min first-order filter with immediate OFF
+               outside the bridge and the modelled source minimum. #}
             {% set min_power = space_source.min_power | float(550) %}
             {% set raw_points = namespace(list=[]) %}
             {% for entry in plan %}
@@ -248,22 +249,35 @@ script:
               {% endif %}
               {% set edge_groups.values = edge_groups.values + [corrected] %}
             {% endfor %}
+            {% set raw_edges = namespace(values=[]) %}
+            {% for group_values in edge_groups.values %}
+              {% for value in group_values %}
+                {% set raw_edges.values = raw_edges.values + [value] %}
+              {% endfor %}
+            {% endfor %}
+            {% set bridged_edges = namespace(values=raw_edges.values) %}
+            {% for value in raw_edges.values %}
+              {% set idx = loop.index0 %}
+              {% if value <= 0 and idx > 0 and idx + 1 < (raw_edges.values | length)
+                    and raw_edges.values[idx - 1] > 0 and raw_edges.values[idx + 1] > 0 %}
+                {% set bridge_power =
+                     [min_power, [raw_edges.values[idx - 1], raw_edges.values[idx + 1]] | min] | max %}
+                {% set values = bridged_edges.values %}
+                {% set bridged_edges.values =
+                     values[:idx] + [bridge_power] + values[idx + 1:] %}
+              {% endif %}
+            {% endfor %}
             {% set processed_pe = namespace(values=[]) %}
             {% set filtered = namespace(value=0.0) %}
-            {% for group_values in groups.values %}
-              {% set group_idx = loop.index0 %}
-              {% for point in group_values %}
-                {% set point_idx = loop.index0 %}
-                {% set target = edge_groups.values[group_idx][point_idx] %}
-                {% if target <= 0 %}
-                  {% set filtered.value = 0.0 %}
-                {% else %}
-                  {% set filtered.value =
-                       [min_power, filtered.value
-                        + 0.6321205588 * (target - filtered.value)] | max %}
-                {% endif %}
-                {% set processed_pe.values = processed_pe.values + [filtered.value] %}
-              {% endfor %}
+            {% for target in bridged_edges.values %}
+              {% if target <= 0 %}
+                {% set filtered.value = 0.0 %}
+              {% else %}
+                {% set filtered.value =
+                     [min_power, filtered.value
+                      + 0.6321205588 * (target - filtered.value)] | max %}
+              {% endif %}
+              {% set processed_pe.values = processed_pe.values + [filtered.value] %}
             {% endfor %}
             {% for entry in plan %}
               {% set current_idx = loop.index0 %}
