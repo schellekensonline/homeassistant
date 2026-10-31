@@ -67,14 +67,13 @@ sensor.temp_predicted2:
 # `number.*` and `input_number.*`: Home Assistant only compiles long-term statistics for
 #   `sensor` entities. A `state_class` added here does show up on the entity's state, but no
 #   statistics are written for it - checked on 2026-09-19 with
-#   `number.sessy_api_strategy_zom_state` and `input_number.dhw_setpoint_state`: both kept
-#   reporting zero 5-minute statistics while the Forecast.Solar sensors produced points in the
-#   same period. A mirror template sensor would work, but the rule is that the device value is
+#   `number.sessy_api_strategy_zom_state`: it kept reporting zero 5-minute statistics while the
+#   Forecast.Solar sensors produced points in the same period. A mirror template sensor would work,
+#   but the rule is that the device value is
 #   the truth: `sensor.therma_v_dhw_target_temperature` already records the real DHW setpoint,
 #   and `sensor.sessy_grid_total_power` already records what the battery really does (the setpoint
 #   itself is only in the REST attributes, and only adds the tracking difference). Helpers stay without history on purpose;
-#   `input_number.dhw_setpoint_state` is only memory to put the old setpoint back after a
-#   disinfection cycle. Only mirror a helper when the device reports nothing comparable.
+#   only mirror a helper when the device reports nothing comparable.
 # `sensor.nord_pool_nl_*` (4): the raw market-price sensors. Our own
 #   `sensor.electricity_buying_price` and `sensor.electricity_selling_price` record the same
 #   prices, already with statistics.

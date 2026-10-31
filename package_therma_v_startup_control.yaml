@@ -162,7 +162,7 @@ input_number:
     min: 10
     max: 45
     step: 1
-    initial: 20
+    initial: 25
     mode: box
     unit_of_measurement: "°C"
     icon: mdi:thermometer-low

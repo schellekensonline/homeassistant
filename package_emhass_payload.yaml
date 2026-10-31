@@ -3,6 +3,13 @@
 # JSON body for *both* optimisations, so the MPC (package_emhass_mpc.yaml) and the day-ahead
 # (package_emhass_dayahead.yaml) always describe the same house;
 # script.emhass_price_guard decides whether a run makes sense at all.
+rest_command:
+  emhass_open_meteo_forecast:
+    url: >-
+      https://api.open-meteo.com/v1/forecast?latitude={{ state_attr('zone.home', 'latitude') }}&longitude={{ state_attr('zone.home', 'longitude') }}&minutely_15=temperature_2m&forecast_days=2&timeformat=unixtime&timezone=UTC
+    method: GET
+    timeout: 30
+
 script:
   # Build the JSON body for the two EMHASS optimisations. One script for both, so the MPC (every
   # 15 minutes) and the day-ahead (once a day, when tomorrow's prices arrive) always describe the
@@ -64,6 +71,9 @@ script:
         selector:
           boolean:
     sequence:
+      - action: rest_command.emhass_open_meteo_forecast
+        response_variable: weather_response
+        continue_on_error: true
       - variables:
           # Both plans start at the current quarter hour. EMHASS's day-ahead horizon also starts
           # at run time and maps price lists positionally, so pass the available prices from now.
@@ -97,12 +107,72 @@ script:
             {# Floor the run start so both plans use the same current-quarter price window. #}
             {% set minute = now().minute %}
             {% set quarter_start = now().replace(minute=(minute - (minute % 15)), second=0, microsecond=0).isoformat() %}
-            {% set incl = state_attr('sensor.electricity_buying_price', 'prices') | selectattr('time', '>=', quarter_start) | map(attribute='price') | list %}
-            {% set excl = state_attr('sensor.electricity_selling_price', 'prices') | selectattr('time', '>=', quarter_start) | map(attribute='price') | list %}
+            {% set buy_price_points = state_attr('sensor.electricity_buying_price', 'prices') | sort(attribute='time') | list %}
+            {% set sell_price_points = state_attr('sensor.electricity_selling_price', 'prices') | sort(attribute='time') | list %}
+            {% set incl = buy_price_points | selectattr('time', '>=', quarter_start) | map(attribute='price') | list %}
+            {% set excl = sell_price_points | selectattr('time', '>=', quarter_start) | map(attribute='price') | list %}
+            {% set incl_before = buy_price_points | selectattr('time', '<', quarter_start) | map(attribute='price')
+                                | map('round', 4) | list %}
             {% set incl_rounded = incl | map('round', 4) | list %}
             {% set excl_rounded = excl | map('round', 4) | list %}
             {# Cap to the available price quarters; EMHASS rejects a horizon/length mismatch. #}
             {% set n = min(96, incl_rounded | length) %}
+            {# Pass the same 15-minute outdoor forecast to EMHASS and the HA Q calculation. #}
+            {% set weather_content = weather_response.content
+                 if weather_response is defined and weather_response.content is defined else {} %}
+            {% set weather_body = weather_content if weather_content is mapping
+                                  else weather_content | from_json %}
+            {% set weather_minutely = weather_body.get('minutely_15', {})
+                                      if weather_body is mapping else {} %}
+            {% set weather_times = weather_minutely.get('time', []) %}
+            {% set weather_temps = weather_minutely.get('temperature_2m', []) %}
+            {% set quarter_start_ts = as_timestamp(quarter_start) %}
+            {% set outdoor_forecast = namespace(list=[]) %}
+            {% for i in range(weather_times | length) %}
+              {% if weather_times[i] >= quarter_start_ts
+                    and outdoor_forecast.list | length < n %}
+                {% set outdoor_forecast.list = outdoor_forecast.list
+                     + [weather_temps[i] | float(0)] %}
+              {% endif %}
+            {% endfor %}
+            {% set outdoor_forecast_ready = outdoor_forecast.list | length >= n %}
+            {# Space heat sees two zero-phase passes of a 1 h MA; the battery keeps the real tariff.
+               Applying a 4-tap MA forward+backward twice is the symmetric 13-tap kernel below. #}
+            {% set heat_price_prices = namespace(list=[]) %}
+            {% set heat_price_history = incl_before[-6:] %}
+            {% set heat_price_right = (incl_rounded[-7:-1] | reverse | list)
+                                      if incl_rounded | length >= 7
+                                      else [incl_rounded[-1]] * 6 %}
+            {% set heat_price_padded =
+                 [incl_rounded[0]] * (6 - (heat_price_history | length))
+                 + heat_price_history + incl_rounded + heat_price_right %}
+            {# filtfilt(MA4) applied twice: convolution of [1,2,3,4,3,2,1]/16 with itself. #}
+            {% set heat_price_kernel = [
+                 0.00390625, 0.015625, 0.0390625, 0.078125, 0.12109375,
+                 0.15625, 0.171875, 0.15625, 0.12109375, 0.078125,
+                 0.0390625, 0.015625, 0.00390625] %}
+            {% for i in range(n) %}
+              {% set heat_price_value = namespace(value=0.0) %}
+              {% for j in range(13) %}
+                {% set heat_price_value.value = heat_price_value.value
+                     + heat_price_padded[i + j] * heat_price_kernel[j] %}
+              {% endfor %}
+              {% set heat_price_prices.list = heat_price_prices.list
+                   + [heat_price_value.value | round(4)] %}
+            {% endfor %}
+            {# DHW gets one zero-phase 1 h pass: gentler than the space-heat double pass. #}
+            {% set dhw_price_prices = namespace(list=[]) %}
+            {% set dhw_price_kernel = [
+                 0.0625, 0.125, 0.1875, 0.25, 0.1875, 0.125, 0.0625] %}
+            {% for i in range(n) %}
+              {% set dhw_price_value = namespace(value=0.0) %}
+              {% for j in range(7) %}
+                {% set dhw_price_value.value = dhw_price_value.value
+                     + heat_price_padded[i + 3 + j] * dhw_price_kernel[j] %}
+              {% endfor %}
+              {% set dhw_price_prices.list = dhw_price_prices.list
+                   + [dhw_price_value.value | round(4)] %}
+            {% endfor %}
             {% set fc = state_attr('sensor.p_load_forecast', 'forecasts') or [] %}
             {% set acc = namespace(wh=0.0, n=0, started=False) %}
             {% for x in fc %}
@@ -136,7 +206,7 @@ script:
             {% set dhw_now = states('sensor.therma_v_dhw_temperature') | float(50) %}
             {% set dhw_target = states('input_number.therma_v_dhw_target_request') | float(50) %}
             {% set dhw_min = state_attr(ba,'dhw_min_temperature') | float(42) %}
-            {% set dhw_max = state_attr(ba,'dhw_max_temperature') | float(68) %}
+            {% set dhw_max = min(state_attr(ba,'dhw_max_temperature') | float(65), 65) %}
             {% set dhw_boost_max = min(dhw_max,
                                        states('input_number.therma_v_supervisor_booster_max_temperature') | float(dhw_max)) %}
             {% set disinfection_due = is_state('input_boolean.dhw_disinfection_due', 'on') %}
@@ -150,16 +220,17 @@ script:
             {% set cool_season = pump_mode == 'cool' %}
             {# Readiness, not relay state, keeps planned capacity available while control cycles. #}
             {% set hp_owned = is_state('input_select.therma_v_control_strategy', 'EMHASS') %}
-            {% set master_on = is_state('switch.therma_v_heating_cooling_on_off', 'on') %}
+            {% set hvac_master_on = is_state('switch.therma_v_heating_cooling_on_off', 'on') %}
             {% set heat_ready = is_state('input_boolean.therma_v_supervisor_space_heat_enabled', 'on') %}
             {% set cool_ready = is_state('input_boolean.therma_v_supervisor_cooling_enabled', 'on') %}
             {% set dhw_ready = is_state('input_boolean.therma_v_supervisor_dhw_enabled', 'on') %}
             {# Previews bypass ownership and supervisor gates so a parked flow can still be inspected. #}
-            {% set hp_dhw = preview_mode == 'dhw' if previewing else (hp_owned and master_on and dhw_ready) %}
+            {# The heating/cooling switch does not control DHW; the independent DHW coil does. #}
+            {% set hp_dhw = preview_mode == 'dhw' if previewing else (hp_owned and dhw_ready) %}
             {% set hp_heat = preview_mode == 'heat' if previewing
-                 else (hp_owned and master_on and heat_ready and heat_season) %}
+                 else (hp_owned and hvac_master_on and heat_ready and heat_season) %}
             {% set hp_cool = preview_mode == 'cool' if previewing
-                 else (hp_owned and master_on and cool_ready and cool_season) %}
+                 else (hp_owned and hvac_master_on and cool_ready and cool_season) %}
             {% set hp_space = hp_heat or hp_cool %}
             {% set sp_heat = states('input_number.room_setpoint_heating') | float(20) %}
             {% set sp_cool = states('input_number.room_setpoint_cooling') | float(24) %}
@@ -195,7 +266,6 @@ script:
               {% set draw_values.list = [0.0] * n %}
             {% endif %}
             {% set dhw_draw = draw_values.list %}
-            {% set quarter_start_ts = as_timestamp(quarter_start) %}
             {% set mins = namespace(list=[]) %}
             {% set maxes = namespace(list=[]) %}
             {% set booster_costs = namespace(list=[]) %}
@@ -230,8 +300,9 @@ script:
             {
               "load_cost_forecast": {{ incl_rounded | to_json }},
               "prod_price_forecast": {{ excl_rounded | to_json }},
+              {% if outdoor_forecast_ready %}"outdoor_temperature_forecast": {{ outdoor_forecast.list[:n] | to_json }},{% endif %}
               "prediction_horizon": {{ n }},
-              {% if day_ahead or dry_run %}"lp_solver_timeout": 120,{% endif %}
+              {% if day_ahead or dry_run %}"lp_solver_timeout": 90,{% endif %}
               {# Match actuator limits so EMHASS cannot plan power the Sessy will clip. #}
               "battery_charge_power_max": {{ states('input_number.sessy_api_strategy_max_charge_power') | int(6000) }},
               "battery_discharge_power_max": {{ states('input_number.sessy_api_strategy_max_discharge_power') | int(3000) }},
@@ -264,12 +335,15 @@ script:
                   {"id": "hp_dhw", "type": "heatpump",
                    "nominal_power": {{ hp_nom }}, "min_power": 3100,
                    "treat_as_semi_cont": false,
+                   "cost_track": "hp_dhw_price",
                    "supply_temperature": {{ min(dhw_target, 53) }},
                    "carnot_efficiency": {{ state_attr(ba,'dhw_carnot_efficiency') | float(0.26) }},
                    "max_supply_temperature": 55, "max_thermal_power": 9000},
                   {"id": "hp_space", "type": "heatpump",
                    "nominal_power": {{ hp_nom }}, "min_power": 550,
                    "treat_as_semi_cont": false,
+                   "startup_penalty": 0.75, "max_startups": 6,
+                   {% if hp_heat or hp_cool %}"cost_track": "hp_space_price",{% endif %}
                    {% if hp_cool %}
                    "supply_temperature": {{ state_attr(ba,'cooling_supply_temperature') | float(16) }},
                    {% else %}
@@ -312,7 +386,9 @@ script:
                    "profile": {{ dhw_draw | to_json }}}
                 ],
                 "cost_tracks": {
-                  "booster_gate": {{ booster_costs.list | to_json }}
+                  "booster_gate": {{ booster_costs.list | to_json }},
+                  "hp_dhw_price": {{ dhw_price_prices.list | to_json }},
+                  "hp_space_price": {{ heat_price_prices.list | to_json }}
                 },
                 "flows": [
                   {"from": "hp_dhw", "to": "dhw"},

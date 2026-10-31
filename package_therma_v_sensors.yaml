@@ -66,6 +66,20 @@ template:
 
         {{ (p_hp+p_dhw_cir) | round(0) }}
 
+    # Electrical boundary used by the EMHASS thermal loads: heat pump meter plus the external
+    # DHW booster. Exclude the unplanned circulation pump so plan-versus-reality stays comparable.
+    - name: "Therma V planned-load electric power"
+      unique_id: therma_v_planned_load_electric_power
+      state_class: measurement
+      device_class: power
+      unit_of_measurement: "W"
+      availability: >-
+        {{ states('sensor.kwh_meter_heat_pump_active_power') | is_number
+           and states('sensor.shelly_plug_s1_power') | is_number }}
+      state: >-
+        {{ (states('sensor.kwh_meter_heat_pump_active_power') | float(0)
+            + states('sensor.shelly_plug_s1_power') | float(0)) | round(0) }}
+
     # Cost of delivered heat in EUR per kWh (electricity price divided by COP)
     - name: "Price of heat incl tax"
       unique_id: price_of_heat_incl_tax

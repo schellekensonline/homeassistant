@@ -12,7 +12,7 @@ rest_command:
     # can take longer than the 10 second default of rest_command. Timing out here means
     # Home Assistant abandons a run that EMHASS keeps working on, which collides with the
     # next scheduled run (that is what broke the run just after midnight).
-    # The day-plan payload overrides EMHASS's 45 s solver limit to 120 s. Keep this HTTP timeout
+    # The day-plan payload overrides EMHASS's 45 s solver limit to 90 s. Keep this HTTP timeout
     # above that so Home Assistant does not abandon a solve that is still making progress.
     timeout: 150
     content_type: "application/json"

@@ -65,9 +65,9 @@ input_number:
   therma_v_supervisor_booster_max_temperature:
     name: "Therma V supervisor booster maximum temperature"
     min: 55
-    max: 68
+    max: 63
     step: 0.5
-    initial: 66
+    initial: 63
     mode: box
     unit_of_measurement: "°C"
     icon: mdi:thermometer-high
@@ -127,6 +127,24 @@ template:
              or is_state('binary_sensor.therma_v_dhw_booster_state', 'on')
              or is_state('binary_sensor.therma_v_dhw_booster_2_state_s1', 'on') }}
   - sensor:
+      # Keep the safety trigger below the model's normal tank floor so the MPC has a 3 K
+      # opportunity to schedule a run before the supervisor forces one.
+      - name: "Therma V DHW safety floor"
+        unique_id: therma_v_dhw_safety_floor
+        icon: mdi:water-alert
+        device_class: temperature
+        state_class: measurement
+        unit_of_measurement: "°C"
+        availability: >-
+          {{ has_value('sensor.building_parameters')
+             and state_attr('sensor.building_parameters', 'dhw_min_temperature') | is_number }}
+        state: >-
+          {{ (state_attr('sensor.building_parameters', 'dhw_min_temperature') | float(45)) - 3 }}
+        attributes:
+          tank_min_temperature: >-
+            {{ state_attr('sensor.building_parameters', 'dhw_min_temperature') | float(45) }}
+          margin: 3
+
       # DHW chase layer: normal service request in, temporary effective setpoint out. It has no
       # side effects; the separate writer owns Modbus register 8.
       - name: "Therma V DHW setpoint effective"
@@ -139,11 +157,11 @@ template:
           {{ has_value('input_select.therma_v_control_strategy')
              and has_value('input_boolean.therma_v_supervisor_dhw_enabled')
              and has_value('input_number.therma_v_dhw_target_request')
-             and has_value('sensor.therma_v_dhw_temperature') }}
+             and has_value('sensor.therma_v_dhw_temperature')
+             and has_value('sensor.therma_v_dhw_safety_floor') }}
         state: >-
           {% set strategy = states('input_select.therma_v_control_strategy') %}
           {% set gate = is_state('input_boolean.therma_v_supervisor_dhw_enabled', 'on') %}
-          {% set master = is_state('switch.therma_v_heating_cooling_on_off', 'on') %}
           {% set last_mpc = state_attr('input_datetime.emhass_last_mpc', 'timestamp') %}
           {% set mode_since = state_attr('input_datetime.therma_v_supervisor_mode_since', 'timestamp') %}
           {% set fresh = is_state('binary_sensor.emhass_forecast_fresh', 'on')
@@ -155,7 +173,7 @@ template:
           {% set hp = states('sensor.p_deferrable0') | float(0) %}
           {% set threshold = states('input_number.therma_v_supervisor_power_threshold') | float(100) %}
           {% set temp = states('sensor.therma_v_dhw_temperature') | float(0) %}
-          {% set min_temp = state_attr('sensor.building_parameters', 'dhw_min_temperature') | float(42) %}
+          {% set safety_floor = states('sensor.therma_v_dhw_safety_floor') | float(42) %}
           {% set next_ts = state_attr('input_datetime.dhw_next_disinfection', 'timestamp') %}
           {% set lead_hours = states('input_number.dhw_disinfection_min_lead_hours') | float(5) %}
           {% set hold_minutes = states('input_number.dhw_disinfection_hold_minutes') | float(45) %}
@@ -167,15 +185,18 @@ template:
                         and next_ts is not none
                         and now().timestamp() >= next_ts
                         and now().timestamp() < next_ts + hold_minutes * 60 %}
-          {% if strategy != 'EMHASS' or not gate or not master %}
-          {{ normal | round(1) }}
-          {% elif is_state('input_boolean.dhw_disinfection_active', 'on') or hold %}
+          {% set disinfection_override =
+               (is_state('input_boolean.dhw_disinfection_active', 'on') or hold)
+               and gate %}
+          {% if disinfection_override %}
           60.0
+          {% elif strategy != 'EMHASS' or not gate %}
+          {{ normal | round(1) }}
           {% elif not fresh %}
           {{ normal | round(1) }}
           {% elif prepare and hp > threshold %}
           53.0
-          {% elif temp <= min_temp %}
+          {% elif temp <= safety_floor %}
           {{ normal | round(1) }}
           {% elif is_state('input_boolean.therma_v_supervisor_dhw_recovery', 'on') %}
           {{ normal | round(1) }}
@@ -188,7 +209,6 @@ template:
           mode: >-
             {% set strategy = states('input_select.therma_v_control_strategy') %}
             {% set gate = is_state('input_boolean.therma_v_supervisor_dhw_enabled', 'on') %}
-            {% set master = is_state('switch.therma_v_heating_cooling_on_off', 'on') %}
             {% set last_mpc = state_attr('input_datetime.emhass_last_mpc', 'timestamp') %}
             {% set mode_since = state_attr('input_datetime.therma_v_supervisor_mode_since', 'timestamp') %}
             {% set fresh = is_state('binary_sensor.emhass_forecast_fresh', 'on')
@@ -198,7 +218,7 @@ template:
             {% set hp = states('sensor.p_deferrable0') | float(0) %}
             {% set threshold = states('input_number.therma_v_supervisor_power_threshold') | float(100) %}
             {% set temp = states('sensor.therma_v_dhw_temperature') | float(0) %}
-            {% set min_temp = state_attr('sensor.building_parameters', 'dhw_min_temperature') | float(42) %}
+            {% set safety_floor = states('sensor.therma_v_dhw_safety_floor') | float(42) %}
             {% set next_ts = state_attr('input_datetime.dhw_next_disinfection', 'timestamp') %}
             {% set lead_hours = states('input_number.dhw_disinfection_min_lead_hours') | float(5) %}
             {% set hold_minutes = states('input_number.dhw_disinfection_hold_minutes') | float(45) %}
@@ -210,21 +230,22 @@ template:
                           and next_ts is not none
                           and now().timestamp() >= next_ts
                           and now().timestamp() < next_ts + hold_minutes * 60 %}
-            {% if strategy != 'EMHASS' %}
+            {% set disinfection_override =
+                 (is_state('input_boolean.dhw_disinfection_active', 'on') or hold)
+                 and gate %}
+            {% if disinfection_override %}
+            disinfection
+            {% elif strategy != 'EMHASS' %}
             off
             {% elif not gate %}
             disabled
-            {% elif not master %}
-            unit off
-            {% elif is_state('input_boolean.dhw_disinfection_active', 'on') or hold %}
-            disinfection
             {% elif not fresh %}
             fallback
             {% elif prepare and hp > threshold %}
             prepare
             {% elif hp > threshold %}
             force
-            {% elif temp <= min_temp %}
+            {% elif temp <= safety_floor %}
             safety force
             {% elif is_state('input_boolean.therma_v_supervisor_dhw_recovery', 'on') %}
             finish/recovery
@@ -354,7 +375,7 @@ template:
           {% set hp = states('sensor.p_deferrable0') | float(0) %}
           {% set booster = states('sensor.p_deferrable2') | float(0) %}
           {% set temp = states('sensor.therma_v_dhw_temperature') | float(0) %}
-          {% set min_temp = state_attr('sensor.building_parameters', 'dhw_min_temperature') | float(42) %}
+          {% set safety_floor = states('sensor.therma_v_dhw_safety_floor') | float(42) %}
           {% set threshold = states('input_number.therma_v_supervisor_power_threshold') | float(100) %}
           {% set next_ts = state_attr('input_datetime.dhw_next_disinfection', 'timestamp') %}
           {% set lead_hours = states('input_number.dhw_disinfection_min_lead_hours') | float(5) %}
@@ -367,19 +388,17 @@ template:
           off
           {% elif not is_state('input_boolean.therma_v_supervisor_dhw_enabled', 'on') %}
           DHW disabled
-          {% elif not is_state('switch.therma_v_heating_cooling_on_off', 'on') %}
-          unit off
-          {% elif not fresh %}
-          DHW fallback
           {% elif is_state('input_boolean.dhw_disinfection_active', 'on') %}
           disinfection
+          {% elif not fresh %}
+          DHW fallback
           {% elif is_state('input_boolean.therma_v_supervisor_dhw_recovery', 'on') %}
           DHW finish
           {% elif booster > threshold %}
           DHW + booster
           {% elif prepare and hp > threshold %}
           DHW prepare
-          {% elif hp > threshold or temp <= min_temp %}
+          {% elif hp > threshold or temp <= safety_floor %}
           DHW force
           {% else %}
           DHW defer
@@ -465,7 +484,6 @@ automation:
         entity_id:
           - input_select.therma_v_control_strategy
           - input_boolean.therma_v_supervisor_dhw_enabled
-          - switch.therma_v_heating_cooling_on_off
           - binary_sensor.emhass_forecast_fresh
           - input_datetime.emhass_last_mpc
           - input_datetime.therma_v_supervisor_mode_since
@@ -494,6 +512,7 @@ automation:
         value_template: >-
           {{ has_value('switch.therma_v_dhw_on_off')
              and has_value('switch.dhw_booster_2_switch')
+             and has_value('input_number.therma_v_supervisor_booster_max_temperature')
              and has_value('sensor.therma_v_dhw_temperature')
              and has_value('sensor.therma_v_dhw_setpoint_effective')
              and has_value('sensor.p_deferrable0')
@@ -508,13 +527,12 @@ automation:
                and last_mpc is not none
                and mode_since is not none
                and (last_mpc | float(0)) >= (mode_since | float(0)) }}
-          master_on: "{{ is_state('switch.therma_v_heating_cooling_on_off', 'on') }}"
           active: "{{ is_state('input_boolean.dhw_disinfection_active', 'on') }}"
           negative_price: "{{ states('sensor.electricity_buying_price') | float(0) < 0 }}"
           threshold: "{{ states('input_number.therma_v_supervisor_power_threshold') | float(100) }}"
           temp: "{{ states('sensor.therma_v_dhw_temperature') | float(0) }}"
           booster_power: "{{ states('sensor.p_deferrable2') | float(0) }}"
-          booster_max: "{{ states('input_number.therma_v_supervisor_booster_max_temperature') | float(66) }}"
+          booster_max: "{{ states('input_number.therma_v_supervisor_booster_max_temperature') | float(0) }}"
           next_ts: "{{ state_attr('input_datetime.dhw_next_disinfection', 'timestamp') }}"
           lead_hours: "{{ states('input_number.dhw_disinfection_min_lead_hours') | float(5) }}"
           hold_minutes: "{{ states('input_number.dhw_disinfection_hold_minutes') | float(45) }}"
@@ -533,7 +551,7 @@ automation:
           booster_permitted: "{{ (negative_price | bool) or (disinfection | bool) }}"
           booster_limit: "{{ booster_max if (booster_permitted | bool) else 55 }}"
           booster_wanted: >-
-            {{ (master_on | bool) and (fresh | bool)
+            {{ (fresh | bool)
                and (booster_power | float(0)) > (threshold | float(100))
                and (booster_permitted | bool)
                and (temp | float(0)) < (booster_limit | float(55)) }}
@@ -542,20 +560,9 @@ automation:
       - choose:
           - conditions:
               - condition: template
-                value_template: >-
-                  {{ (master_on | bool)
-                     and is_state('switch.therma_v_dhw_on_off', 'off') }}
+                value_template: "{{ is_state('switch.therma_v_dhw_on_off', 'off') }}"
             sequence:
               - action: switch.turn_on
-                target:
-                  entity_id: switch.therma_v_dhw_on_off
-          - conditions:
-              - condition: template
-                value_template: >-
-                  {{ (not (master_on | bool))
-                     and is_state('switch.therma_v_dhw_on_off', 'on') }}
-            sequence:
-              - action: switch.turn_off
                 target:
                   entity_id: switch.therma_v_dhw_on_off
       - choose:
@@ -581,8 +588,8 @@ automation:
   # The 45-minute topology hold consists of this 15-minute local preheat plus the following 30
   # minutes at 60 C, which is exactly the detection threshold.
   - id: therma_v_supervisor_capture_normal_setpoint
-    alias: "Therma V supervisor capture normal DHW setpoint"
-    description: "Stores the service setpoint before EMHASS changes it for preparation"
+    alias: "Therma V supervisor initialize DHW control"
+    description: "Initializes the EMHASS DHW owner without changing the user request"
     mode: single
     max_exceeded: silent
     triggers:
@@ -613,11 +620,6 @@ automation:
           entity_id: input_datetime.therma_v_supervisor_mode_since
         data:
           timestamp: "{{ now().timestamp() }}"
-      - action: input_number.set_value
-        target:
-          entity_id: input_number.dhw_setpoint_state
-        data:
-          value: "{{ states('input_number.therma_v_dhw_target_request') | float(50) }}"
       - action: input_boolean.turn_off
         target:
           entity_id: input_boolean.therma_v_supervisor_dhw_recovery
@@ -628,12 +630,12 @@ automation:
         data:
           name: DHW supervisor
           message: >-
-            Captured normal setpoint
-            {{ state_attr('climate.therma_v_dhw', 'temperature') | float(50) }} C
+            DHW control initialized; normal request
+            {{ states('input_number.therma_v_dhw_target_request') | float(50) }} C
 
   # Finish-latch: whenever a real DHW run starts (HP, internal booster or Shelly booster), hold the
-  # normal thermostat target until the tank has recovered. The same latch implements the 42 C safety
-  # floor, so a run cannot be cut short at 42.1 C by the tank-following setpoint.
+  # normal thermostat target until the tank has recovered. The same latch uses the dynamic safety
+  # floor, so a run cannot be cut short one tenth above it by the tank-following setpoint.
   - id: therma_v_supervisor_dhw_recovery
     alias: "Therma V supervisor DHW recovery"
     description: "Finishes an active DHW run and latches the low-tank bypass to the normal target"
@@ -643,10 +645,11 @@ automation:
       - trigger: state
         entity_id:
           - sensor.therma_v_dhw_temperature
-          - input_number.dhw_setpoint_state
+          - input_number.therma_v_dhw_target_request
           - input_select.therma_v_control_strategy
           - input_boolean.therma_v_supervisor_dhw_enabled
           - binary_sensor.therma_v_dhw_run_active
+          - sensor.therma_v_dhw_safety_floor
       - trigger: homeassistant
         event: start
       - trigger: time_pattern
@@ -659,17 +662,19 @@ automation:
         entity_id: input_boolean.therma_v_supervisor_dhw_enabled
         state: "on"
       - condition: template
-        value_template: "{{ has_value('sensor.therma_v_dhw_temperature') }}"
+        value_template: >-
+          {{ has_value('sensor.therma_v_dhw_temperature')
+             and has_value('sensor.therma_v_dhw_safety_floor') }}
     actions:
       - variables:
           temp: "{{ states('sensor.therma_v_dhw_temperature') | float(0) }}"
-          min_temp: "{{ state_attr('sensor.building_parameters', 'dhw_min_temperature') | float(42) }}"
-          normal: "{{ states('input_number.dhw_setpoint_state') | float(50) }}"
+          safety_floor: "{{ states('sensor.therma_v_dhw_safety_floor') | float(42) }}"
+          normal: "{{ states('input_number.therma_v_dhw_target_request') | float(50) }}"
           run_active: "{{ is_state('binary_sensor.therma_v_dhw_run_active', 'on') }}"
       - if:
           - condition: template
             value_template: >-
-              {{ (temp | float(0)) <= (min_temp | float(42))
+              {{ (temp | float(0)) <= (safety_floor | float(42))
                  or (run_active | bool) }}
         then:
           - action: input_boolean.turn_on
@@ -763,9 +768,6 @@ automation:
         entity_id: input_boolean.therma_v_supervisor_dhw_enabled
         state: "on"
       - condition: state
-        entity_id: switch.therma_v_heating_cooling_on_off
-        state: "on"
-      - condition: state
         entity_id: input_boolean.dhw_disinfection_due
         state: "on"
       - condition: state
@@ -793,11 +795,6 @@ automation:
           entity_id: input_datetime.dhw_disinfection_started
         data:
           timestamp: "{{ now().timestamp() }}"
-      - action: input_number.set_value
-        target:
-          entity_id: input_number.dhw_setpoint_state
-        data:
-          value: "{{ states('input_number.therma_v_dhw_target_request') | float(50) }}"
       - action: input_boolean.turn_on
         target:
           entity_id: input_boolean.dhw_disinfection_active
@@ -807,11 +804,6 @@ automation:
       - action: switch.turn_on
         target:
           entity_id: switch.therma_v_dhw_on_off
-      - action: climate.set_temperature
-        target:
-          entity_id: climate.therma_v_dhw
-        data:
-          temperature: 60
       - action: timer.start
         target:
           entity_id: timer.dhw_disinfection_preheat
@@ -819,8 +811,8 @@ automation:
         data:
           name: DHW disinfection
           message: >-
-            EMHASS preheat started; normal setpoint
-            {{ states('input_number.dhw_setpoint_state') }} C
+            EMHASS preheat started; normal request
+            {{ states('input_number.therma_v_dhw_target_request') | float(50) }} C
 
   # Hand the physical DHW/booster layer back safely when leaving EMHASS or disabling the DHW gate.
   - id: therma_v_supervisor_handover

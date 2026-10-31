@@ -55,16 +55,6 @@ input_number:
     max: 14
     step: 1
     mode: slider
-  dhw_setpoint_state:
-    # Stored normal DHW target to restore after a disinfection cycle. Match the climate limits so
-    # an accidental value can never produce an invalid target.
-    name: "DHW setpoint state"
-    initial: 50
-    min: 40
-    max: 70
-    step: 1
-    mode: slider
-    unit_of_measurement: "°C"
   dhw_disinfection_timeout_hours:
     name: "DHW disinfection timeout"
     initial: 4
@@ -304,9 +294,8 @@ automation:
                 data:
                   datetime: "{{ cheapest_hours_start }}"
 
-  # Start the local path: store the normal setpoint, raise the target and run a restart-safe
-  # preheat timer. A timer is used instead of a blocking delay so a restart cannot leave the
-  # cycle half-started with no recovery path.
+  # Start the local path by raising the effective-layer override and a restart-safe preheat timer.
+  # The user request stays untouched, so it can still be changed during the cycle.
   - id: dhw_disinfection_run_auto
     alias: "DHW disinfection run auto"
     description: "Starts preheat for a due local disinfection cycle"
@@ -324,14 +313,14 @@ automation:
         state: "off"
       - condition: template
         value_template: "{{ not is_state('input_select.therma_v_control_strategy', 'EMHASS') }}"
+      - condition: state
+        entity_id: input_boolean.therma_v_supervisor_dhw_enabled
+        state: "on"
       - condition: template
-        value_template: "{{ has_value('climate.therma_v_dhw') }}"
+        value_template: >-
+          {{ has_value('sensor.therma_v_dhw_setpoint_effective')
+             and has_value('sensor.therma_v_dhw_target_temperature') }}
     actions:
-      - action: input_number.set_value
-        target:
-          entity_id: input_number.dhw_setpoint_state
-        data:
-          value: "{{ states('input_number.therma_v_dhw_target_request') | float(50) }}"
       - action: input_datetime.set_datetime
         target:
           entity_id: input_datetime.dhw_disinfection_started
@@ -343,18 +332,18 @@ automation:
       - action: input_boolean.turn_off
         target:
           entity_id: input_boolean.dhw_disinfection_cycle_requested
-      - action: climate.set_temperature
+      - action: switch.turn_on
         target:
-          entity_id: climate.therma_v_dhw
-        data:
-          temperature: 60
+          entity_id: switch.therma_v_dhw_on_off
       - action: timer.start
         target:
           entity_id: timer.dhw_disinfection_preheat
       - action: logbook.log
         data:
           name: DHW disinfection
-          message: "Preheat started; normal setpoint {{ states('input_number.dhw_setpoint_state') }} C"
+          message: >-
+            Preheat started; override 60 C while normal request remains
+            {{ states('input_number.therma_v_dhw_target_request') | float(50) }} C
 
   # Trigger the heat pump's own cycle only after preheat. The requested flag and timestamp make
   # the later restore/failure path observable and restart-safe.
@@ -371,6 +360,9 @@ automation:
     conditions:
       - condition: state
         entity_id: input_boolean.dhw_disinfection_active
+        state: "on"
+      - condition: state
+        entity_id: input_boolean.therma_v_supervisor_dhw_enabled
         state: "on"
     actions:
       - action: switch.turn_on
@@ -396,8 +388,8 @@ automation:
 
   # Detect both planned and unplanned successful cycles. The template binary sensor is checked
   # every minute because it contains now(); the state trigger gives the immediate path. On success
-  # it records the date, clears the request and restores the stored setpoint if a local cycle was
-  # active.
+  # it records the date, clears the request and releases the effective-layer override if a local
+  # cycle was active.
   - id: dhw_disinfection_detection_auto
     alias: "DHW disinfection detection auto"
     description: "Records a successful 55/60/65 C disinfection cycle"
@@ -440,22 +432,19 @@ automation:
           - action: timer.cancel
             target:
               entity_id: timer.dhw_disinfection_preheat
-          - action: climate.set_temperature
-            target:
-              entity_id: climate.therma_v_dhw
-            data:
-              temperature: "{{ states('input_number.dhw_setpoint_state') | float(50) }}"
           - action: logbook.log
             data:
               name: DHW disinfection
-              message: "Completed; normal setpoint restored"
+              message: >-
+                Completed; 60 C override released, normal request
+                {{ states('input_number.therma_v_dhw_target_request') | float(50) }} C
 
   # Failure and timeout path. The cycle finished without meeting a detection threshold, or the
-  # request stayed active beyond the configured timeout. Restore the setpoint, clear active but
+  # request stayed active beyond the configured timeout. Release the override, clear active but
   # keep due=true so the next hourly planner retries.
   - id: dhw_disinfection_finish_auto
     alias: "DHW disinfection finish auto"
-    description: "Restores the setpoint after a failed or timed-out local disinfection"
+    description: "Releases the setpoint override after a failed or timed-out local disinfection"
     mode: single
     max_exceeded: silent
     triggers:
@@ -510,18 +499,14 @@ automation:
           entity_id:
             - input_boolean.dhw_disinfection_active
             - input_boolean.dhw_disinfection_cycle_requested
-      - action: climate.set_temperature
-        target:
-          entity_id: climate.therma_v_dhw
-        data:
-          temperature: "{{ states('input_number.dhw_setpoint_state') | float(50) }}"
       - action: persistent_notification.create
         data:
           title: "DHW desinfectie niet afgerond"
           notification_id: dhw_disinfection_retry
           message: >-
-            De geplande cyclus is gestopt zonder de detectiegrens te halen. Het normale setpoint is
-            hersteld en de desinfectie blijft `due`; de planner probeert het later opnieuw.
+            De geplande cyclus is gestopt zonder de detectiegrens te halen. De 60 C-override is
+            vrijgegeven en de normale gebruikersrequest blijft actief; de desinfectie blijft `due`
+            en de planner probeert het later opnieuw.
       - action: logbook.log
         data:
           name: DHW disinfection

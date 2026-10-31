@@ -102,19 +102,11 @@ template:
           {{ (hp_active or booster_active) and tank >= threshold }}
 
   - sensor:
-      # The normal service setpoint, independent of a temporary legionella target. The
-      # disinfection automation stores the pre-cycle target in dhw_setpoint_state before raising
-      # the live target to 60 C.
+      # The normal service request, independent of the effective disinfection override.
       - name: "DHW normal setpoint"
         unique_id: dhw_normal_setpoint
-        availability: >-
-          {{ has_value('sensor.therma_v_dhw_target_temperature')
-             and has_value('input_number.dhw_setpoint_state')
-             and has_value('input_boolean.dhw_disinfection_active') }}
-        state: >-
-          {% set live = states('input_number.therma_v_dhw_target_request') | float(50) %}
-          {% set stored = states('input_number.dhw_setpoint_state') | float(50) %}
-          {{ stored if is_state('input_boolean.dhw_disinfection_active', 'on') else live }}
+        availability: "{{ has_value('input_number.therma_v_dhw_target_request') }}"
+        state: "{{ states('input_number.therma_v_dhw_target_request') | float(50) }}"
 
   - switch:
       # Switch the automations use as their own state memory, separate from the relay (which
