@@ -45,6 +45,18 @@ template:
           {% set rh = states('sensor.ewelink_snzb_02p_humidity') | float(0) %}
           {{ (t - ((100.0 - rh) / 5.0)) | round(1) }}
 
+  - binary_sensor:
+      # A transient integration startup must not interrupt cooling. If any required measurement
+      # remains unavailable for a minute, cooling cannot be proven safe.
+      - name: "Cooling measurements unavailable"
+        unique_id: cooling_measurements_unavailable
+        icon: mdi:thermometer-alert
+        state: >-
+          {{ not (states('sensor.shelly_plus_ht1_dewpoint') | is_number
+                  and states('sensor.therma_v_buffer_temperatures_return_from_heating_t3') | is_number
+                  and states('sensor.therma_v_buffer_temperatures_return_to_heatpump_t4') | is_number) }}
+        delay_on: "00:01:00"
+
 automation:
   # Stop cooling when the living room dewpoint is above the return temperatures: water colder
   # than the dewpoint condenses in the floor circuit. Silent mode goes off with it.
@@ -55,20 +67,37 @@ automation:
     triggers:
       - trigger: state
         entity_id: sensor.shelly_plus_ht1_dewpoint
+      - trigger: state
+        entity_id:
+          - sensor.therma_v_buffer_temperatures_return_from_heating_t3
+          - sensor.therma_v_buffer_temperatures_return_to_heatpump_t4
       # Also when cooling starts, in case the dewpoint is already too high.
       - trigger: state
         entity_id: climate.therma_v_heating_cooling
+      - trigger: state
+        entity_id: binary_sensor.cooling_measurements_unavailable
+      # Restored states do not produce a fresh state event. Reassert the safety stop after startup
+      # and keep a minute watchdog in case an integration comes back without one.
+      - trigger: homeassistant
+        event: start
+      - trigger: time_pattern
+        minutes: "/1"
     conditions:
       - condition: state
         entity_id: climate.therma_v_heating_cooling
         state: "cool"
-      - condition: template
-        # One comparison against the highest of the two return temperatures.
-        value_template: >-
-          {{ states('sensor.shelly_plus_ht1_dewpoint') | is_number
-             and (states('sensor.shelly_plus_ht1_dewpoint') | float(0))
-                 > max(states('sensor.therma_v_buffer_temperatures_return_from_heating_t3') | float(0),
-                       states('sensor.therma_v_buffer_temperatures_return_to_heatpump_t4') | float(0)) }}
+      - condition: or
+        conditions:
+          - condition: state
+            entity_id: binary_sensor.cooling_measurements_unavailable
+            state: "on"
+          - condition: template
+            value_template: >-
+              {% set dewpoint = states('sensor.shelly_plus_ht1_dewpoint') %}
+              {% set t3 = states('sensor.therma_v_buffer_temperatures_return_from_heating_t3') %}
+              {% set t4 = states('sensor.therma_v_buffer_temperatures_return_to_heatpump_t4') %}
+              {{ dewpoint | is_number and t3 | is_number and t4 | is_number
+                 and (dewpoint | float(0)) > max(t3 | float(0), t4 | float(0)) }}
     actions:
       - action: switch.turn_off
         target:
