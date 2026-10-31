@@ -479,8 +479,27 @@ automation:
         entity_id: sensor.therma_v_operation_mode
       - trigger: state
         entity_id: switch.therma_v_heating_cooling_on_off
+      - trigger: state
+        entity_id:
+          - input_select.therma_v_control_strategy
+          - input_boolean.therma_v_supervisor_space_heat_enabled
+          - input_boolean.therma_v_supervisor_hvac_recovery
+      - trigger: state
+        entity_id:
+          - binary_sensor.therma_v_hvac_run_active
+          - binary_sensor.therma_v_heat_plan_ready
+          - binary_sensor.therma_v_hvac_target_hold
+          - binary_sensor.emhass_forecast_fresh
+      - trigger: state
+        entity_id:
+          - input_datetime.emhass_last_mpc
+          - input_datetime.therma_v_supervisor_hvac_since
+      - trigger: state
+        entity_id:
+          - sensor.therma_v_heat_plan_processed_power
+          - input_number.therma_v_heat_plan_iir_power
       - trigger: time_pattern
-        minutes: "/15"
+        minutes: "/1"
     conditions:
       - condition: state
         entity_id: switch.therma_v_heating_cooling_on_off
@@ -488,7 +507,41 @@ automation:
       - condition: template
         value_template: "{{ states('input_select.therma_v_temperature_control') != 'Off' }}"
     actions:
+      # Preserve the chase target across a gate/strategy handover. This is deliberately ahead of
+      # both the EMHASS and normal-curve branches: neither may rewrite the request mid-cycle.
+      - if:
+          - condition: state
+            entity_id: binary_sensor.therma_v_hvac_target_hold
+            state: "on"
+        then:
+          - stop: "HVAC handover active; retaining the current water target"
       - choose:
+          # The processed plan is authoritative only after an MPC completed since the current
+          # HVAC handover. Pe is converted to an inlet-temperature target; a valid zero-power plan
+          # requests the season minimum so the existing startup layer releases heat.
+          - conditions:
+              - condition: state
+                entity_id: binary_sensor.therma_v_heat_plan_ready
+                state: "on"
+            sequence:
+              - variables:
+                  emhass_target: >-
+                    {{ state_attr('sensor.therma_v_heat_plan_processed_power', 'tinlet_target') }}
+                  requested_target: >-
+                    {{ emhass_target | float(
+                         states('input_number.therma_v_min_water_temperature_heat') | float(20)) }}
+              - if:
+                  - condition: template
+                    value_template: >-
+                      {{ (requested_target | float(0)
+                          - states('input_number.therma_v_water_target_request') | float(0)) | abs
+                         >= states('input_number.therma_v_heating_curve_hysteresis') | float(0.5) }}
+                then:
+                  - action: input_number.set_value
+                    target:
+                      entity_id: input_number.therma_v_water_target_request
+                    data:
+                      value: "{{ requested_target | float(20) }}"
           # Heat: the curve is the water request. Heating-curve is the curve alone, Room control (P)
           # adds the room term - the curve sensor already carries both, so the hysteresis against the
           # live request is all that is left here.
