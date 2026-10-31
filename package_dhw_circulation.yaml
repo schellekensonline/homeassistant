@@ -3,8 +3,8 @@
 # Mixing is useful only while a DHW source runs AND the tank is already close to its target.
 # Starting from a fixed run time was an indirect proxy for "near the end"; it mixed too early on
 # long cold recoveries and could mix the useful hot layer away during a shower. The pump now
-# starts at target - 2 K, keeps running down to target - 3 K, and stops when no source is active.
-# The 1 K gap is hysteresis against sensor/mixing movement. Leaving the useful band starts a
+# starts at target - 2 K, keeps running down to target - 5 K, and stops when no source is active.
+# The 3 K gap protects the usable layer during a draw. Leaving the useful band starts a
 # 2-minute stop timer; if the source or temperature returns in time, the timer is cancelled.
 #
 # There is deliberately no post-run mixing: once the tank is mixed, more circulation only loses
@@ -32,7 +32,7 @@ input_number:
     min: 0
     max: 15
     step: 0.5
-    initial: 3
+    initial: 5
     mode: box
     unit_of_measurement: "K"
 
@@ -63,7 +63,7 @@ template:
         state: "{{ is_state('switch.shelly_plug_s3', 'on') }}"
 
       # The switch's current state is the hysteresis memory: while off it needs target - 2 K to
-      # start, while on it may fall to target - 3 K before the stop timer begins. A shower or a
+      # start, while on it may fall to target - 5 K before the stop timer begins. A shower or a
       # large draw therefore takes the tank out of the band and stops mixing, while a small
       # movement caused by the mixing itself does not flap the relay.
       - name: "DHW circulation mixing required"
@@ -85,7 +85,7 @@ template:
           {% set target = states('sensor.therma_v_dhw_target_temperature') | float(50) %}
           {% set normal = states('sensor.dhw_normal_setpoint') | float(50) %}
           {% set start_delta = states('input_number.dhw_circulation_start_delta') | float(2) %}
-          {% set stop_delta = max(states('input_number.dhw_circulation_stop_delta') | float(3),
+          {% set stop_delta = max(states('input_number.dhw_circulation_stop_delta') | float(5),
                                   start_delta) %}
           {% set booster_stop_delta =
                states('input_number.dhw_circulation_booster_stop_delta') | float(1) %}
