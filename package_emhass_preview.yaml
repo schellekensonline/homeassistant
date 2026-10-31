@@ -94,6 +94,20 @@ template:
           error_message: "{{ trigger.event.data.error_message | default(none) }}"
           plan: "{{ trigger.event.data.plan | default([]) }}"
 
+  - trigger:
+      - trigger: event
+        event_type: emhass_heat_simulation_completed
+    sensor:
+      - name: "EMHASS heat simulation"
+        unique_id: emhass_heat_simulation
+        state: "{{ trigger.event.data.status | default('unknown') }}"
+        attributes:
+          completed_at: "{{ trigger.event.data.completed_at | default(none) }}"
+          price_source: "{{ trigger.event.data.price_source | default('') }}"
+          buy_prices: "{{ trigger.event.data.buy_prices | default([]) }}"
+          heat_prices: "{{ trigger.event.data.heat_prices | default([]) }}"
+          points: "{{ trigger.event.data.points | default([]) }}"
+
 script:
   emhass_preview_plan:
     alias: "Run an EMHASS plan preview"
@@ -109,6 +123,12 @@ script:
         selector:
           select:
             options: ["dhw", "heat", "cool"]
+      block_outdoor_temperature:
+        name: "Block outdoor temperature (heat/cool)"
+        description: "Repeat one outdoor temperature per local two-hour block."
+        default: true
+        selector:
+          boolean:
     sequence:
       - variables:
           preview_mode: >-
@@ -120,6 +140,7 @@ script:
           thermal: true
           preview_mode: "{{ preview_mode }}"
           dry_run: true
+          block_outdoor_temperature: "{{ block_outdoor_temperature | default(true) }}"
         response_variable: preview_payload
       - action: rest_command.emhass_dry_run_naive_mpc_optim
         data:
@@ -149,11 +170,101 @@ script:
             {% set acc = namespace(items=[], hp_kwh=0.0, booster_kwh=0.0,
                                  total_kwh=0.0, heat_demand_kwh=0.0, nonzero=0,
                                  temp_min=none, temp_max=none) %}
-            {# Causal first-order Q-equivalent filter on P_e, tau = 2 h; plotting only.
-               Seed each planned run from its active-Pe median, clamped to 600-3000 W. #}
-            {% set filtered_pe = namespace(value=0.0) %}
-            {% set filtered_q = namespace(value=0.0) %}
-            {% set previous_hp_w = namespace(value=0.0) %}
+            {# Heat/cool preview uses the actuator profile: two-hour blocks, directional edges and
+               a 15 min first-order filter with immediate OFF and the modelled source minimum. #}
+            {% set min_power = space_source.min_power | float(550) %}
+            {% set raw_points = namespace(list=[]) %}
+            {% for entry in plan %}
+              {% set hp_w = entry.P_deferrable1 | float(0) %}
+              {% set point_dt = entry.timestamp | as_datetime | as_local %}
+              {% set block_start = point_dt.replace(hour=(point_dt.hour // 2) * 2,
+                                                    minute=0, second=0, microsecond=0).isoformat() %}
+              {% set raw_points.list = raw_points.list + [{
+                'block': block_start,
+                'raw': hp_w
+              }] %}
+            {% endfor %}
+            {% set groups = namespace(keys=[], values=[]) %}
+            {% for point in raw_points.list %}
+              {% if point.block not in groups.keys %}
+                {% set groups.keys = groups.keys + [point.block] %}
+                {% set groups.values = groups.values + [[]] %}
+              {% endif %}
+              {% set group_idx = groups.keys.index(point.block) %}
+              {% set group_values = groups.values %}
+              {% set groups.values =
+                   group_values[:group_idx] + [group_values[group_idx] + [point]]
+                   + group_values[group_idx + 1:] %}
+            {% endfor %}
+            {% set stats = namespace(sums=[], means=[]) %}
+            {% for group_values in groups.values %}
+              {% set total = namespace(value=0.0) %}
+              {% for point in group_values %}
+                {% set total.value = total.value + point.raw %}
+              {% endfor %}
+              {% set stats.sums = stats.sums + [total.value] %}
+              {% set stats.means = stats.means + [total.value / (group_values | length)] %}
+            {% endfor %}
+            {% set edge_groups = namespace(values=[]) %}
+            {% for group_values in groups.values %}
+              {% set mean = stats.means[loop.index0] %}
+              {% set total = stats.sums[loop.index0] %}
+              {% if total <= 0 %}
+                {% set corrected = [0.0] * (group_values | length) %}
+              {% elif mean >= min_power %}
+                {% set corrected = [mean] * (group_values | length) %}
+              {% else %}
+                {% set prev_mean = stats.means[loop.index0 - 1]
+                                   if loop.index0 > 0 else none %}
+                {% set next_mean = stats.means[loop.index0 + 1]
+                                   if loop.index0 + 1 < (stats.means | length) else none %}
+                {% set prev_active = prev_mean is not none and prev_mean >= min_power %}
+                {% set next_active = next_mean is not none and next_mean >= min_power %}
+                {% if next_active and (not prev_active or next_mean >= prev_mean) %}
+                  {% set base_power = next_mean %}
+                  {% set align_right = true %}
+                {% elif prev_active %}
+                  {% set base_power = prev_mean %}
+                  {% set align_right = false %}
+                {% elif next_active %}
+                  {% set base_power = next_mean %}
+                  {% set align_right = true %}
+                {% else %}
+                  {% set base_power = min_power %}
+                  {% set align_right = false %}
+                {% endif %}
+                {% set active_quarters =
+                     [1, (total / base_power) | round(0, 'ceil') | int] | max %}
+                {% set active_quarters = [active_quarters, group_values | length] | min %}
+                {% if align_right %}
+                  {% set corrected =
+                       [0.0] * ((group_values | length) - active_quarters)
+                       + [base_power] * active_quarters %}
+                {% else %}
+                  {% set corrected =
+                       [base_power] * active_quarters
+                       + [0.0] * ((group_values | length) - active_quarters) %}
+                {% endif %}
+              {% endif %}
+              {% set edge_groups.values = edge_groups.values + [corrected] %}
+            {% endfor %}
+            {% set processed_pe = namespace(values=[]) %}
+            {% set filtered = namespace(value=0.0) %}
+            {% for group_values in groups.values %}
+              {% set group_idx = loop.index0 %}
+              {% for point in group_values %}
+                {% set point_idx = loop.index0 %}
+                {% set target = edge_groups.values[group_idx][point_idx] %}
+                {% if target <= 0 %}
+                  {% set filtered.value = 0.0 %}
+                {% else %}
+                  {% set filtered.value =
+                       [min_power, filtered.value
+                        + 0.6321205588 * (target - filtered.value)] | max %}
+                {% endif %}
+                {% set processed_pe.values = processed_pe.values + [filtered.value] %}
+              {% endfor %}
+            {% endfor %}
             {% for entry in plan %}
               {% set current_idx = loop.index0 %}
               {% set hp_w = (entry.P_deferrable0 if preview_mode == 'dhw'
@@ -184,32 +295,13 @@ script:
                             else 1.0 %}
               {% set cop = min(max(cop, 1.0), 8.0) %}
               {% set q_raw_w = hp_w * cop %}
-              {% if hp_w > 0 and previous_hp_w.value <= 0 %}
-                {% set run_samples = namespace(list=[]) %}
-                {% for future in plan[current_idx:] %}
-                  {% set future_hp_w = (future.P_deferrable0 if preview_mode == 'dhw'
-                                        else future.P_deferrable1) | float(0) %}
-                  {% if future_hp_w <= 0 %}
-                    {% break %}
-                  {% endif %}
-                  {% set run_samples.list = run_samples.list + [future_hp_w] %}
-                {% endfor %}
-                {% set sorted_run = run_samples.list | sort %}
-                {% set middle = sorted_run | length // 2 %}
-                {% if sorted_run | length % 2 == 0 %}
-                  {% set run_median = (sorted_run[middle - 1] + sorted_run[middle]) / 2 %}
-                {% else %}
-                  {% set run_median = sorted_run[middle] %}
-                {% endif %}
-                {% set filtered_pe.value = min(max(run_median, 600.0), 3000.0) %}
-                {% set filtered_q.value = filtered_pe.value * cop %}
+              {% if preview_mode in ['heat', 'cool'] %}
+                {% set processed_pe_w = processed_pe.values[current_idx] | float(0) %}
               {% else %}
-                {% set filtered_pe.value =
-                     filtered_pe.value + 0.125 * (hp_w - filtered_pe.value) %}
-                {% set filtered_q.value =
-                     filtered_q.value + 0.125 * (q_raw_w - filtered_q.value) %}
+                {% set processed_pe_w = 0.0 %}
               {% endif %}
-              {% if hp_w > 0 and preview_mode in ['heat', 'cool'] %}
+              {% set q_effective_w = processed_pe_w * cop %}
+              {% if processed_pe_w > 0 and preview_mode in ['heat', 'cool'] %}
                 {% set return_band_min = (states('input_number.therma_v_min_water_temperature_heat')
                                           if preview_mode == 'heat'
                                           else states('input_number.therma_v_min_water_temperature_cool')) | float %}
@@ -217,14 +309,13 @@ script:
                                           if preview_mode == 'heat'
                                           else states('input_number.therma_v_max_water_temperature_cool')) | float %}
                 {% set return_unclamped =
-                     temperature + ((filtered_q.value / 1000 + 0.949) / 0.657)
+                     temperature + ((q_effective_w / 1000 + 0.949) / 0.657)
                      if preview_mode == 'heat'
-                     else temperature - ((filtered_q.value / 1000 + 0.949) / 0.657) %}
+                     else temperature - ((q_effective_w / 1000 + 0.949) / 0.657) %}
                 {% set return_target = min(max(return_unclamped, return_band_min), return_band_max) %}
               {% else %}
                 {% set return_target = none %}
               {% endif %}
-              {% set previous_hp_w.value = hp_w %}
               {% set acc.hp_kwh = acc.hp_kwh + hp_w * 0.25 / 1000 %}
               {% set acc.booster_kwh = acc.booster_kwh + booster_w * 0.25 / 1000 %}
               {% set acc.total_kwh = acc.total_kwh + total_w * 0.25 / 1000 %}
@@ -238,8 +329,8 @@ script:
               {% set acc.items = acc.items + [[
                 entry.timestamp, total_w | round(0), hp_w | round(0), booster_w | round(0),
                 temperature, target, (heat_demand_kwh * 4000) | round(0),
-                filtered_pe.value | round(0), cop | round(2), q_raw_w | round(0),
-                filtered_q.value | round(0),
+                processed_pe_w | round(1), cop | round(2), q_raw_w | round(0),
+                q_effective_w | round(0),
                 (return_target | round(1)) if return_target is not none else none
               ]] %}
             {% endfor %}

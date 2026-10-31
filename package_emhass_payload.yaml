@@ -70,6 +70,14 @@ script:
         default: false
         selector:
           boolean:
+      block_outdoor_temperature:
+        name: "Block outdoor temperature (heat/cool)"
+        description: >-
+          Average outdoor temperature per local two-hour clock block and repeat it for the eight
+          quarters in that block. This is the default heat/cool forecast treatment.
+        default: true
+        selector:
+          boolean:
     sequence:
       - action: rest_command.emhass_open_meteo_forecast
         response_variable: weather_response
@@ -100,6 +108,8 @@ script:
             {% set send_thermal = thermal | default(true) | bool %}
             {% set preview_dhw = preview_dhw | default(false) | bool %}
             {% set dry_run = dry_run | default(false) | bool %}
+            {% set block_outdoor_temperature =
+                 block_outdoor_temperature | default(true) | bool %}
             {% set requested_preview = preview_mode | default('none', true) %}
             {% set preview_mode = 'dhw' if preview_dhw
                  else (requested_preview if requested_preview in ['dhw', 'heat', 'cool'] else 'none') %}
@@ -117,6 +127,7 @@ script:
             {% set excl_rounded = excl | map('round', 4) | list %}
             {# Cap to the available price quarters; EMHASS rejects a horizon/length mismatch. #}
             {% set n = min(96, incl_rounded | length) %}
+            {% set quarter_start_ts = as_timestamp(quarter_start) %}
             {# Pass the same 15-minute outdoor forecast to EMHASS and the HA Q calculation. #}
             {% set weather_content = weather_response.content
                  if weather_response is defined and weather_response.content is defined else {} %}
@@ -126,7 +137,6 @@ script:
                                       if weather_body is mapping else {} %}
             {% set weather_times = weather_minutely.get('time', []) %}
             {% set weather_temps = weather_minutely.get('temperature_2m', []) %}
-            {% set quarter_start_ts = as_timestamp(quarter_start) %}
             {% set outdoor_forecast = namespace(list=[]) %}
             {% for i in range(weather_times | length) %}
               {% if weather_times[i] >= quarter_start_ts
@@ -136,9 +146,40 @@ script:
               {% endif %}
             {% endfor %}
             {% set outdoor_forecast_ready = outdoor_forecast.list | length >= n %}
-            {# Space heat sees two zero-phase passes of a 1 h MA; the battery keeps the real tariff.
-               Applying a 4-tap MA forward+backward twice is the symmetric 13-tap kernel below. #}
-            {% set heat_price_prices = namespace(list=[]) %}
+            {% if block_outdoor_temperature and outdoor_forecast_ready %}
+              {% set outdoor_blocks = namespace(keys=[], sums=[], counts=[]) %}
+              {% set outdoor_origin = quarter_start | as_datetime %}
+              {% for i in range(n) %}
+                {% set block_point = outdoor_origin + timedelta(minutes=15 * i) %}
+                {% set block_start = block_point.replace(hour=(block_point.hour // 2) * 2,
+                                                         minute=0, second=0, microsecond=0).isoformat() %}
+                {% if block_start not in outdoor_blocks.keys %}
+                  {% set outdoor_blocks.keys = outdoor_blocks.keys + [block_start] %}
+                  {% set outdoor_blocks.sums = outdoor_blocks.sums + [0.0] %}
+                  {% set outdoor_blocks.counts = outdoor_blocks.counts + [0] %}
+                {% endif %}
+                {% set block_idx = outdoor_blocks.keys.index(block_start) %}
+                {% set outdoor_blocks.sums =
+                     outdoor_blocks.sums[:block_idx]
+                     + [outdoor_blocks.sums[block_idx] + outdoor_forecast.list[i]]
+                     + outdoor_blocks.sums[block_idx + 1:] %}
+                {% set outdoor_blocks.counts =
+                     outdoor_blocks.counts[:block_idx]
+                     + [outdoor_blocks.counts[block_idx] + 1]
+                     + outdoor_blocks.counts[block_idx + 1:] %}
+              {% endfor %}
+              {% set outdoor_blocked = namespace(list=[]) %}
+              {% for i in range(n) %}
+                {% set block_point = outdoor_origin + timedelta(minutes=15 * i) %}
+                {% set block_start = block_point.replace(hour=(block_point.hour // 2) * 2,
+                                                         minute=0, second=0, microsecond=0).isoformat() %}
+                {% set block_idx = outdoor_blocks.keys.index(block_start) %}
+                {% set outdoor_blocked.list = outdoor_blocked.list
+                     + [(outdoor_blocks.sums[block_idx] / outdoor_blocks.counts[block_idx]) | round(2)] %}
+              {% endfor %}
+              {% set outdoor_forecast.list = outdoor_blocked.list %}
+            {% endif %}
+            {# Keep a padded raw series for the narrower DHW filter below. #}
             {% set heat_price_history = incl_before[-6:] %}
             {% set heat_price_right = (incl_rounded[-7:-1] | reverse | list)
                                       if incl_rounded | length >= 7
@@ -146,21 +187,43 @@ script:
             {% set heat_price_padded =
                  [incl_rounded[0]] * (6 - (heat_price_history | length))
                  + heat_price_history + incl_rounded + heat_price_right %}
-            {# filtfilt(MA4) applied twice: convolution of [1,2,3,4,3,2,1]/16 with itself. #}
-            {% set heat_price_kernel = [
-                 0.00390625, 0.015625, 0.0390625, 0.078125, 0.12109375,
-                 0.15625, 0.171875, 0.15625, 0.12109375, 0.078125,
-                 0.0390625, 0.015625, 0.00390625] %}
-            {% for i in range(n) %}
-              {% set heat_price_value = namespace(value=0.0) %}
-              {% for j in range(13) %}
-                {% set heat_price_value.value = heat_price_value.value
-                     + heat_price_padded[i + j] * heat_price_kernel[j] %}
-              {% endfor %}
-              {% set heat_price_prices.list = heat_price_prices.list
-                   + [heat_price_value.value | round(4)] %}
+            {# Space heat uses the mean of each local two-hour clock block, assigned to that same
+               block. This keeps the phase: no forward/backward convolution and no lag. #}
+            {% set heat_blocks = namespace(keys=[], sums=[], counts=[]) %}
+            {% set heat_block_history = incl_before[-7:] %}
+            {% set heat_block_origin = quarter_start | as_datetime %}
+            {% for offset in range(0 - (heat_block_history | length), n) %}
+              {% set block_price =
+                   heat_block_history[offset + (heat_block_history | length)]
+                   if offset < 0 else incl_rounded[offset] %}
+              {% set block_point = heat_block_origin + timedelta(minutes=15 * offset) %}
+              {% set block_start = block_point.replace(hour=(block_point.hour // 2) * 2,
+                                                       minute=0, second=0, microsecond=0).isoformat() %}
+              {% if block_start not in heat_blocks.keys %}
+                {% set heat_blocks.keys = heat_blocks.keys + [block_start] %}
+                {% set heat_blocks.sums = heat_blocks.sums + [0.0] %}
+                {% set heat_blocks.counts = heat_blocks.counts + [0] %}
+              {% endif %}
+              {% set block_idx = heat_blocks.keys.index(block_start) %}
+              {% set heat_blocks.sums =
+                   heat_blocks.sums[:block_idx]
+                   + [heat_blocks.sums[block_idx] + block_price]
+                   + heat_blocks.sums[block_idx + 1:] %}
+              {% set heat_blocks.counts =
+                   heat_blocks.counts[:block_idx]
+                   + [heat_blocks.counts[block_idx] + 1]
+                   + heat_blocks.counts[block_idx + 1:] %}
             {% endfor %}
-            {# DHW gets one zero-phase 1 h pass: gentler than the space-heat double pass. #}
+            {% set heat_price_prices = namespace(list=[]) %}
+            {% for i in range(n) %}
+              {% set block_point = heat_block_origin + timedelta(minutes=15 * i) %}
+              {% set block_start = block_point.replace(hour=(block_point.hour // 2) * 2,
+                                                       minute=0, second=0, microsecond=0).isoformat() %}
+              {% set block_idx = heat_blocks.keys.index(block_start) %}
+              {% set heat_price_prices.list = heat_price_prices.list
+                   + [(heat_blocks.sums[block_idx] / heat_blocks.counts[block_idx]) | round(4)] %}
+            {% endfor %}
+            {# DHW keeps its narrower zero-phase 1 h filter. #}
             {% set dhw_price_prices = namespace(list=[]) %}
             {% set dhw_price_kernel = [
                  0.0625, 0.125, 0.1875, 0.25, 0.1875, 0.125, 0.0625] %}
