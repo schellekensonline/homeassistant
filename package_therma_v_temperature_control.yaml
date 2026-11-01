@@ -528,8 +528,9 @@ automation:
                   emhass_target: >-
                     {{ state_attr('sensor.therma_v_heat_plan_processed_power', 'tinlet_target') }}
                   requested_target: >-
-                    {{ emhass_target | float(
-                         states('input_number.therma_v_min_water_temperature_heat') | float(20)) }}
+                    {{ (((emhass_target | float(
+                            states('input_number.therma_v_min_water_temperature_heat') | float(20)))
+                          * 2) | round(0) / 2) | round(1) }}
               - if:
                   - condition: template
                     value_template: >-
@@ -541,7 +542,8 @@ automation:
                     target:
                       entity_id: input_number.therma_v_water_target_request
                     data:
-                      value: "{{ requested_target | float(20) }}"
+                      value: >-
+                        {{ ((requested_target | float(20) * 2) | round(0) / 2) | round(1) }}
           # Heat: the curve is the water request. Heating-curve is the curve alone, Room control (P)
           # adds the room term - the curve sensor already carries both, so the hysteresis against the
           # live request is all that is left here.
