@@ -23,8 +23,10 @@ automation:
     description: "Triggers EMHASS every 15 minutes for realtime correction and fetches the plan. Also runs right after a Home Assistant restart."
     mode: single
     trigger:
+      # The prior-heat buffer advances at +2s; start at +5s so this run sees the completed quarter.
       - platform: time_pattern
         minutes: "/15"
+        seconds: 5
         id: interval
       - platform: homeassistant
         event: start
