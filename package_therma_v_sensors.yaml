@@ -267,6 +267,19 @@ template:
 
 sensor:
 # Energy
+  # Actual thermal energy delivered to the space-heating circuit. The rolling MPC uses its
+  # quarter-hour differences as in-flight heat for the shared house model.
+  - platform: integration
+    source: sensor.therma_v_space_heating_actual_thermal_power
+    name: "Therma V space heating delivered heat"
+    unique_id: therma_v_space_heating_delivered_heat
+    method: trapezoidal
+    unit_prefix: k
+    unit_time: h
+    round: 4
+    max_sub_interval:
+      minutes: 5
+
   - platform: integration
     source: sensor.therma_v_electric_power
     name: "Therma V electric energy"
