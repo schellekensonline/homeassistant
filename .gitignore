@@ -33,3 +33,5 @@ scripts/**/*.key
 scripts/**/*.pem
 scripts/**/*secret*
 scripts/**/*token*
+# Database export backups produced during recorder/statistics migrations
+scripts/**/*.tsv.gz
