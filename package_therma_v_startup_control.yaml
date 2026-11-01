@@ -210,7 +210,7 @@ input_boolean:
     name: "Therma V passive cooling stop"
     icon: mdi:snowflake-alert
     initial: false
-  therma_v_antitrip_timeout:
+  therma_v_anti_trip_timeout:
     name: "Therma V anti-trip maximum hold timeout"
     icon: mdi:timer-alert-outline
     initial: false
@@ -235,7 +235,7 @@ template:
       # that needs the maximum-hold timeout; when the compressor is off or the season limit already
       # releases it, there is nothing to time out.
       - name: "Therma V no-demand anti-trip hold"
-        unique_id: therma_v_no_demand_antitrip_hold
+        unique_id: therma_v_no_demand_anti_trip_hold
         icon: mdi:heat-wave
         availability: >-
           {{ has_value('input_number.therma_v_water_target_request')
@@ -395,10 +395,10 @@ template:
                           and chase <= release_gap
                           and (mode_num != 4
                                or (not is_state('input_boolean.therma_v_passive_gain_stop', 'on')
-                                   and not is_state('input_boolean.therma_v_antitrip_timeout', 'on')))
+                                   and not is_state('input_boolean.therma_v_anti_trip_timeout', 'on')))
                           and (mode_num != 0
                                or (not is_state('input_boolean.therma_v_passive_cooling_stop', 'on')
-                                   and not is_state('input_boolean.therma_v_antitrip_timeout', 'on'))) %}
+                                   and not is_state('input_boolean.therma_v_anti_trip_timeout', 'on'))) %}
           {% if not active %}
           {{ req | round(0, dir) | int }}
           {% else %}
@@ -536,7 +536,7 @@ automation:
 
   # Slow but persistent no-demand hold. This backstop deliberately ignores the room slope and limits
   # how long the anti-trip layer can keep the compressor alive by itself.
-  - id: therma_v_antitrip_timeout
+  - id: therma_v_anti_trip_timeout
     alias: "Therma V anti-trip maximum hold timeout"
     description: "Releases the start-up hold after the maximum no-demand hold time"
     mode: restart
@@ -561,11 +561,11 @@ automation:
             sequence:
               - action: input_boolean.turn_on
                 target:
-                  entity_id: input_boolean.therma_v_antitrip_timeout
+                  entity_id: input_boolean.therma_v_anti_trip_timeout
         default:
           - action: input_boolean.turn_off
             target:
-              entity_id: input_boolean.therma_v_antitrip_timeout
+              entity_id: input_boolean.therma_v_anti_trip_timeout
 
   # The only writer of Modbus register 2 (heat/cool/room). Four ways in: the effective value
   # changing, the register changing (the pump's own logic, or a manual change on the unit), a mode

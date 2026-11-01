@@ -211,8 +211,8 @@ template:
         device_class: apparent_power
         state_class: measurement
 
-      - name: "Sessy INV L1 DClink voltage"
-        unique_id: sessy_inv_l1_dclink_voltage
+      - name: "Sessy INV L1 DC link voltage"
+        unique_id: sessy_inv_l1_dc_link_voltage
         state: "{{ (inv1.get('dc_link_voltage', 0) | float(0) / 1000) | round(2) }}"
         availability: "{{ inv1.get('dc_link_voltage') | is_number }}"
         unit_of_measurement: "V"
@@ -365,7 +365,7 @@ template:
         device_class: apparent_power
         state_class: measurement
 
-      - name: "Sessy INV L3 DClink voltage"
+      - name: "Sessy INV L3 DC link voltage"
         unique_id: sessy_inv_l3_dc_link_voltage
         state: "{{ (inv3.get('dc_link_voltage', 0) | float(0) / 1000) | round(2) }}"
         availability: "{{ inv3.get('dc_link_voltage') | is_number }}"

@@ -530,8 +530,8 @@ modbus:
         unit_of_measurement: "V"
         data_type: uint16
 
-      - name: "Goodwe DC link center tab voltage" # NBUS voltage
-        unique_id: goodwe_dc_link_center_tab_voltage
+      - name: "Goodwe DC link center tap voltage" # NBUS voltage
+        unique_id: goodwe_dc_link_center_tap_voltage
         scan_interval: 0
         address: 797
         slave: 1
