@@ -86,7 +86,7 @@ input_number:
     min: 0
     max: 10
     step: 0.5
-    initial: 1
+    initial: 2
     mode: box
     unit_of_measurement: "K"
     icon: mdi:arrow-down-bold
@@ -364,11 +364,14 @@ template:
                           and mode_since is not none
                           and last_mpc >= mode_since %}
           {% set normal = states('input_number.therma_v_dhw_target_request') | float(50) %}
-          {% set defer = states('input_number.therma_v_supervisor_dhw_defer_offset') | float(1) %}
+          {% set defer = states('input_number.therma_v_supervisor_dhw_defer_offset') | float(2) %}
           {% set hp = states('sensor.p_deferrable0') | float(0) %}
           {% set threshold = states('input_number.therma_v_supervisor_power_threshold') | float(100) %}
           {% set temp = states('sensor.therma_v_dhw_temperature') | float(0) %}
           {% set safety_floor = states('sensor.therma_v_dhw_safety_floor') | float(42) %}
+          {% set stopping = is_state('input_boolean.dhw_disinfection_stopping', 'on') %}
+          {% set stop_offset =
+               states('input_number.dhw_disinfection_stop_offset') | float(10) %}
           {% set dhw_started =
                is_state('binary_sensor.therma_v_dhw_heating_state', 'on')
                and is_state('binary_sensor.therma_v_compressor_state', 'on') %}
@@ -404,7 +407,9 @@ template:
           {% set disinfection_override =
                (is_state('input_boolean.dhw_disinfection_active', 'on') or hold)
                and gate %}
-          {% if disinfection_override %}
+          {% if stopping %}
+          {{ max(40, min(normal, temp - stop_offset)) | round(1) }}
+          {% elif disinfection_override %}
           60.0
           {% elif strategy != 'EMHASS' or not gate %}
           {{ normal | round(1) }}
@@ -437,6 +442,7 @@ template:
             {% set threshold = states('input_number.therma_v_supervisor_power_threshold') | float(100) %}
             {% set temp = states('sensor.therma_v_dhw_temperature') | float(0) %}
             {% set safety_floor = states('sensor.therma_v_dhw_safety_floor') | float(42) %}
+            {% set stopping = is_state('input_boolean.dhw_disinfection_stopping', 'on') %}
             {% set dhw_started =
                  is_state('binary_sensor.therma_v_dhw_heating_state', 'on')
                  and is_state('binary_sensor.therma_v_compressor_state', 'on') %}
@@ -468,7 +474,9 @@ template:
             {% set disinfection_override =
                  (is_state('input_boolean.dhw_disinfection_active', 'on') or hold)
                  and gate %}
-            {% if disinfection_override %}
+            {% if stopping %}
+            disinfection stop
+            {% elif disinfection_override %}
             disinfection
             {% elif strategy != 'EMHASS' %}
             off
@@ -488,8 +496,11 @@ template:
             defer
             {% endif %}
           normal_setpoint: "{{ states('input_number.therma_v_dhw_target_request') | float(50) }}"
-          tank_follow_offset: "{{ states('input_number.therma_v_supervisor_dhw_defer_offset') | float(1) }}"
+          tank_follow_offset: "{{ states('input_number.therma_v_supervisor_dhw_defer_offset') | float(2) }}"
           start_assist_temperature: "55.0"
+          disinfection_complete: "{{ is_state('input_boolean.dhw_disinfection_complete', 'on') }}"
+          disinfection_stopping: "{{ is_state('input_boolean.dhw_disinfection_stopping', 'on') }}"
+          disinfection_stop_failed: "{{ is_state('input_boolean.dhw_disinfection_stop_failed', 'on') }}"
           dhw_plan_power: "{{ states('sensor.p_deferrable0') | float(0) }}"
           booster_plan_power: "{{ states('sensor.p_deferrable2') | float(0) }}"
           dhw_temperature: "{{ states('sensor.therma_v_dhw_temperature') | float(0) }}"
@@ -612,6 +623,8 @@ template:
           {% set booster = states('sensor.p_deferrable2') | float(0) %}
           {% set temp = states('sensor.therma_v_dhw_temperature') | float(0) %}
           {% set safety_floor = states('sensor.therma_v_dhw_safety_floor') | float(42) %}
+          {% set stopping = is_state('input_boolean.dhw_disinfection_stopping', 'on') %}
+          {% set stop_failed = is_state('input_boolean.dhw_disinfection_stop_failed', 'on') %}
           {% set threshold = states('input_number.therma_v_supervisor_power_threshold') | float(100) %}
           {% set plan_target =
                state_attr('sensor.therma_v_dhw_planned_run_start', 'target_temperature')
@@ -636,6 +649,10 @@ template:
           off
           {% elif not is_state('input_boolean.therma_v_supervisor_dhw_enabled', 'on') %}
           DHW disabled
+          {% elif stop_failed %}
+          disinfection stop failed
+          {% elif stopping %}
+          disinfection stop
           {% elif is_state('input_boolean.dhw_disinfection_active', 'on') %}
           disinfection
           {% elif not fresh %}
@@ -678,6 +695,8 @@ template:
           booster_switch: "{{ states('switch.dhw_booster_2_switch') }}"
           disinfection_due: "{{ is_state('input_boolean.dhw_disinfection_due', 'on') }}"
           disinfection_active: "{{ is_state('input_boolean.dhw_disinfection_active', 'on') }}"
+          disinfection_complete: "{{ is_state('input_boolean.dhw_disinfection_complete', 'on') }}"
+          disinfection_stopping: "{{ is_state('input_boolean.dhw_disinfection_stopping', 'on') }}"
           disinfection_prepare: >-
             {% set next_ts = state_attr('input_datetime.dhw_next_disinfection', 'timestamp') %}
             {% set lead_hours = states('input_number.dhw_disinfection_min_lead_hours') | float(5) %}
@@ -869,7 +888,7 @@ template:
              min(max(tinlet_unclamped,
                      states('input_number.therma_v_min_water_temperature_heat') | float(20)),
                  states('input_number.therma_v_max_water_temperature_heat') | float(42))
-             if control_enabled and control_power > 0 else none %}
+             | round(1) if control_enabled and control_power > 0 else none %}
         {{ {
           'current': control_power,
           'current_raw': current.raw,
@@ -1050,6 +1069,9 @@ automation:
           - binary_sensor.therma_v_dhw_run_active
           - input_boolean.dhw_disinfection_due
           - input_boolean.dhw_disinfection_active
+          - input_boolean.dhw_disinfection_complete
+          - input_boolean.dhw_disinfection_stopping
+          - input_boolean.dhw_disinfection_stop_failed
           - input_datetime.dhw_next_disinfection
       - trigger: homeassistant
         event: start
@@ -1085,6 +1107,8 @@ automation:
                and mode_since is not none
                and (last_mpc | float(0)) >= (mode_since | float(0)) }}
           active: "{{ is_state('input_boolean.dhw_disinfection_active', 'on') }}"
+          stopping: "{{ is_state('input_boolean.dhw_disinfection_stopping', 'on') }}"
+          stop_failed: "{{ is_state('input_boolean.dhw_disinfection_stop_failed', 'on') }}"
           negative_price: "{{ states('sensor.electricity_buying_price') | float(0) < 0 }}"
           threshold: "{{ states('input_number.therma_v_supervisor_power_threshold') | float(100) }}"
           hp_power: "{{ states('sensor.p_deferrable0') | float(0) }}"
@@ -1123,8 +1147,13 @@ automation:
                and now().timestamp() >= (next_ts | float(0))
                and now().timestamp() < (next_ts | float(0)) + (hold_minutes | float(45)) * 60 }}
           disinfection: "{{ (active | bool) or (hold | bool) }}"
-          # Booster is a hard-gated last resort: negative price or an active/scheduled hygiene run.
-          booster_permitted: "{{ (negative_price | bool) or (disinfection | bool) }}"
+          # During disinfection the HP may start its own booster. The Shelly is only the independent
+          # negative-price path and must stay out of both the heat phase and the stop settling phase.
+          booster_permitted: >-
+            {{ (negative_price | bool)
+               and not (active | bool)
+               and not (stopping | bool)
+               and not (stop_failed | bool) }}
           booster_limit: "{{ booster_max if (booster_permitted | bool) else 55 }}"
           booster_wanted: >-
             {{ (fresh | bool)
@@ -1136,7 +1165,9 @@ automation:
       - choose:
           - conditions:
               - condition: template
-                value_template: "{{ is_state('switch.therma_v_dhw_on_off', 'off') }}"
+                value_template: >-
+                  {{ not (stop_failed | bool)
+                     and is_state('switch.therma_v_dhw_on_off', 'off') }}
             sequence:
               - action: switch.turn_on
                 target:
@@ -1452,23 +1483,35 @@ automation:
           entity_id: input_datetime.dhw_disinfection_started
         data:
           timestamp: "{{ now().timestamp() }}"
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.dhw_disinfection_cycle_requested_at
+        data:
+          timestamp: "{{ now().timestamp() }}"
       - action: input_boolean.turn_on
         target:
           entity_id: input_boolean.dhw_disinfection_active
       - action: input_boolean.turn_off
         target:
-          entity_id: input_boolean.dhw_disinfection_cycle_requested
+          entity_id:
+            - input_boolean.dhw_disinfection_complete
+            - input_boolean.dhw_disinfection_stopping
+            - input_boolean.dhw_disinfection_stop_failed
+            - input_boolean.dhw_disinfection_cycle_requested
       - action: switch.turn_on
         target:
           entity_id: switch.therma_v_dhw_on_off
-      - action: timer.start
+      - action: switch.turn_off
         target:
-          entity_id: timer.dhw_disinfection_preheat
+          entity_id: switch.dhw_booster_2_switch
+      - action: switch.turn_off
+        target:
+          entity_id: switch.therma_v_trigger_dhw_disinfection_cycle
       - action: logbook.log
         data:
           name: DHW disinfection
           message: >-
-            EMHASS preheat started; normal request
+            EMHASS scheduled HA disinfection started; normal request
             {{ states('input_number.therma_v_dhw_target_request') | float(50) }} C
 
   # Hand the physical DHW/booster layer back safely when leaving EMHASS or disabling the DHW gate.
