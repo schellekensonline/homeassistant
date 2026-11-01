@@ -57,7 +57,70 @@ template:
                   and states('sensor.therma_v_buffer_temperatures_return_to_heatpump_t4') | is_number) }}
         delay_on: "00:01:00"
 
+      # Diagnostic only. The existing cooling stop remains the actuator safety; this detects a
+      # supply temperature that stays below the room dewpoint long enough to be meaningful.
+      - name: "Cooling supply below dewpoint"
+        unique_id: cooling_supply_below_dewpoint
+        icon: mdi:water-alert
+        availability: >-
+          {{ states('sensor.shelly_plus_ht1_dewpoint') | is_number
+             and states('sensor.therma_v_buffer_temperatures_out_to_heating_t2') | is_number
+             and has_value('climate.therma_v_heating_cooling')
+             and has_value('binary_sensor.therma_v_compressor_state') }}
+        state: >-
+          {{ is_state('climate.therma_v_heating_cooling', 'cool')
+             and is_state('binary_sensor.therma_v_compressor_state', 'on')
+             and (states('sensor.therma_v_buffer_temperatures_out_to_heating_t2') | float(0))
+                 < (states('sensor.shelly_plus_ht1_dewpoint') | float(0)) }}
+
 automation:
+  - id: cooling_supply_below_dewpoint_alert
+    alias: "Cooling supply below dewpoint alert"
+    description: "Warns when the floor supply stays below the room dewpoint"
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.cooling_supply_below_dewpoint
+        to: "on"
+        for: "00:05:00"
+    actions:
+      - variables:
+          supply: "{{ states('sensor.therma_v_buffer_temperatures_out_to_heating_t2') }}"
+          dewpoint: "{{ states('sensor.shelly_plus_ht1_dewpoint') }}"
+      - action: persistent_notification.create
+        data:
+          title: "Cooling-aanvoer onder dauwpunt"
+          notification_id: cooling_supply_dewpoint
+          message: >-
+            De vloeraanvoer T2 is al minstens 5 minuten {{ supply }} C, onder het
+            dauwpunt van {{ dewpoint }} C.
+      - action: notify.mobile_app_iphone_jan
+        data:
+          title: "Cooling-aanvoer onder dauwpunt"
+          message: >-
+            T2 {{ supply }} C is lager dan dauwpunt {{ dewpoint }} C.
+      - action: logbook.log
+        data:
+          name: Therma V cooling
+          message: >-
+            supply T2 {{ supply }} C below dewpoint {{ dewpoint }} C for 5 minutes
+
+  - id: cooling_supply_dewpoint_recovered
+    alias: "Cooling supply dewpoint recovered"
+    description: "Dismisses the supply-below-dewpoint notification after recovery"
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.cooling_supply_below_dewpoint
+        to: "off"
+        for: "00:02:00"
+    actions:
+      - action: persistent_notification.dismiss
+        data:
+          notification_id: cooling_supply_dewpoint
+
   # Stop cooling when the living room dewpoint is above the return temperatures: water colder
   # than the dewpoint condenses in the floor circuit. Silent mode goes off with it.
   - id: cooling_off_based_on_dewpoint_auto
@@ -107,3 +170,17 @@ automation:
           entity_id: climate.therma_v_heating_cooling
         data:
           hvac_mode: "off"
+      - action: persistent_notification.create
+        data:
+          title: "Cooling gestopt wegens condensatierisico"
+          notification_id: cooling_dewpoint_shutdown
+          message: >-
+            Cooling is uitgeschakeld omdat het livingroom-dauwpunt boven de
+            retourwatertemperaturen ligt.
+      - action: notify.mobile_app_iphone_jan
+        data:
+          title: "Cooling gestopt wegens condensatierisico"
+          message: >-
+            Dauwpunt {{ states('sensor.shelly_plus_ht1_dewpoint') }} C,
+            retouren {{ states('sensor.therma_v_buffer_temperatures_return_from_heating_t3') }}
+            en {{ states('sensor.therma_v_buffer_temperatures_return_to_heatpump_t4') }} C.
