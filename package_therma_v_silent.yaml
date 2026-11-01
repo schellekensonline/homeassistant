@@ -63,6 +63,9 @@ automation:
         - condition: state
           entity_id: switch.therma_v_heating_cooling_on_off
           state: "on" # Silent mode with the unit off can crash the controller.
+        - condition: state
+          entity_id: binary_sensor.therma_v_defrost_state
+          state: "off" # Keep the outdoor fan available while defrosting.
         - or:
           - condition: time
             after: input_datetime.silent_start_time
@@ -77,11 +80,11 @@ automation:
         target:
           entity_id: switch.silent_mode_state
 
-  # Leave silent mode when power rises during the day, or immediately when the refrigerant
-  # suction temperature drops below freezing. Never interfere with the startup sequence.
+  # Leave silent mode when power rises during the day, when the HP reports defrost, or after five
+  # minutes of subzero suction gas. Defrost safety may interrupt the startup sequence.
   - id: therma_v_silent_off_power_temp_time_based_auto
     alias: "Therma V Silent OFF power temp time based auto"
-    description: "Turns silent mode off when power rises during the day or refrigerant suction falls below freezing"
+    description: "Turns silent mode off for high daytime power, defrost, or subzero refrigerant suction"
     mode: single
     max_exceeded: silent
     triggers:
@@ -89,29 +92,35 @@ automation:
         at: input_datetime.silent_stop_time
       - trigger: numeric_state
         id: temp_trig
-        entity_id: sensor.therma_v_refrigirant_temperature_suction
+        entity_id: sensor.therma_v_refrigerant_suction_temperature
         below: 0
         for: "00:05:00"
+      - trigger: state
+        id: defrost_trig
+        entity_id: binary_sensor.therma_v_defrost_state
+        to: "on"
       - trigger: numeric_state
         entity_id: sensor.therma_v_electric_power
         above: input_number.silent_power_threshold
         for: "00:05:00"
     conditions:
-      and:
-        - condition: numeric_state
-          entity_id: automation.therma_v_silent_on_at_startup_auto
-          attribute: current
-          below: 1 # No active startup sequence.
-        - or:
-          - and:
-              - condition: time
-                after: input_datetime.silent_stop_time
-                before: input_datetime.silent_start_time
-              - condition: numeric_state
-                entity_id: sensor.therma_v_electric_power
-                above: input_number.silent_power_threshold
-          - condition: trigger
-            id: temp_trig
+      or:
+        # Defrost safety overrides an active startup sequence.
+        - condition: trigger
+          id: defrost_trig
+        - condition: trigger
+          id: temp_trig
+        - and:
+            - condition: numeric_state
+              entity_id: automation.therma_v_silent_on_at_startup_auto
+              attribute: current
+              below: 1 # No active startup sequence.
+            - condition: time
+              after: input_datetime.silent_stop_time
+              before: input_datetime.silent_start_time
+            - condition: numeric_state
+              entity_id: sensor.therma_v_electric_power
+              above: input_number.silent_power_threshold
     actions:
       - action: switch.turn_off
         target:
