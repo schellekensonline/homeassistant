@@ -177,6 +177,19 @@ input_number:
     unit_of_measurement: "°C"
     icon: mdi:thermometer-high
 
+  # Alert-only diagnostic limit. A short supply peak is normal at low outdoor temperature; only a
+  # sustained value needs attention. The pump's own pressure and water-temperature protections
+  # remain authoritative.
+  therma_v_max_supply_temperature_safety:
+    name: "Therma V supply temperature warning limit"
+    min: 45
+    max: 70
+    step: 1
+    initial: 55
+    mode: box
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-alert
+
   therma_v_min_water_temperature_cool:
     name: "Therma V min water temperature cool"
     min: 5
@@ -214,7 +227,6 @@ input_boolean:
     name: "Therma V anti-trip maximum hold timeout"
     icon: mdi:timer-alert-outline
     initial: false
-
 sensor:
   # The source is the already 15-minute filtered room value. A positive derivative here means the
   # room is gaining heat even while the raw water request says no more heat is wanted.
@@ -230,6 +242,25 @@ sensor:
 # Register address 4 is the auto-mode signed delta, not an operation-mode value.
 template:
   - binary_sensor:
+      # Diagnostic only: return control can legitimately produce a short high supply peak.
+      - name: "Therma V space supply temperature warning"
+        unique_id: therma_v_space_supply_temperature_guard
+        icon: mdi:thermometer-alert
+        availability: >-
+          {{ has_value('sensor.therma_v_outlet_temperature')
+             and has_value('sensor.therma_v_control_mode')
+             and has_value('binary_sensor.therma_v_compressor_state')
+             and has_value('binary_sensor.therma_v_dhw_heating_state')
+             and has_value('input_number.therma_v_max_supply_temperature_safety') }}
+        state: >-
+          {% set outlet = states('sensor.therma_v_outlet_temperature') | float(0) %}
+          {% set limit = states('input_number.therma_v_max_supply_temperature_safety') | float(48) %}
+          {{ states('sensor.therma_v_control_mode') | int(-1) == 1
+             and states('sensor.therma_v_operation_mode') | int(-1) == 4
+             and is_state('binary_sensor.therma_v_compressor_state', 'on')
+             and not is_state('binary_sensor.therma_v_dhw_heating_state', 'on')
+             and outlet >= limit }}
+
       # True only when normal heating or cooling demand is already below the pump's off threshold,
       # but the start-up layer is still holding the compressor on against it. This is the condition
       # that needs the maximum-hold timeout; when the compressor is off or the season limit already
@@ -404,6 +435,10 @@ template:
           {% else %}
           {{ desired | round(0, dir) | int }}
           {% endif %}
+        attributes:
+          supply_temperature: "{{ states('sensor.therma_v_outlet_temperature') }}"
+          supply_temperature_limit: >-
+            {{ states('input_number.therma_v_max_supply_temperature_safety') }}
 
       # The delta to write on register 4 in auto mode. Auto follows a heating curve, so the
       # reachable water target is `curve +/- 5`; the layer solves for the delta that puts the water
@@ -465,8 +500,62 @@ template:
           {% else %}
           {{ min(max(desired - curve, -5), 5) | round(0, 'ceil') | int }}
           {% endif %}
+        attributes:
+          supply_temperature: "{{ states('sensor.therma_v_outlet_temperature') }}"
 
 automation:
+  # Alert only: do not fight a legitimate maximum-output heating peak.
+  - id: therma_v_space_supply_temperature_high_alert
+    alias: "Therma V space supply temperature high alert"
+    description: "Warns after sustained excessive supply temperature without changing control"
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.therma_v_space_supply_temperature_guard
+        to: "on"
+        for: "00:15:00"
+    actions:
+      - variables:
+          supply: "{{ states('sensor.therma_v_outlet_temperature') }}"
+          return_temp: "{{ states('sensor.therma_v_inlet_temperature') }}"
+          limit: "{{ states('input_number.therma_v_max_supply_temperature_safety') }}"
+      - action: persistent_notification.create
+        data:
+          title: "Therma V aanvoer langdurig hoog"
+          notification_id: therma_v_supply_high
+          message: >-
+            De aanvoer is al minstens 15 minuten {{ supply }} C bij een retourtarget van
+            {{ return_temp }} C (waarschuwingsgrens {{ limit }} C). De warmtepomp en
+            retourregeling blijven ongewijzigd actief.
+      - action: notify.mobile_app_iphone_jan
+        data:
+          title: "Therma V aanvoer langdurig hoog"
+          message: >-
+            Aanvoer {{ supply }} C, retour {{ return_temp }} C, grens {{ limit }} C.
+            Geen automatische ingreep uitgevoerd.
+      - action: logbook.log
+        data:
+          name: Therma V
+          message: >-
+            sustained high supply temperature {{ supply }} C
+            (return {{ return_temp }} C, warning limit {{ limit }} C)
+
+  - id: therma_v_space_supply_temperature_recovered
+    alias: "Therma V space supply temperature recovered"
+    description: "Dismisses the sustained high-supply notification after recovery"
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.therma_v_space_supply_temperature_guard
+        to: "off"
+        for: "00:02:00"
+    actions:
+      - action: persistent_notification.dismiss
+        data:
+          notification_id: therma_v_supply_high
+
   # A clear room rise without normal heat demand is treated as passive gain. The condition itself
   # is continuously recomputed; only after the hold time does it release the anti-trip layer.
   - id: therma_v_passive_gain_stop

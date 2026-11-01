@@ -2,9 +2,8 @@
 # input_select.therma_v_control_strategy; the three booleans below are internal readiness gates so
 # flows can be enabled one at a time while their actuator is implemented.
 #
-# DHW and the external Shelly booster are live-ready. The space-heating and cooling setpoint overlay
-# is implemented as well, but their readiness gates stay off until each mode is tested separately.
-# Auto mode remains a passthrough until its delta path has its own supervisor.
+# DHW and space heating are live. Cooling remains gated until its warm-weather test. Auto mode
+# remains a passthrough until its delta path has its own supervisor.
 #
 # The quarter-hour MPC sets sensor.p_deferrable0 (HP -> DHW) and sensor.p_deferrable2 (electric
 # booster -> DHW); sensor.p_deferrable1 is the single shared space zone in either heat or cool mode.
@@ -14,6 +13,15 @@
 # effective setpoint returns to the normal thermostat target. Disinfection uses 53/60 C to force the
 # required run.
 # The DHW coil is Modbus coil 1 (DHW operation enable), not a physical valve.
+
+input_text:
+  # Eight quarter-hour deltas in thermal kWh, oldest first. This is the rolling in-flight heat
+  # passed to EMHASS as shared_tank_prior_heat["house"].
+  therma_v_house_prior_heat_json:
+    name: "Therma V house prior heat buffer"
+    max: 255
+    initial: "[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]"
+    icon: mdi:timeline-clock-outline
 
 input_boolean:
   therma_v_supervisor_dhw_enabled:
@@ -50,8 +58,21 @@ input_datetime:
     name: "Therma V heat plan IIR last step"
     has_date: true
     has_time: true
+  therma_v_house_prior_heat_step_at:
+    name: "Therma V house prior heat last completed step"
+    has_date: true
+    has_time: true
 
 input_number:
+  therma_v_house_prior_heat_previous_counter:
+    name: "Therma V house prior heat previous counter"
+    min: 0
+    max: 1000000
+    step: 0.001
+    mode: box
+    unit_of_measurement: "kWh"
+    icon: mdi:counter
+
   # The user-facing DHW request. The climate entity writes this helper; only the chase sensor and
   # the register writer connect it to Modbus register 8.
   therma_v_dhw_target_request:
@@ -160,12 +181,15 @@ template:
           {{ is_state('binary_sensor.therma_v_compressor_state', 'on')
              and not is_state('binary_sensor.therma_v_dhw_heating_state', 'on')
              and states('sensor.therma_v_operation_mode') | int(-1) in [0, 3, 4] }}
-      - name: "Therma V heat plan ready"
+      # p_deferrable1 is the shared space-heating/cooling flow. Keep the established entity ID for
+      # compatibility, but make readiness follow the active comfort direction and its own gate.
+      - name: "Therma V space plan ready"
         unique_id: therma_v_heat_plan_ready
         icon: mdi:heat-wave
         availability: >-
           {{ has_value('input_select.therma_v_control_strategy')
              and has_value('input_boolean.therma_v_supervisor_space_heat_enabled')
+             and has_value('input_boolean.therma_v_supervisor_cooling_enabled')
              and has_value('binary_sensor.emhass_forecast_fresh')
              and has_value('input_datetime.emhass_last_mpc')
              and has_value('input_datetime.therma_v_supervisor_hvac_since')
@@ -173,9 +197,13 @@ template:
         state: >-
           {% set last_mpc = state_attr('input_datetime.emhass_last_mpc', 'timestamp') %}
           {% set hvac_since = state_attr('input_datetime.therma_v_supervisor_hvac_since', 'timestamp') %}
-          {{ states('sensor.therma_v_operation_mode') | int(-1) == 4
+          {% set mode = states('sensor.therma_v_operation_mode') | int(-1) %}
+          {% set gate = (is_state('input_boolean.therma_v_supervisor_space_heat_enabled', 'on')
+                         if mode == 4
+                         else is_state('input_boolean.therma_v_supervisor_cooling_enabled', 'on')) %}
+          {{ mode in [0, 4]
              and is_state('input_select.therma_v_control_strategy', 'EMHASS')
-             and is_state('input_boolean.therma_v_supervisor_space_heat_enabled', 'on')
+             and gate
              and is_state('binary_sensor.emhass_forecast_fresh', 'on')
              and last_mpc is not none and hvac_since is not none
              and last_mpc >= hvac_since }}
@@ -190,20 +218,40 @@ template:
              and has_value('binary_sensor.therma_v_heat_plan_ready')
              and has_value('input_select.therma_v_control_strategy')
              and has_value('input_boolean.therma_v_supervisor_space_heat_enabled')
+             and has_value('input_boolean.therma_v_supervisor_cooling_enabled')
              and has_value('input_boolean.therma_v_supervisor_hvac_recovery')
              and has_value('sensor.therma_v_operation_mode') }}
         state: >-
-          {% set heat_owned_waiting =
-               states('sensor.therma_v_operation_mode') | int(-1) == 4
+          {% set mode = states('sensor.therma_v_operation_mode') | int(-1) %}
+          {% set gate = (is_state('input_boolean.therma_v_supervisor_space_heat_enabled', 'on')
+                         if mode == 4
+                         else is_state('input_boolean.therma_v_supervisor_cooling_enabled', 'on')) %}
+          {% set space_owned_waiting =
+               mode in [0, 4]
                and is_state('input_select.therma_v_control_strategy', 'EMHASS')
-               and is_state('input_boolean.therma_v_supervisor_space_heat_enabled', 'on') %}
+               and gate %}
           {{ not is_state('binary_sensor.therma_v_heat_plan_ready', 'on')
-             and (heat_owned_waiting
+             and (space_owned_waiting
                   or (is_state('binary_sensor.therma_v_hvac_run_active', 'on')
                       and is_state('input_boolean.therma_v_supervisor_hvac_recovery', 'on'))) }}
         attributes:
           heat_plan_ready: "{{ is_state('binary_sensor.therma_v_heat_plan_ready', 'on') }}"
+          space_mode: >-
+            {{ 'heat' if states('sensor.therma_v_operation_mode') | int(-1) == 4
+               else ('cool' if states('sensor.therma_v_operation_mode') | int(-1) == 0 else 'idle') }}
           recovery: "{{ is_state('input_boolean.therma_v_supervisor_hvac_recovery', 'on') }}"
+      - name: "Therma V space plan off"
+        unique_id: therma_v_space_plan_off
+        icon: mdi:hvac-off
+        availability: >-
+          {{ has_value('binary_sensor.therma_v_heat_plan_ready')
+             and has_value('sensor.therma_v_heat_plan_processed_power') }}
+        state: >-
+          {{ is_state('binary_sensor.therma_v_heat_plan_ready', 'on')
+             and state_attr('sensor.therma_v_heat_plan_processed_power', 'plan_state') == 'off' }}
+        attributes:
+          space_mode: >-
+            {{ state_attr('sensor.therma_v_heat_plan_processed_power', 'space_mode') or 'idle' }}
   - binary_sensor:
       - name: "Therma V DHW run active"
         unique_id: therma_v_dhw_run_active
@@ -219,6 +267,22 @@ template:
              or is_state('binary_sensor.therma_v_dhw_booster_state', 'on')
              or is_state('binary_sensor.therma_v_dhw_booster_2_state_s1', 'on') }}
   - sensor:
+      - name: "Therma V house prior heat"
+        unique_id: therma_v_house_prior_heat
+        icon: mdi:timeline-clock-outline
+        unit_of_measurement: "kWh"
+        state_class: measurement
+        availability: >-
+          {{ states('input_text.therma_v_house_prior_heat_json') | from_json is iterable }}
+        state: >-
+          {% set values = states('input_text.therma_v_house_prior_heat_json') | from_json %}
+          {{ values[-1] if values | length else 0 }}
+        attributes:
+          prior_heat: >-
+            {{ states('input_text.therma_v_house_prior_heat_json') | from_json }}
+          updated_at: >-
+            {{ state_attr('input_datetime.therma_v_house_prior_heat_step_at', 'timestamp') }}
+
       # Keep the safety trigger below the model's normal tank floor so the MPC has a 3 K
       # opportunity to schedule a run before the supervisor forces one.
       - name: "Therma V DHW safety floor"
@@ -717,6 +781,7 @@ template:
           - sensor.p_deferrable1
           - input_select.therma_v_control_strategy
           - input_boolean.therma_v_supervisor_space_heat_enabled
+          - input_boolean.therma_v_supervisor_cooling_enabled
       - trigger: homeassistant
         event: start
       - trigger: time_pattern
@@ -868,36 +933,60 @@ template:
         {% endfor %}
         {% set control_enabled = is_state('binary_sensor.therma_v_heat_plan_ready', 'on') %}
         {% set control_power = states('input_number.therma_v_heat_plan_iir_power') | float(0) %}
+        {% set plan_state =
+             'hold' if not control_enabled or not current.found
+             else ('off' if current.raw <= threshold
+                             and current.edge <= threshold
+                             and control_power <= threshold
+                   else 'active') %}
+        {% set space_mode_num = states('sensor.therma_v_operation_mode') | int(-1) %}
+        {% set heat_mode = space_mode_num == 4 %}
         {% set outside = states('sensor.therma_v_outside_temperature_filtered') | float(10) %}
         {% set curve_slope = states('input_number.therma_v_heating_curve_slope') | float(0.444) %}
         {% set curve_offset = states('input_number.therma_v_heating_curve_offset') | float(0) %}
         {% set room_setpoint = states('input_number.room_setpoint_heating') | float(20) %}
-        {% set supply = min(max(
+        {% set supply = (min(max(
              room_setpoint * (1 + curve_slope) + curve_offset - curve_slope * outside,
              states('input_number.therma_v_min_water_temperature_heat') | float(20)),
-             states('input_number.therma_v_max_water_temperature_heat') | float(42)) %}
-        {% set lift = supply - outside %}
-        {% set heat_cop = (
+             states('input_number.therma_v_max_water_temperature_heat') | float(42))
+             if heat_mode else
+             state_attr('sensor.building_parameters', 'cooling_supply_temperature') | float(16)) %}
+        {% set lift = (supply - outside) if heat_mode else (outside - supply) %}
+        {% set carnot_efficiency = (
              state_attr('sensor.building_parameters', 'carnot_efficiency_heating') | float(0.26)
-             * (supply + 273.15) / lift) if lift > 0 else 1.0 %}
-        {% set heat_cop = min(max(heat_cop, 1.0), 8.0) %}
+             if heat_mode else
+             state_attr('sensor.building_parameters', 'carnot_efficiency_cooling') | float(0.45)) %}
+        {% set space_cop = (
+             carnot_efficiency * (supply + 273.15) / lift) if lift > 0 else 1.0 %}
+        {% set space_cop = min(max(space_cop, 1.0), 8.0) %}
         {% set room_now = states('sensor.therma_v_room_temperature_effective') | float(room_setpoint) %}
-        {% set q_thermal = control_power * heat_cop %}
-        {% set tinlet_unclamped = room_now + ((q_thermal / 1000 + 0.949) / 0.657) %}
+        {% set q_thermal = control_power * space_cop %}
+        {% set return_offset = (q_thermal / 1000 + 0.949) / 0.657 %}
+        {% set tinlet_unclamped =
+             room_now + return_offset if heat_mode else room_now - return_offset %}
+        {% set return_band_min = (
+             states('input_number.therma_v_min_water_temperature_heat') | float(25)
+             if heat_mode else
+             states('input_number.therma_v_min_water_temperature_cool') | float(12)) %}
+        {% set return_band_max = (
+             states('input_number.therma_v_max_water_temperature_heat') | float(42)
+             if heat_mode else
+             states('input_number.therma_v_max_water_temperature_cool') | float(22)) %}
         {% set tinlet_target =
-             min(max(tinlet_unclamped,
-                     states('input_number.therma_v_min_water_temperature_heat') | float(20)),
-                 states('input_number.therma_v_max_water_temperature_heat') | float(42))
-             | round(1) if control_enabled and control_power > 0 else none %}
+             min(max(tinlet_unclamped, return_band_min), return_band_max) | round(1)
+             if plan_state == 'active' and control_power > threshold else none %}
         {{ {
           'current': control_power,
           'current_raw': current.raw,
           'current_edge': current.edge,
           'current_iir': control_power,
+          'current_found': current.found,
+          'plan_state': plan_state,
+          'space_mode': ('heat' if heat_mode else ('cool' if space_mode_num == 0 else 'idle')),
           'points': profile_points.list,
           'control_enabled': control_enabled,
           'tinlet_target': tinlet_target,
-          'model_cop': heat_cop,
+          'model_cop': space_cop,
           'thermal_power': q_thermal,
           'quarter': quarter | int,
           'alpha': 0.6321205588,
@@ -921,6 +1010,9 @@ template:
           current_raw: "{{ heat_profile.current_raw }}"
           current_edge: "{{ heat_profile.current_edge }}"
           current_iir: "{{ heat_profile.current_iir }}"
+          current_found: "{{ heat_profile.current_found }}"
+          plan_state: "{{ heat_profile.plan_state }}"
+          space_mode: "{{ heat_profile.space_mode }}"
           control_enabled: "{{ heat_profile.control_enabled }}"
           tinlet_target: "{{ heat_profile.tinlet_target }}"
           model_cop: "{{ heat_profile.model_cop }}"
@@ -932,6 +1024,66 @@ template:
           points: "{{ heat_profile.points }}"
 
 automation:
+  # Advance the in-flight house-heat buffer once per completed optimization step. A gap longer
+  # than one quarter adds zeros for the missing steps; a counter reset contributes zero.
+  - id: therma_v_house_prior_heat_update
+    alias: "Therma V house prior heat update"
+    description: "Records quarter-hour delivered space heat for the rolling EMHASS topology"
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: time_pattern
+        minutes: "/15"
+        seconds: 2
+      - trigger: homeassistant
+        event: start
+    actions:
+      - variables:
+          counter: "{{ states('sensor.therma_v_space_heating_delivered_heat') }}"
+          previous: "{{ states('input_number.therma_v_house_prior_heat_previous_counter') }}"
+          last_step: "{{ state_attr('input_datetime.therma_v_house_prior_heat_step_at', 'timestamp') }}"
+          raw_buffer: "{{ states('input_text.therma_v_house_prior_heat_json') }}"
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ counter | is_number }}"
+              - condition: template
+                value_template: >-
+                  {{ last_step | is_number
+                     and now().timestamp() - (last_step | float(0)) >= 750
+                     or not (last_step | is_number) }}
+            sequence:
+              - variables:
+                  delta: >-
+                    {{ (max((counter | float(0)) - (previous | float(0)), 0) | round(4))
+                       if previous | is_number else 0 }}
+              - variables:
+                  elapsed_steps: >-
+                    {{ max(1, min(8, ((now().timestamp() - (last_step | float(now().timestamp()))) / 900)
+                       | round(0, 'ceil') | int)) if last_step | is_number else 1 }}
+              - variables:
+                  updated: >-
+                    {% set existing = raw_buffer
+                                       if raw_buffer is iterable and raw_buffer is not string
+                                       else (raw_buffer | from_json) %}
+                    {{ (existing + ([0.0] * ((elapsed_steps | int) - 1))
+                        + [delta | float(0)])[-8:] }}
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.therma_v_house_prior_heat_json
+                data:
+                  value: "{{ updated | to_json }}"
+              - action: input_number.set_value
+                target:
+                  entity_id: input_number.therma_v_house_prior_heat_previous_counter
+                data:
+                  value: "{{ counter | float(0) }}"
+              - action: input_datetime.set_datetime
+                target:
+                  entity_id: input_datetime.therma_v_house_prior_heat_step_at
+                data:
+                  timestamp: "{{ now().timestamp() }}"
+
   # Advance the persisted 15 min heat-plan IIR exactly once per quarter. The plan may change every
   # quarter, but the filter state and previous edge must survive MPC updates and HA restarts.
   - id: therma_v_heat_plan_iir_update
@@ -945,6 +1097,7 @@ automation:
           - sensor.p_deferrable1
           - input_select.therma_v_control_strategy
           - input_boolean.therma_v_supervisor_space_heat_enabled
+          - input_boolean.therma_v_supervisor_cooling_enabled
       - trigger: state
         entity_id: sensor.therma_v_heat_plan_processed_power
         attribute: quarter

@@ -483,11 +483,13 @@ automation:
         entity_id:
           - input_select.therma_v_control_strategy
           - input_boolean.therma_v_supervisor_space_heat_enabled
+          - input_boolean.therma_v_supervisor_cooling_enabled
           - input_boolean.therma_v_supervisor_hvac_recovery
       - trigger: state
         entity_id:
           - binary_sensor.therma_v_hvac_run_active
           - binary_sensor.therma_v_heat_plan_ready
+          - binary_sensor.therma_v_space_plan_off
           - binary_sensor.therma_v_hvac_target_hold
           - binary_sensor.emhass_forecast_fresh
       - trigger: state
@@ -517,8 +519,8 @@ automation:
           - stop: "HVAC handover active; retaining the current water target"
       - choose:
           # The processed plan is authoritative only after an MPC completed since the current
-          # HVAC handover. Pe is converted to an inlet-temperature target; a valid zero-power plan
-          # requests the season minimum so the existing startup layer releases heat.
+          # HVAC handover. Active plans map Pe to an inlet target; valid zero plans command a stop
+          # just outside the pump hysteresis. Missing targets retain the previous request.
           - conditions:
               - condition: state
                 entity_id: binary_sensor.therma_v_heat_plan_ready
@@ -527,23 +529,61 @@ automation:
               - variables:
                   emhass_target: >-
                     {{ state_attr('sensor.therma_v_heat_plan_processed_power', 'tinlet_target') }}
+                  plan_off: "{{ is_state('binary_sensor.therma_v_space_plan_off', 'on') }}"
+                  off_mode: "{{ states('sensor.therma_v_operation_mode') | int(-1) }}"
+                  off_water: >-
+                    {{ states('sensor.therma_v_controlled_water_temperature') | float(20) }}
+                  off_hysteresis: >-
+                    {{ (states('input_number.therma_v_startup_hysteresis_pos') | float(2.5)
+                        if off_mode == 4
+                        else states('input_number.therma_v_startup_hysteresis_neg') | float(-2.5))
+                       | abs }}
+                  off_round: "{{ 'floor' if off_mode == 4 else 'ceil' }}"
+                  off_target: >-
+                    {% set raw = off_water - off_hysteresis - 1
+                                 if off_mode == 4
+                                 else off_water + off_hysteresis + 1 %}
+                    {{ raw | round(0, off_round) | int }}
                   requested_target: >-
                     {{ (((emhass_target | float(
                             states('input_number.therma_v_min_water_temperature_heat') | float(20)))
                           * 2) | round(0) / 2) | round(1) }}
               - if:
                   - condition: template
-                    value_template: >-
-                      {{ (requested_target | float(0)
-                          - states('input_number.therma_v_water_target_request') | float(0)) | abs
-                         >= states('input_number.therma_v_heating_curve_hysteresis') | float(0.5) }}
+                    value_template: "{{ plan_off | bool }}"
                 then:
-                  - action: input_number.set_value
-                    target:
-                      entity_id: input_number.therma_v_water_target_request
-                    data:
-                      value: >-
-                        {{ ((requested_target | float(20) * 2) | round(0) / 2) | round(1) }}
+                  - if:
+                      - condition: template
+                        value_template: >-
+                          {{ (off_target | float(0)
+                              - states('input_number.therma_v_water_target_request') | float(0)) | abs
+                             >= states('input_number.therma_v_heating_curve_hysteresis') | float(0.5) }}
+                    then:
+                      - action: input_number.set_value
+                        target:
+                          entity_id: input_number.therma_v_water_target_request
+                        data:
+                          value: "{{ off_target }}"
+                  - stop: "EMHASS space plan is off; stop request applied"
+              - if:
+                  - condition: template
+                    value_template: "{{ emhass_target | is_number }}"
+                then:
+                  - if:
+                      - condition: template
+                        value_template: >-
+                          {{ (requested_target | float(0)
+                              - states('input_number.therma_v_water_target_request') | float(0)) | abs
+                             >= states('input_number.therma_v_heating_curve_hysteresis') | float(0.5) }}
+                    then:
+                      - action: input_number.set_value
+                        target:
+                          entity_id: input_number.therma_v_water_target_request
+                        data:
+                          value: >-
+                            {{ ((requested_target | float(20) * 2) | round(0) / 2) | round(1) }}
+                else:
+                  - stop: "EMHASS space plan has no usable target; retaining request"
           # Heat: the curve is the water request. Heating-curve is the curve alone, Room control (P)
           # adds the room term - the curve sensor already carries both, so the hysteresis against the
           # live request is all that is left here.
