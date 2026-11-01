@@ -80,6 +80,92 @@ template:
         {{ (states('sensor.kwh_meter_heat_pump_active_power') | float(0)
             + states('sensor.shelly_plug_s1_power') | float(0)) | round(0) }}
 
+    # Actual power series for the dry-run comparison charts. The HP meter contains compressor and
+    # internal-booster power; the Shelly meter is the parallel path to that same tank element.
+    - name: "Therma V DHW actual electric power"
+      unique_id: therma_v_dhw_actual_electric_power
+      state_class: measurement
+      device_class: power
+      unit_of_measurement: "W"
+      availability: >-
+        {{ states('sensor.kwh_meter_heat_pump_active_power') | is_number
+           and states('sensor.shelly_plug_s1_power') | is_number
+           and has_value('binary_sensor.therma_v_dhw_heating_state')
+           and has_value('binary_sensor.therma_v_dhw_booster_state')
+           and has_value('binary_sensor.therma_v_dhw_booster_2_state_s1') }}
+      state: >-
+        {% set active = is_state('binary_sensor.therma_v_dhw_heating_state', 'on')
+                        or is_state('binary_sensor.therma_v_dhw_booster_state', 'on')
+                        or is_state('binary_sensor.therma_v_dhw_booster_2_state_s1', 'on') %}
+        {{ (states('sensor.kwh_meter_heat_pump_active_power') | float(0)
+            + states('sensor.shelly_plug_s1_power') | float(0)) | round(0)
+           if active else 0 }}
+      attributes:
+        hp_meter_power: "{{ states('sensor.kwh_meter_heat_pump_active_power') | float(0) | round(0) }}"
+        booster_switch_power: "{{ states('sensor.shelly_plug_s1_power') | float(0) | round(0) }}"
+
+    - name: "Therma V DHW booster actual power"
+      unique_id: therma_v_dhw_booster_actual_power
+      state_class: measurement
+      device_class: power
+      unit_of_measurement: "W"
+      state: >-
+        {{ 1500 if is_state('binary_sensor.therma_v_dhw_booster_state', 'on')
+                    or is_state('binary_sensor.therma_v_dhw_booster_2_state_s1', 'on')
+           else 0 }}
+
+    - name: "Therma V space heating actual power"
+      unique_id: therma_v_space_heating_actual_power
+      state_class: measurement
+      device_class: power
+      unit_of_measurement: "W"
+      state: >-
+        {% set dhw_active =
+             is_state('binary_sensor.therma_v_dhw_heating_state', 'on')
+             or is_state('binary_sensor.therma_v_dhw_booster_state', 'on')
+             or is_state('binary_sensor.therma_v_dhw_booster_2_state_s1', 'on') %}
+        {{ states('sensor.kwh_meter_heat_pump_active_power') | float(0) | round(0)
+           if is_state('sensor.therma_v_outdoor_unit_state', '2') and not dhw_active else 0 }}
+
+    - name: "Therma V space cooling actual power"
+      unique_id: therma_v_space_cooling_actual_power
+      state_class: measurement
+      device_class: power
+      unit_of_measurement: "W"
+      state: >-
+        {% set dhw_active =
+             is_state('binary_sensor.therma_v_dhw_heating_state', 'on')
+             or is_state('binary_sensor.therma_v_dhw_booster_state', 'on')
+             or is_state('binary_sensor.therma_v_dhw_booster_2_state_s1', 'on') %}
+        {{ states('sensor.kwh_meter_heat_pump_active_power') | float(0) | round(0)
+           if is_state('sensor.therma_v_outdoor_unit_state', '1') and not dhw_active else 0 }}
+
+    - name: "Therma V space heating actual thermal power"
+      unique_id: therma_v_space_heating_actual_thermal_power
+      state_class: measurement
+      device_class: power
+      unit_of_measurement: "W"
+      state: >-
+        {% set dhw_active =
+             is_state('binary_sensor.therma_v_dhw_heating_state', 'on')
+             or is_state('binary_sensor.therma_v_dhw_booster_state', 'on')
+             or is_state('binary_sensor.therma_v_dhw_booster_2_state_s1', 'on') %}
+        {{ states('sensor.therma_v_thermal_power') | float(0) | round(0)
+           if is_state('sensor.therma_v_outdoor_unit_state', '2') and not dhw_active else 0 }}
+
+    - name: "Therma V space cooling actual thermal power"
+      unique_id: therma_v_space_cooling_actual_thermal_power
+      state_class: measurement
+      device_class: power
+      unit_of_measurement: "W"
+      state: >-
+        {% set dhw_active =
+             is_state('binary_sensor.therma_v_dhw_heating_state', 'on')
+             or is_state('binary_sensor.therma_v_dhw_booster_state', 'on')
+             or is_state('binary_sensor.therma_v_dhw_booster_2_state_s1', 'on') %}
+        {{ states('sensor.therma_v_thermal_power') | float(0) | round(0)
+           if is_state('sensor.therma_v_outdoor_unit_state', '1') and not dhw_active else 0 }}
+
     # Cost of delivered heat in EUR per kWh (electricity price divided by COP)
     - name: "Price of heat incl tax"
       unique_id: price_of_heat_incl_tax
@@ -337,8 +423,8 @@ modbus:
       #   device_class: pressure
       #   unit_of_measurement: "bar"
 
-      - name: "Therma V refrigirant temperature liquid gas"
-        unique_id: therma_v_refrigirant_temperature_liquid_gas
+      - name: "Therma V refrigerant liquid-line temperature"
+        unique_id: therma_v_refrigerant_liquid_line_temperature
         scan_interval: 60
         address: 16
         slave: 1
@@ -359,8 +445,8 @@ modbus:
       #   device_class: temperature
       #   unit_of_measurement: "°C"
 
-      - name: "Therma V refrigirant temperature suction"
-        unique_id: therma_v_refrigirant_temperature_suction
+      - name: "Therma V refrigerant suction temperature"
+        unique_id: therma_v_refrigerant_suction_temperature
         scan_interval: 30
         address: 18
         slave: 1
@@ -371,8 +457,8 @@ modbus:
         device_class: temperature
         unit_of_measurement: "°C"
 
-      - name: "Therma V refrigirant temperature heat gas"
-        unique_id: therma_v_refrigirant_temperature_hot_gas
+      - name: "Therma V refrigerant hot-gas discharge temperature"
+        unique_id: therma_v_refrigerant_hot_gas_discharge_temperature
         scan_interval: 60
         address: 19
         slave: 1
@@ -382,7 +468,7 @@ modbus:
         device_class: temperature
         unit_of_measurement: "°C"
 
-      - name: "Therma V temperature before heat exchanger"
+      - name: "Therma V refrigerant evaporator inlet temperature"
         unique_id: therma_v_temperature_before_heat_exchanger
         scan_interval: 60
         address: 20
@@ -394,8 +480,8 @@ modbus:
         device_class: temperature
         unit_of_measurement: "°C"
 
-      - name: "Therma V temperature after heat exchanger"
-        unique_id: therma_v_temperature_after_heat_exchanger 
+      - name: "Therma V refrigerant evaporator outlet temperature"
+        unique_id: therma_v_temperature_after_heat_exchanger
         scan_interval: 60
         address: 21
         slave: 1
@@ -406,24 +492,27 @@ modbus:
         device_class: temperature
         unit_of_measurement: "°C"
 
-      - name: "Therma V compressor pressure high"
+      - name: "Therma V refrigerant high pressure"
         unique_id: therma_v_compressor_pressure_high
         scan_interval: 60
         address: 22
         slave: 1
         input_type: input
-        scale: 1
+        # Raw registers are hundredths of a bar, i.e. 10 mbar per count.
+        scale: 10
+        precision: 0
         state_class: measurement
         device_class: pressure
         unit_of_measurement: "mbar"
 
-      - name: "Therma V compressor pressure low"
+      - name: "Therma V refrigerant low pressure"
         unique_id: therma_v_compressor_pressure_low
         scan_interval: 60
         address: 23
         slave: 1
         input_type: input
-        scale: 1
+        scale: 10
+        precision: 0
         state_class: measurement
         device_class: pressure
         unit_of_measurement: "mbar"
@@ -538,7 +627,7 @@ modbus:
   # COIL REGISTERS
     switches:
       - name: "Therma V Heating/Cooling on/off"
-        unique_id: therma_v_heating_Cooling_on_off
+        unique_id: therma_v_heating_cooling_on_off
         slave: 1
         address: 0
         write_type: coil
