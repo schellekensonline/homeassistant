@@ -1,6 +1,7 @@
 template:
-  # Real state of the Shelly Plug S1 that powers the second DHW heater. It runs in parallel
-  # with the heat pump and can also be switched by hand.
+  # Real state of the Shelly Plug S1 that provides a parallel electrical switching path to the
+  # single 1.5 kW DHW booster element. It can also be switched by hand; the heat pump's own relay
+  # is an alternative path to the same heater.
   - binary_sensor:
       - name: "Therma V DHW booster 2 state (S1)"
         unique_id: therma_v_dhw_booster_2_state

@@ -1,16 +1,18 @@
 # DHW disinfection planning and state machine for the Therma V.
 #
 # The package owns whether a cycle is due, the allowed window, execution in Manual/Heuristic,
-# completion detection, timeout/retry and setpoint restoration. In EMHASS mode the supervisor in
-# package_therma_v_supervisor.yaml starts this same FSM at the planned hold. Detection remains
-# independent of the strategy, so an unplanned hot cycle still updates dhw_last_disinfection.
+# completion detection, stop settling, timeout/retry and setpoint restoration. In EMHASS mode the
+# supervisor in package_therma_v_supervisor.yaml starts this same FSM at the planned hold. The HP
+# may use its normal DHW logic to start the compressor and internal booster; the native
+# disinfection trigger is deliberately never used.
 #
 # FSM exposed by sensor.dhw_disinfection_state:
 #   idle       - no cycle required
 #   scheduled  - due and a future run time is selected
 #   missed     - due and the selected time passed, but the hard maximum has not been reached
 #   overdue    - due and at or past the configured maximum interval
-#   active     - preheat or disinfection cycle is in progress
+#   active     - DHW disinfection heat request is active
+#   stopping   - complete was reached; waiting for the internal booster relay to drop
 
 input_datetime:
   dhw_last_disinfection:
@@ -71,6 +73,22 @@ input_number:
     step: 0.5
     mode: box
     unit_of_measurement: "h"
+  dhw_disinfection_stop_offset:
+    name: "DHW disinfection stop offset"
+    initial: 10
+    min: 3
+    max: 15
+    step: 1
+    mode: box
+    unit_of_measurement: "K"
+  dhw_disinfection_stop_timeout_minutes:
+    name: "DHW disinfection stop timeout"
+    initial: 10
+    min: 2
+    max: 30
+    step: 1
+    mode: box
+    unit_of_measurement: "min"
   # Minimum time the tank must stay at or above 60 C in the EMHASS heat topology. The detection
   # path needs 30 minutes; 45 gives the planner one extra quarter for the final booster lift.
   dhw_disinfection_hold_minutes:
@@ -115,12 +133,26 @@ input_boolean:
     name: "DHW disinfection active"
     icon: mdi:shield-check-outline
     initial: false
+  dhw_disinfection_complete:
+    name: "DHW disinfection complete"
+    icon: mdi:shield-check
+    initial: false
+  dhw_disinfection_stopping:
+    name: "DHW disinfection stopping"
+    icon: mdi:water-boiler-off
+    initial: false
+  dhw_disinfection_stop_failed:
+    name: "DHW disinfection stop failed"
+    icon: mdi:alert-octagon
+    initial: false
+  # Retained for entity-id/dashboard compatibility. The new FSM never triggers the native HP cycle.
   dhw_disinfection_cycle_requested:
     name: "DHW disinfection cycle requested"
     icon: mdi:shield-refresh-outline
     initial: false
 
 timer:
+  # Retained for entity-id compatibility. It no longer controls the HA FSM or the HP.
   dhw_disinfection_preheat:
     name: "DHW disinfection preheat"
     icon: mdi:timer-sand
@@ -178,6 +210,9 @@ template:
         availability: >-
           {{ has_value('input_boolean.dhw_disinfection_due')
              and has_value('input_boolean.dhw_disinfection_active')
+             and has_value('input_boolean.dhw_disinfection_complete')
+             and has_value('input_boolean.dhw_disinfection_stopping')
+             and has_value('input_boolean.dhw_disinfection_stop_failed')
              and has_value('input_number.dhw_max_days_between_disinfections') }}
         state: >-
           {% set last = state_attr('input_datetime.dhw_last_disinfection', 'timestamp') %}
@@ -185,7 +220,11 @@ template:
                         if last is not none
                         else states('input_number.dhw_max_days_between_disinfections') | float(0) %}
           {% set next = state_attr('input_datetime.dhw_next_disinfection', 'timestamp') %}
-          {% if is_state('input_boolean.dhw_disinfection_active', 'on') %}
+          {% if is_state('input_boolean.dhw_disinfection_stopping', 'on') %}
+          stopping
+          {% elif is_state('input_boolean.dhw_disinfection_stop_failed', 'on') %}
+          stop failed
+          {% elif is_state('input_boolean.dhw_disinfection_active', 'on') %}
           active
           {% elif not is_state('input_boolean.dhw_disinfection_due', 'on') %}
           idle
@@ -199,6 +238,9 @@ template:
         attributes:
           due: "{{ is_state('input_boolean.dhw_disinfection_due', 'on') }}"
           active: "{{ is_state('input_boolean.dhw_disinfection_active', 'on') }}"
+          complete: "{{ is_state('input_boolean.dhw_disinfection_complete', 'on') }}"
+          stopping: "{{ is_state('input_boolean.dhw_disinfection_stopping', 'on') }}"
+          stop_failed: "{{ is_state('input_boolean.dhw_disinfection_stop_failed', 'on') }}"
           cycle_requested: "{{ is_state('input_boolean.dhw_disinfection_cycle_requested', 'on') }}"
           days_since_last: >-
             {% set last = state_attr('input_datetime.dhw_last_disinfection', 'timestamp') %}
@@ -233,18 +275,19 @@ automation:
     variables:
       days_passed_since: >-
         {% set last = state_attr('input_datetime.dhw_last_disinfection', 'timestamp') %}
-        {{ ((now().timestamp() - last) / 86400)
-           if last is not none
-           else states('input_number.dhw_max_days_between_disinfections') | float(12) }}
+        {{ (((now().timestamp() - last) / 86400)
+            if last is not none
+            else states('input_number.dhw_max_days_between_disinfections') | float(12))
+           | float(12) }}
       due_by_day: >-
         {# Python weekday 0=Monday; the select options are ordered Monday through Sunday. #}
         {{ now().weekday()
            == state_attr('input_select.dhw_disinfection_day', 'options').index(
                 states('input_select.dhw_disinfection_day'))
-           and days_passed_since
+           and (days_passed_since | float(12))
                >= states('input_number.dhw_min_days_between_disinfections') | float(5) }}
       due_by_max: >-
-        {{ days_passed_since
+        {{ (days_passed_since | float(12))
            >= states('input_number.dhw_max_days_between_disinfections') | float(12) }}
       cheapest_hours_start: >-
         {% from 'cheapest_energy_hours.jinja' import cheapest_energy_hours %}
@@ -294,7 +337,8 @@ automation:
                 data:
                   datetime: "{{ cheapest_hours_start }}"
 
-  # Start the local path by raising the effective-layer override and a restart-safe preheat timer.
+  # Start the local path by raising the effective-layer override. The HP's ordinary DHW control now
+  # starts the compressor and may start its internal booster; no native disinfection trigger is used.
   # The user request stays untouched, so it can still be changed during the cycle.
   - id: dhw_disinfection_run_auto
     alias: "DHW disinfection run auto"
@@ -326,78 +370,156 @@ automation:
           entity_id: input_datetime.dhw_disinfection_started
         data:
           timestamp: "{{ now().timestamp() }}"
-      - action: input_boolean.turn_on
-        target:
-          entity_id: input_boolean.dhw_disinfection_active
-      - action: input_boolean.turn_off
-        target:
-          entity_id: input_boolean.dhw_disinfection_cycle_requested
-      - action: switch.turn_on
-        target:
-          entity_id: switch.therma_v_dhw_on_off
-      - action: timer.start
-        target:
-          entity_id: timer.dhw_disinfection_preheat
-      - action: logbook.log
-        data:
-          name: DHW disinfection
-          message: >-
-            Preheat started; override 60 C while normal request remains
-            {{ states('input_number.therma_v_dhw_target_request') | float(50) }} C
-
-  # Trigger the heat pump's own cycle only after preheat. The requested flag and timestamp make
-  # the later restore/failure path observable and restart-safe.
-  - id: dhw_disinfection_trigger_auto
-    alias: "DHW disinfection trigger auto"
-    description: "Triggers the heat pump disinfection cycle after preheat"
-    mode: single
-    max_exceeded: silent
-    triggers:
-      - trigger: event
-        event_type: timer.finished
-        event_data:
-          entity_id: timer.dhw_disinfection_preheat
-    conditions:
-      - condition: state
-        entity_id: input_boolean.dhw_disinfection_active
-        state: "on"
-      - condition: state
-        entity_id: input_boolean.therma_v_supervisor_dhw_enabled
-        state: "on"
-    actions:
-      - action: switch.turn_on
-        target:
-          entity_id: switch.therma_v_trigger_dhw_disinfection_cycle
-      - action: input_boolean.turn_on
-        target:
-          entity_id: input_boolean.dhw_disinfection_cycle_requested
       - action: input_datetime.set_datetime
         target:
           entity_id: input_datetime.dhw_disinfection_cycle_requested_at
         data:
           timestamp: "{{ now().timestamp() }}"
-      - delay:
-          seconds: 30
+      - action: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.dhw_disinfection_active
+      - action: input_boolean.turn_off
+        target:
+          entity_id:
+            - input_boolean.dhw_disinfection_complete
+            - input_boolean.dhw_disinfection_stopping
+            - input_boolean.dhw_disinfection_stop_failed
+            - input_boolean.dhw_disinfection_cycle_requested
+      - action: switch.turn_on
+        target:
+          entity_id: switch.therma_v_dhw_on_off
+      - action: switch.turn_off
+        target:
+          entity_id: switch.dhw_booster_2_switch
       - action: switch.turn_off
         target:
           entity_id: switch.therma_v_trigger_dhw_disinfection_cycle
       - action: logbook.log
         data:
           name: DHW disinfection
-          message: "Heat-pump disinfection cycle requested"
+          message: >-
+            HA disinfection started; override 60 C while normal request remains
+            {{ states('input_number.therma_v_dhw_target_request') | float(50) }} C
 
-  # Detect both planned and unplanned successful cycles. The template binary sensor is checked
-  # every minute because it contains now(); the state trigger gives the immediate path. On success
-  # it records the date, clears the request and releases the effective-layer override if a local
-  # cycle was active.
+  # Detect both planned and unplanned successful cycles. The complete latch makes this a rising-edge
+  # action even though the template sensor contains now() and is checked again every minute. It
+  # records last_disinfection, ends the heat request and starts the actuator stop/settling phase.
   - id: dhw_disinfection_detection_auto
     alias: "DHW disinfection detection auto"
-    description: "Records a successful 55/60/65 C disinfection cycle"
+    description: "Records one successful 55/60/65 C cycle and starts its stop phase"
     mode: single
     max_exceeded: silent
     triggers:
       - trigger: state
         entity_id: binary_sensor.dhw_disinfection_temperature_met
+        to: "on"
+      - trigger: state
+        entity_id: binary_sensor.dhw_disinfection_temperature_met
+        to: "off"
+      - trigger: state
+        entity_id: binary_sensor.dhw_temperature_above_55
+        to: "off"
+      - trigger: homeassistant
+        event: start
+      - trigger: time_pattern
+        minutes: "/1"
+    actions:
+      - choose:
+          - conditions:
+              - condition: state
+                entity_id: binary_sensor.dhw_disinfection_temperature_met
+                state: "on"
+              - condition: state
+                entity_id: input_boolean.dhw_disinfection_complete
+                state: "off"
+            sequence:
+              - action: input_datetime.set_datetime
+                target:
+                  entity_id: input_datetime.dhw_last_disinfection
+                data:
+                  timestamp: "{{ now().timestamp() }}"
+              - action: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.dhw_disinfection_complete
+              - action: input_boolean.turn_off
+                target:
+                  entity_id:
+                    - input_boolean.dhw_disinfection_due
+                    - input_boolean.dhw_disinfection_cycle_requested
+              - action: timer.cancel
+                target:
+                  entity_id: timer.dhw_disinfection_preheat
+              - action: switch.turn_off
+                target:
+                  entity_id: switch.therma_v_trigger_dhw_disinfection_cycle
+              - action: switch.turn_off
+                target:
+                  entity_id: switch.dhw_booster_2_switch
+              - choose:
+                  - conditions:
+                      - condition: state
+                        entity_id: input_boolean.dhw_disinfection_active
+                        state: "on"
+                    sequence:
+                      - action: input_boolean.turn_on
+                        target:
+                          entity_id: input_boolean.dhw_disinfection_stopping
+                      - action: logbook.log
+                        data:
+                          name: DHW disinfection
+                          message: >-
+                            Temperature target met; Shelly off and stop offset active until the
+                            internal booster relay is off
+                default:
+                  - action: logbook.log
+                    data:
+                      name: DHW disinfection
+                      message: "Unplanned successful DHW disinfection recorded"
+          - conditions:
+              - condition: state
+                entity_id: binary_sensor.dhw_disinfection_temperature_met
+                state: "off"
+              - condition: state
+                entity_id: binary_sensor.dhw_temperature_above_55
+                state: "off"
+              - condition: state
+                entity_id: input_boolean.dhw_disinfection_complete
+                state: "on"
+              - condition: state
+                entity_id: input_boolean.dhw_disinfection_stopping
+                state: "off"
+              - condition: state
+                entity_id: input_boolean.dhw_disinfection_active
+                state: "off"
+              - condition: template
+                value_template: >-
+                  {% set below_since =
+                       as_timestamp(states.binary_sensor.dhw_temperature_above_55.last_changed) %}
+                  {{ below_since is not none
+                     and now().timestamp() - below_since >= 5 * 60 }}
+            sequence:
+              # Re-arm detection only below 55 C for five minutes and after the cycle settled.
+              # A restart that resets the 60 C threshold timer must not count the same hot period.
+              - action: input_boolean.turn_off
+                target:
+                  entity_id: input_boolean.dhw_disinfection_complete
+
+  # Actuator completion: temperature completion is not physical completion. Wait until the HP's own
+  # internal booster relay is off before releasing active and returning to the normal chase.
+  - id: dhw_disinfection_stop_settle_auto
+    alias: "DHW disinfection stop settle auto"
+    description: "Finishes a successful disinfection once the internal booster relay is off"
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.therma_v_dhw_booster_state
+        to: "off"
+      - trigger: state
+        entity_id: input_boolean.dhw_disinfection_stopping
+        to: "on"
+      - trigger: state
+        entity_id: input_boolean.dhw_disinfection_complete
         to: "on"
       - trigger: homeassistant
         event: start
@@ -405,54 +527,116 @@ automation:
         minutes: "/1"
     conditions:
       - condition: state
-        entity_id: binary_sensor.dhw_disinfection_temperature_met
+        entity_id: input_boolean.dhw_disinfection_active
         state: "on"
+      - condition: state
+        entity_id: input_boolean.dhw_disinfection_stopping
+        state: "on"
+      - condition: state
+        entity_id: input_boolean.dhw_disinfection_complete
+        state: "on"
+      - condition: state
+        entity_id: binary_sensor.therma_v_dhw_booster_state
+        state: "off"
     actions:
-      - action: input_datetime.set_datetime
+      - action: switch.turn_off
         target:
-          entity_id: input_datetime.dhw_last_disinfection
-        data:
-          timestamp: "{{ now().timestamp() }}"
-      # A successful detection always clears the request, including when it arrives after the
-      # finish automation has already cleared active (the tank can remain above 60 C after the
-      # heat-pump cycle state drops).
+          entity_id:
+            - switch.dhw_booster_2_switch
+            - switch.therma_v_trigger_dhw_disinfection_cycle
       - action: input_boolean.turn_off
         target:
-          entity_id: input_boolean.dhw_disinfection_due
-      - if:
-          - condition: state
-            entity_id: input_boolean.dhw_disinfection_active
-            state: "on"
-        then:
-          - action: input_boolean.turn_off
-            target:
-              entity_id:
-                - input_boolean.dhw_disinfection_active
-                - input_boolean.dhw_disinfection_cycle_requested
-          - action: timer.cancel
-            target:
-              entity_id: timer.dhw_disinfection_preheat
-          - action: logbook.log
-            data:
-              name: DHW disinfection
-              message: >-
-                Completed; 60 C override released, normal request
-                {{ states('input_number.therma_v_dhw_target_request') | float(50) }} C
+          entity_id:
+            - input_boolean.dhw_disinfection_active
+            - input_boolean.dhw_disinfection_stopping
+            - input_boolean.dhw_disinfection_cycle_requested
+      - action: timer.cancel
+        target:
+          entity_id: timer.dhw_disinfection_preheat
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.dhw_disinfection_stop_failed
+      - action: logbook.log
+        data:
+          name: DHW disinfection
+          message: >-
+            Physical cycle settled; internal booster off and normal DHW chase restored
 
-  # Failure and timeout path. The cycle finished without meeting a detection threshold, or the
-  # request stayed active beyond the configured timeout. Release the override, clear active but
-  # keep due=true so the next hourly planner retries.
-  - id: dhw_disinfection_finish_auto
-    alias: "DHW disinfection finish auto"
-    description: "Releases the setpoint override after a failed or timed-out local disinfection"
+  # Safety fallback for a relay that does not drop after the stop request. DHW operation is disabled
+  # rather than claiming completion while the shared booster circuit may still be energised.
+  - id: dhw_disinfection_stop_timeout_auto
+    alias: "DHW disinfection stop timeout auto"
+    description: "Disables DHW when the internal booster does not stop after completion"
     mode: single
     max_exceeded: silent
     triggers:
       - trigger: state
-        entity_id: binary_sensor.therma_v_dhw_disinfection_cycle_state
-        to: "off"
-        for:
-          minutes: 40
+        entity_id: input_boolean.dhw_disinfection_stopping
+        to: "on"
+      - trigger: homeassistant
+        event: start
+      - trigger: time_pattern
+        minutes: "/1"
+    conditions:
+      - condition: state
+        entity_id: input_boolean.dhw_disinfection_active
+        state: "on"
+      - condition: state
+        entity_id: input_boolean.dhw_disinfection_stopping
+        state: "on"
+      - condition: state
+        entity_id: input_boolean.dhw_disinfection_complete
+        state: "on"
+      - condition: state
+        entity_id: binary_sensor.therma_v_dhw_booster_state
+        state: "on"
+      - condition: template
+        value_template: >-
+          {% set completed =
+               state_attr('input_datetime.dhw_last_disinfection', 'timestamp') %}
+          {{ completed is not none
+             and now().timestamp() - completed
+                 >= (states('input_number.dhw_disinfection_stop_timeout_minutes') | float(10)) * 60 }}
+    actions:
+      - action: switch.turn_off
+        target:
+          entity_id:
+            - switch.therma_v_dhw_on_off
+            - switch.dhw_booster_2_switch
+            - switch.therma_v_trigger_dhw_disinfection_cycle
+      - action: input_boolean.turn_off
+        target:
+          entity_id:
+            - input_boolean.dhw_disinfection_active
+            - input_boolean.dhw_disinfection_stopping
+            - input_boolean.dhw_disinfection_cycle_requested
+      - action: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.dhw_disinfection_stop_failed
+      - action: timer.cancel
+        target:
+          entity_id: timer.dhw_disinfection_preheat
+      - action: persistent_notification.create
+        data:
+          title: "DHW desinfectie: booster stopt niet"
+          notification_id: dhw_disinfection_stop_failed
+          message: >-
+            De temperatuurdoelstelling is gehaald, maar het interne boosterrelais bleef actief na
+            de stop-opdracht. De DHW-functie is veiligheidshalve uitgeschakeld. Controleer de
+            warmtepomp en schakel DHW daarna handmatig weer in.
+      - action: logbook.log
+        data:
+          name: DHW disinfection
+          message: "Stop timeout: internal booster did not drop; DHW disabled by safety fallback"
+
+  # Failure and timeout path for a cycle that never reaches the completion threshold. Release the
+  # override, clear active but keep due=true so the next hourly planner retries.
+  - id: dhw_disinfection_finish_auto
+    alias: "DHW disinfection finish auto"
+    description: "Releases the setpoint override after a failed or timed-out disinfection"
+    mode: single
+    max_exceeded: silent
+    triggers:
       - trigger: time_pattern
         minutes: "/5"
       - trigger: homeassistant
@@ -462,42 +646,32 @@ automation:
         entity_id: input_boolean.dhw_disinfection_active
         state: "on"
       - condition: state
-        entity_id: binary_sensor.dhw_disinfection_temperature_met
+        entity_id: input_boolean.dhw_disinfection_complete
         state: "off"
-      - condition: or
-        conditions:
-          - condition: and
-            conditions:
-              - condition: state
-                entity_id: input_boolean.dhw_disinfection_cycle_requested
-                state: "on"
-              - condition: template
-                value_template: >-
-                  {% set requested =
-                       state_attr('input_datetime.dhw_disinfection_cycle_requested_at', 'timestamp') %}
-                  {{ requested is not none
-                     and now().timestamp() - requested >= 40 * 60
-                     and is_state('binary_sensor.therma_v_dhw_disinfection_cycle_state', 'off') }}
-          - condition: and
-            conditions:
-              - condition: template
-                value_template: >-
-                  {% set started =
-                       state_attr('input_datetime.dhw_disinfection_started', 'timestamp') %}
-                  {{ started is not none
-                     and now().timestamp() - started
-                         >= (states('input_number.dhw_disinfection_timeout_hours') | float(4)) * 3600 }}
+      - condition: state
+        entity_id: input_boolean.dhw_disinfection_stopping
+        state: "off"
+      - condition: template
+        value_template: >-
+          {% set started =
+               state_attr('input_datetime.dhw_disinfection_started', 'timestamp') %}
+          {{ started is not none
+             and now().timestamp() - started
+                 >= (states('input_number.dhw_disinfection_timeout_hours') | float(4)) * 3600 }}
     actions:
       - action: timer.cancel
         target:
           entity_id: timer.dhw_disinfection_preheat
       - action: switch.turn_off
         target:
-          entity_id: switch.therma_v_trigger_dhw_disinfection_cycle
+          entity_id:
+            - switch.therma_v_trigger_dhw_disinfection_cycle
+            - switch.dhw_booster_2_switch
       - action: input_boolean.turn_off
         target:
           entity_id:
             - input_boolean.dhw_disinfection_active
+            - input_boolean.dhw_disinfection_stopping
             - input_boolean.dhw_disinfection_cycle_requested
       - action: persistent_notification.create
         data:
