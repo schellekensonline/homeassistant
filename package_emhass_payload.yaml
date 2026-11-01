@@ -390,6 +390,10 @@ script:
               {# Save and publish day-ahead entities under a separate namespace from the MPC. #}
               "entity_save": true,
               "publish_prefix": "dayahead_"{% endif %}{% if send_thermal %},
+              "shared_tank_prior_heat": {
+                "house": {{ state_attr('sensor.therma_v_house_prior_heat', 'prior_heat')
+                            | default([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], true) | to_json }}
+              },
               {# Three loads map sequentially to p_deferrable0 (DHW), p_deferrable1 (space) and
                  p_deferrable2 (booster); p_deferrable3 is retired. The HP flows share one
                  compressor. #}
