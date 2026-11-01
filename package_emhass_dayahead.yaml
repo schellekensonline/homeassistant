@@ -200,6 +200,19 @@ automation:
       - action: rest_command.emhass_publish
         data:
           publish_prefix: "dayahead_"
+      # Refresh the three comparison charts after the day plan has been built. These remain
+      # dry-runs: they neither publish nor save the live plan. Keep them sequential so three
+      # EMHASS optimization requests never overlap.
+      - action: script.emhass_preview_dhw
+        continue_on_error: true
+      - action: script.emhass_preview_heat
+        continue_on_error: true
+      - action: script.emhass_preview_cool
+        continue_on_error: true
+      - action: logbook.log
+        data:
+          name: EMHASS
+          message: "Day-plan comparison previews refreshed (DHW, heat, cool)"
 
   # Early warning when tomorrow's prices are late. Normally they are published around 13:00
   # and our price sensor picks them up within minutes; without them the day-ahead plan for
@@ -221,7 +234,7 @@ automation:
             EMHASS: our price data does not cover tomorrow at 14:00
             ({{ state_attr('sensor.emhass_price_horizon', 'quarters_tomorrow') }} quarters of
             tomorrow known; Nord Pool's tomorrow-price sensor is
-            {{ states('binary_sensor.uilities_nord_pool_nl_tomorrow_price_available') }}).
+            {{ states('binary_sensor.utilities_nord_pool_nl_tomorrow_price_available') }}).
             The day-ahead plan for tomorrow will not be built until that fetch succeeds;
             check the Nord Pool integration.
           level: warning
