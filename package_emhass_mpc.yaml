@@ -22,6 +22,7 @@ automation:
     alias: "EMHASS execute MPC optimization auto"
     description: "Triggers EMHASS every 15 minutes for realtime correction and fetches the plan. Also runs right after a Home Assistant restart."
     mode: single
+    max_exceeded: silent
     trigger:
       # The prior-heat buffer advances at +2s; start at +5s so this run sees the completed quarter.
       - platform: time_pattern
@@ -50,12 +51,10 @@ automation:
               - ha_start
               - emhass_up
         then:
-          - wait_template: "{{ is_state('binary_sensor.emhass_online', 'on') }}"
-            timeout: "00:03:00"
-            continue_on_timeout: true
-          - wait_template: "{{ states('sensor.emhass_house_power_no_def_loads') not in ['unknown', 'unavailable', 'none', ''] }}"
-            timeout: "00:02:00"
-            continue_on_timeout: true
+          # A restored sensor can be non-empty while its integration and recorder are not live yet.
+          - action: script.emhass_wait_ready
+            data:
+              grace_seconds: "{{ 120 if trigger.id == 'ha_start' else 30 }}"
           # Republish EMHASS's previous result straight away, so the plan sensors are back
           # within a minute of the restart even if the optimisation below has to wait. It is the
           # plan from before the stop, not a new one - the run that follows replaces it.

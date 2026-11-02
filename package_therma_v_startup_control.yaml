@@ -48,9 +48,10 @@
 #   * the compressor is off - a saturated target sits exactly on the start threshold
 #     (`target = water + hys_pos`) and the pump would not start (2026-10-10);
 #   * the toggle is off, the pump is off, or the pump is in room control (control mode 2);
-#   * request <= the active season's minimum - there the pump may go off on hysteresis, which is
-#     exactly what that setting is for. In auto the same thing happens when the asked-for water is
-#     at or below `water - hys_pos`, so the layer stops chasing the water downward.
+#   * request is below the active season's minimum in heat or above its maximum in cool - there the
+#     pump may go off on hysteresis, which is exactly what that setting is for. The bounds
+#     themselves are valid requests and remain chased. In auto the same thing happens when the
+#     asked-for water is at or below `water - hys_pos`, so the layer stops chasing downward.
 #   * the room is above its effective target and has kept rising without normal heat demand for the
 #     passive-gain hold time. This distinguishes real solar/other passive gain from a setpoint
 #     reduction that is still letting the room coast down.
@@ -154,13 +155,13 @@ input_number:
     icon: mdi:chart-bell-curve-cumulative
 
   # The four min/max helpers are also the climate template's mode-dependent write band, so there
-  # is one source of truth (2026-10-10). The min is where the layer switches off (passthrough)
-  # so the pump may go off on hysteresis. Auto (heating only) reads the heat pair the same way, so
-  # the band hugs the water temperature in all three modes (2026-10-11).
+  # is one source of truth (2026-10-10). Heat 25 C is also the physical controller floor; heat below
+  # the minimum and cool above the maximum are explicit OFF requests. Auto (heating only) reads the
+  # heat pair the same way, so the band hugs the water temperature in all three modes (2026-10-11).
   therma_v_min_water_temperature_heat:
     name: "Therma V min water temperature heat"
-    min: 10
-    max: 45
+    min: 25
+    max: 42
     step: 1
     initial: 25
     mode: box
@@ -169,8 +170,8 @@ input_number:
 
   therma_v_max_water_temperature_heat:
     name: "Therma V max water temperature heat"
-    min: 10
-    max: 45
+    min: 25
+    max: 42
     step: 1
     initial: 42
     mode: box
@@ -306,7 +307,7 @@ template:
                             and plan_target | is_number %}
           {% set target = plan_target | float(base_target) if use_plan else base_target %}
           {% set heat = mode == 4 %}
-          {% set band_min = (states('input_number.therma_v_min_water_temperature_heat') | float(20)
+          {% set band_min = (states('input_number.therma_v_min_water_temperature_heat') | float(25)
                              if heat else states('input_number.therma_v_min_water_temperature_cool') | float(12)) %}
           {% set band_max = (states('input_number.therma_v_max_water_temperature_heat') | float(42)
                              if heat else states('input_number.therma_v_max_water_temperature_cool') | float(22)) %}
@@ -314,6 +315,7 @@ template:
           {% set water_ceil = min(band_max, water - hys_neg) %}
           {% set desired = min(max(req, water_floor), water_ceil) %}
           {% set no_demand = (req <= water - hys_pos) if heat else (req >= water - hys_neg) %}
+          {% set request_on = (req >= band_min) if heat else (req <= band_max) %}
           {% set room_beyond = (room > target) if heat else (room < target) %}
           {% set chase = desired - req if heat else req - desired %}
           {{ is_state('input_boolean.therma_v_controlled_startup', 'on')
@@ -321,7 +323,7 @@ template:
              and mode in [0, 4]
              and cm in [0, 1]
              and hz > 1
-             and req > band_min
+             and request_on
              and no_demand
              and room_beyond
              and chase > 0
@@ -417,12 +419,13 @@ template:
           {% set water_ceil = min(band_max, water - hys_neg) %}
           {% set desired = min(max(req, water_floor), water_ceil) %}
           {% set chase = desired - req if heat else req - desired %}
+          {% set request_on = (req >= band_min) if heat else (req <= band_max) %}
           {% set active = is_state('input_boolean.therma_v_controlled_startup', 'on')
                           and is_state('switch.therma_v_heating_cooling_on_off', 'on')
                           and mode_num in [0, 4]
                           and cm in [0, 1]
                           and hz > 1
-                          and req > band_min
+                          and request_on
                           and chase <= release_gap
                           and (mode_num != 4
                                or (not is_state('input_boolean.therma_v_passive_gain_stop', 'on')
@@ -481,7 +484,7 @@ template:
           {# Auto readback: register 2=target, register 4=signed delta; operation mode 3 selects auto. #}
           {% set applied = states('sensor.therma_v_auto_mode_target_temperature_delta_circuit_1') | float(0) %}
           {% set water_target = states('sensor.therma_v_target_temperature_circuit_1') | float(0) %}
-          {% set band_min = states('input_number.therma_v_min_water_temperature_heat') | float(20) %}
+          {% set band_min = states('input_number.therma_v_min_water_temperature_heat') | float(25) %}
           {% set band_max = states('input_number.therma_v_max_water_temperature_heat') | float(35) %}
           {% set curve = water_target - applied %}
           {% set water_request = curve + req %}

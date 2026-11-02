@@ -54,12 +54,28 @@ input_datetime:
     name: "Therma V supervisor HVAC mode since"
     has_date: true
     has_time: true
+  therma_v_supervisor_space_run_started:
+    name: "Therma V supervisor space run started"
+    has_date: true
+    has_time: true
+  therma_v_supervisor_dhw_run_started:
+    name: "Therma V supervisor DHW run started"
+    has_date: true
+    has_time: true
   therma_v_heat_plan_iir_step_at:
     name: "Therma V heat plan IIR last step"
     has_date: true
     has_time: true
   therma_v_house_prior_heat_step_at:
     name: "Therma V house prior heat last completed step"
+    has_date: true
+    has_time: true
+  therma_v_supervisor_space_minimum_run_until:
+    name: "Therma V space minimum run until"
+    has_date: true
+    has_time: true
+  therma_v_supervisor_dhw_minimum_run_until:
+    name: "Therma V DHW minimum run until"
     has_date: true
     has_time: true
 
@@ -129,6 +145,26 @@ input_number:
     mode: box
     unit_of_measurement: "°C"
     icon: mdi:water-thermometer
+  # Zero disables the latch. The values are intentionally tunable because the compressor tail and
+  # service responses are installation-specific.
+  therma_v_supervisor_space_minimum_run_minutes:
+    name: "Therma V space minimum run minutes"
+    min: 0
+    max: 180
+    step: 1
+    initial: 60
+    mode: box
+    unit_of_measurement: "min"
+    icon: mdi:timer-lock-outline
+  therma_v_supervisor_dhw_minimum_run_minutes:
+    name: "Therma V DHW minimum run minutes"
+    min: 0
+    max: 120
+    step: 1
+    initial: 20
+    mode: box
+    unit_of_measurement: "min"
+    icon: mdi:timer-lock-open-outline
   therma_v_supervisor_room_defer_offset:
     name: "Therma V room target defer offset"
     min: 0
@@ -175,12 +211,25 @@ template:
         availability: >-
           {{ has_value('binary_sensor.therma_v_compressor_state')
              and has_value('binary_sensor.therma_v_dhw_heating_state')
-             and has_value('sensor.therma_v_operation_mode') }}
+             and has_value('sensor.therma_v_operation_mode')
+             and has_value('input_datetime.therma_v_supervisor_space_run_started') }}
         state: >-
           {# Register 0: 0=cool, 3=auto, 4=heat; other values mean no active HVAC mode. #}
           {{ is_state('binary_sensor.therma_v_compressor_state', 'on')
              and not is_state('binary_sensor.therma_v_dhw_heating_state', 'on')
              and states('sensor.therma_v_operation_mode') | int(-1) in [0, 3, 4] }}
+        attributes:
+          # Completed quarter-hours in this continuous space-heating/cooling run. EMHASS uses this
+          # to carry the remaining min-on time across rolling MPC horizons.
+          on_timesteps: >-
+            {% if is_state('binary_sensor.therma_v_hvac_run_active', 'on') %}
+              {% set started =
+                   state_attr('input_datetime.therma_v_supervisor_space_run_started', 'timestamp')
+                   | float(0) %}
+              {{ max(0, ((now().timestamp() - started) / 900) | round(0, 'floor') | int) }}
+            {% else %}
+              0
+            {% endif %}
       # p_deferrable1 is the shared space-heating/cooling flow. Keep the established entity ID for
       # compatibility, but make readiness follow the active comfort direction and its own gate.
       - name: "Therma V space plan ready"
@@ -252,7 +301,73 @@ template:
         attributes:
           space_mode: >-
             {{ state_attr('sensor.therma_v_heat_plan_processed_power', 'space_mode') or 'idle' }}
+      - name: "Therma V space minimum run hold"
+        unique_id: therma_v_space_minimum_run_hold
+        icon: mdi:timer-lock-outline
+        availability: >-
+          {{ has_value('binary_sensor.therma_v_hvac_run_active')
+             and has_value('input_number.therma_v_supervisor_space_minimum_run_minutes')
+             and has_value('input_datetime.therma_v_supervisor_space_minimum_run_until') }}
+        state: >-
+          {% set minutes =
+               states('input_number.therma_v_supervisor_space_minimum_run_minutes') | float(0) %}
+          {% set until =
+               state_attr('input_datetime.therma_v_supervisor_space_minimum_run_until', 'timestamp') %}
+          {{ minutes > 0
+             and is_state('binary_sensor.therma_v_hvac_run_active', 'on')
+             and until is not none
+             and now().timestamp() < until }}
+        attributes:
+          remaining_minutes: >-
+            {% set until =
+                 state_attr('input_datetime.therma_v_supervisor_space_minimum_run_until', 'timestamp') %}
+            {{ max(0, (until - now().timestamp()) / 60) | round(0) if until is not none else 0 }}
+      - name: "Therma V DHW minimum run hold"
+        unique_id: therma_v_dhw_minimum_run_hold
+        icon: mdi:timer-lock-open-outline
+        availability: >-
+          {{ has_value('input_number.therma_v_supervisor_dhw_minimum_run_minutes')
+             and has_value('input_datetime.therma_v_supervisor_dhw_minimum_run_until')
+             and has_value('binary_sensor.therma_v_dhw_heating_state')
+             and has_value('binary_sensor.therma_v_compressor_state') }}
+        state: >-
+          {% set minutes =
+               states('input_number.therma_v_supervisor_dhw_minimum_run_minutes') | float(0) %}
+          {% set until =
+               state_attr('input_datetime.therma_v_supervisor_dhw_minimum_run_until', 'timestamp') %}
+          {{ minutes > 0
+             and is_state('binary_sensor.therma_v_dhw_heating_state', 'on')
+             and is_state('binary_sensor.therma_v_compressor_state', 'on')
+             and until is not none
+             and now().timestamp() < until }}
+        attributes:
+          remaining_minutes: >-
+            {% set until =
+                 state_attr('input_datetime.therma_v_supervisor_dhw_minimum_run_until', 'timestamp') %}
+            {{ max(0, (until - now().timestamp()) / 60) | round(0) if until is not none else 0 }}
   - binary_sensor:
+      - name: "Therma V HP DHW run active"
+        unique_id: therma_v_hp_dhw_run_active
+        icon: mdi:water-boiler
+        availability: >-
+          {{ has_value('binary_sensor.therma_v_dhw_heating_state')
+             and has_value('binary_sensor.therma_v_compressor_state')
+             and has_value('input_datetime.therma_v_supervisor_dhw_run_started') }}
+        state: >-
+          {{ is_state('binary_sensor.therma_v_dhw_heating_state', 'on')
+             and is_state('binary_sensor.therma_v_compressor_state', 'on') }}
+        attributes:
+          # Completed quarter-hours in this continuous HP-to-DHW run, persisted across reloads.
+          on_timesteps: >-
+            {% if is_state('binary_sensor.therma_v_hp_dhw_run_active', 'on') %}
+              {% set started =
+                   state_attr('input_datetime.therma_v_supervisor_dhw_run_started', 'timestamp')
+                   | float(0) %}
+              {{ max(0, ((now().timestamp() - started) / 900) | round(0, 'floor') | int) }}
+            {% else %}
+              0
+            {% endif %}
+
       - name: "Therma V DHW run active"
         unique_id: therma_v_dhw_run_active
         icon: mdi:water-boiler-alert
@@ -471,12 +586,17 @@ template:
           {% set disinfection_override =
                (is_state('input_boolean.dhw_disinfection_active', 'on') or hold)
                and gate %}
+          {% set minimum_hold = is_state('binary_sensor.therma_v_dhw_minimum_run_hold', 'on') %}
           {% if stopping %}
           {{ max(40, min(normal, temp - stop_offset)) | round(1) }}
           {% elif disinfection_override %}
           60.0
           {% elif strategy != 'EMHASS' or not gate %}
           {{ normal | round(1) }}
+          {% elif temp <= safety_floor %}
+          {{ normal | round(1) }}
+          {% elif not fresh and minimum_hold %}
+          {{ run_target | round(1) }}
           {% elif not fresh %}
           {{ normal | round(1) }}
           {% elif prepare and hp > threshold %}
@@ -485,8 +605,8 @@ template:
           {% elif hp > threshold %}
           {{ run_target if dhw_started else
              (start_assist if start_useful else normal) | round(1) }}
-          {% elif temp <= safety_floor %}
-          {{ normal | round(1) }}
+          {% elif minimum_hold %}
+          {{ run_target | round(1) }}
           {% elif recovery %}
           {{ run_target | round(1) }}
           {% else %}
@@ -511,6 +631,7 @@ template:
                  is_state('binary_sensor.therma_v_dhw_heating_state', 'on')
                  and is_state('binary_sensor.therma_v_compressor_state', 'on') %}
             {% set recovery = is_state('input_boolean.therma_v_supervisor_dhw_recovery', 'on') %}
+            {% set minimum_hold = is_state('binary_sensor.therma_v_dhw_minimum_run_hold', 'on') %}
             {% set plan_target =
                  state_attr('sensor.therma_v_dhw_planned_run_start', 'target_temperature')
                  | float(states('input_number.therma_v_dhw_target_request') | float(50)) %}
@@ -546,14 +667,18 @@ template:
             off
             {% elif not gate %}
             disabled
+            {% elif temp <= safety_floor %}
+            safety force
+            {% elif not fresh and minimum_hold %}
+            minimum run
             {% elif not fresh %}
             fallback
             {% elif prepare and hp > threshold %}
             {{ 'prepare' if dhw_started else ('prepare start' if start_useful else 'plan satisfied') }}
             {% elif hp > threshold %}
             {{ 'force' if dhw_started else ('force start' if start_useful else 'plan satisfied') }}
-            {% elif temp <= safety_floor %}
-            safety force
+            {% elif minimum_hold %}
+            minimum run
             {% elif recovery %}
             finish/recovery
             {% else %}
@@ -702,6 +827,7 @@ template:
           {% set dhw_started =
                is_state('binary_sensor.therma_v_dhw_heating_state', 'on')
                and is_state('binary_sensor.therma_v_compressor_state', 'on') %}
+          {% set minimum_hold = is_state('binary_sensor.therma_v_dhw_minimum_run_hold', 'on') %}
           {% set next_ts = state_attr('input_datetime.dhw_next_disinfection', 'timestamp') %}
           {% set lead_hours = states('input_number.dhw_disinfection_min_lead_hours') | float(5) %}
           {% set hold_minutes = states('input_number.dhw_disinfection_hold_minutes') | float(45) %}
@@ -719,18 +845,22 @@ template:
           disinfection stop
           {% elif is_state('input_boolean.dhw_disinfection_active', 'on') %}
           disinfection
+          {% elif temp <= safety_floor %}
+          DHW force
+          {% elif not fresh and minimum_hold %}
+          DHW minimum run
           {% elif not fresh %}
           DHW fallback
-          {% elif is_state('input_boolean.therma_v_supervisor_dhw_recovery', 'on') %}
-          DHW finish
           {% elif booster > threshold %}
           DHW + booster
           {% elif prepare and hp > threshold %}
           {{ 'DHW prepare' if dhw_started or start_useful else 'DHW plan satisfied' }}
           {% elif hp > threshold %}
           {{ 'DHW force' if dhw_started or start_useful else 'DHW plan satisfied' }}
-          {% elif temp <= safety_floor %}
-          DHW force
+          {% elif minimum_hold %}
+          DHW minimum run
+          {% elif is_state('input_boolean.therma_v_supervisor_dhw_recovery', 'on') %}
+          DHW finish
           {% else %}
           DHW defer
           {% endif %}
@@ -748,6 +878,9 @@ template:
           dhw_plan_power: "{{ states('sensor.p_deferrable0') | float(0) }}"
           booster_plan_power: "{{ states('sensor.p_deferrable2') | float(0) }}"
           dhw_temperature: "{{ states('sensor.therma_v_dhw_temperature') | float(0) }}"
+          minimum_run_hold: "{{ is_state('binary_sensor.therma_v_dhw_minimum_run_hold', 'on') }}"
+          minimum_run_until: >-
+            {{ state_attr('input_datetime.therma_v_supervisor_dhw_minimum_run_until', 'timestamp') }}
           dhw_plan_start_temperature: "{{ states('sensor.therma_v_dhw_planned_run_start') }}"
           dhw_plan_target_temperature: >-
             {{ state_attr('sensor.therma_v_dhw_planned_run_start', 'target_temperature') }}
@@ -773,7 +906,7 @@ template:
 
   # Proposed heat actuator profile: 2 h energy-preserving blocks, directional edge correction,
   # bridge an isolated single-quarter OFF between active neighbours, then a 15 min first-order
-  # filter with immediate OFF and the physical 550 W minimum.
+  # filter with immediate OFF and the physical 580 W minimum.
   # This sensor is computed even while the heat gate is off, but does not write any actuator.
   - trigger:
       - trigger: state
@@ -790,7 +923,7 @@ template:
       heat_profile: >-
         {% set schedule = state_attr('sensor.p_deferrable1', 'deferrables_schedule') or [] %}
         {% set threshold = states('input_number.therma_v_supervisor_power_threshold') | float(100) %}
-        {% set min_power = 550.0 %}
+        {% set min_power = 580.0 %}
         {% set previous_power =
              states('input_number.therma_v_heat_plan_previous_power') | float(0) %}
         {% set seeded_iir = states('input_number.therma_v_heat_plan_iir_power') | float(0) %}
@@ -947,7 +1080,7 @@ template:
         {% set room_setpoint = states('input_number.room_setpoint_heating') | float(20) %}
         {% set supply = (min(max(
              room_setpoint * (1 + curve_slope) + curve_offset - curve_slope * outside,
-             states('input_number.therma_v_min_water_temperature_heat') | float(20)),
+             states('input_number.therma_v_min_water_temperature_heat') | float(25)),
              states('input_number.therma_v_max_water_temperature_heat') | float(42))
              if heat_mode else
              state_attr('sensor.building_parameters', 'cooling_supply_temperature') | float(16)) %}
@@ -1024,6 +1157,59 @@ template:
           points: "{{ heat_profile.points }}"
 
 automation:
+  # Persist the physical start independently of template reloads and HA restarts. The temperature
+  # control/MPC can then carry the remaining min-on steps over a rolling horizon.
+  - id: therma_v_supervisor_space_run_started_update
+    alias: "Therma V supervisor space run started update"
+    description: "Records the start of each continuous space heating/cooling compressor run"
+    mode: restart
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.therma_v_hvac_run_active
+        to: "on"
+    actions:
+      # A template reload restarts the trigger entity as unavailable -> on while the persisted
+      # timestamp is still the real run start. Only a real OFF -> ON edge (or a missing timestamp
+      # on first creation) starts a new interval.
+      - if:
+          - condition: template
+            value_template: >-
+              {{ trigger.from_state is not none
+                 and trigger.from_state.state == 'off'
+                 or state_attr('input_datetime.therma_v_supervisor_space_run_started', 'timestamp')
+                    is none }}
+        then:
+          - action: input_datetime.set_datetime
+            target:
+              entity_id: input_datetime.therma_v_supervisor_space_run_started
+            data:
+              timestamp: "{{ now().timestamp() }}"
+
+  - id: therma_v_supervisor_dhw_run_started_update
+    alias: "Therma V supervisor DHW run started update"
+    description: "Records the start of each continuous HP-to-DHW compressor run"
+    mode: restart
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.therma_v_hp_dhw_run_active
+        to: "on"
+    actions:
+      - if:
+          - condition: template
+            value_template: >-
+              {{ trigger.from_state is not none
+                 and trigger.from_state.state == 'off'
+                 or state_attr('input_datetime.therma_v_supervisor_dhw_run_started', 'timestamp')
+                    is none }}
+        then:
+          - action: input_datetime.set_datetime
+            target:
+              entity_id: input_datetime.therma_v_supervisor_dhw_run_started
+            data:
+              timestamp: "{{ now().timestamp() }}"
+
   # Advance the in-flight house-heat buffer once per completed optimization step. A gap longer
   # than one quarter adds zeros for the missing steps; a counter reset contributes zero.
   - id: therma_v_house_prior_heat_update
@@ -1139,7 +1325,7 @@ automation:
               previous: "{{ states('input_number.therma_v_heat_plan_iir_power') | float(0) }}"
               next_power: >-
                 {{ 0.0 if target <= 0 else
-                   max(550.0, previous | float(0)
+                   max(580.0, previous | float(0)
                        + 0.6321205588 * ((target | float(0)) - (previous | float(0)))) }}
           - action: input_number.set_value
             target:
@@ -1156,6 +1342,77 @@ automation:
               entity_id: input_datetime.therma_v_heat_plan_iir_step_at
             data:
               timestamp: "{{ quarter }}"
+
+  # A physical compressor start arms a service-specific minimum run. Zero minutes disables it.
+  # The timestamp is persisted, so a Home Assistant restart does not erase an in-flight hold.
+  - id: therma_v_supervisor_space_minimum_run_start
+    alias: "Therma V supervisor space minimum run start"
+    description: "Arms the configurable minimum run for a space-heating/cooling compressor cycle"
+    mode: restart
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.therma_v_hvac_run_active
+        to: "on"
+    conditions:
+      - condition: state
+        entity_id: input_select.therma_v_control_strategy
+        state: "EMHASS"
+      - condition: state
+        entity_id: switch.therma_v_heating_cooling_on_off
+        state: "on"
+      - condition: template
+        value_template: >-
+          {% set op = states('sensor.therma_v_operation_mode') | int(-1) %}
+          {{ (op == 4 and is_state('input_boolean.therma_v_supervisor_space_heat_enabled', 'on'))
+             or (op == 0 and is_state('input_boolean.therma_v_supervisor_cooling_enabled', 'on')) }}
+    actions:
+      - variables:
+          minutes: >-
+            {{ states('input_number.therma_v_supervisor_space_minimum_run_minutes') | float(0) }}
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.therma_v_supervisor_space_minimum_run_until
+        data:
+          timestamp: >-
+            {{ now().timestamp() + minutes * 60 if minutes > 0
+               else now().timestamp() }}
+
+  - id: therma_v_supervisor_dhw_minimum_run_start
+    alias: "Therma V supervisor DHW minimum run start"
+    description: "Arms the configurable minimum run when the compressor starts a DHW cycle"
+    mode: restart
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id:
+          - binary_sensor.therma_v_dhw_heating_state
+          - binary_sensor.therma_v_compressor_state
+        to: "on"
+    conditions:
+      - condition: state
+        entity_id: input_select.therma_v_control_strategy
+        state: "EMHASS"
+      - condition: state
+        entity_id: input_boolean.therma_v_supervisor_dhw_enabled
+        state: "on"
+      - condition: state
+        entity_id: binary_sensor.therma_v_dhw_heating_state
+        state: "on"
+      - condition: state
+        entity_id: binary_sensor.therma_v_compressor_state
+        state: "on"
+    actions:
+      - variables:
+          minutes: >-
+            {{ states('input_number.therma_v_supervisor_dhw_minimum_run_minutes') | float(0) }}
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.therma_v_supervisor_dhw_minimum_run_until
+        data:
+          timestamp: >-
+            {{ now().timestamp() + minutes * 60 if minutes > 0
+               else now().timestamp() }}
 
   # The only writer of DHW target register 8. The climate entity writes the request helper, the
   # effective sensor applies the plan/chase logic, and this automation performs the Modbus write.
@@ -1325,15 +1582,14 @@ automation:
               - action: switch.turn_on
                 target:
                   entity_id: switch.therma_v_dhw_on_off
-      # Capture the plan's run target before the start kick. The recovery latch then keeps this
-      # value even after the current plan block disappears.
+      # Follow every fresh positive plan target, including changes while a minimum-run hold is
+      # active. A later OFF plan leaves this as the last valid target.
       - if:
           - condition: template
             value_template: >-
               {{ (fresh | bool)
                  and (hp_power | float(0)) > (threshold | float(100))
-                 and not (dhw_started | bool)
-                 and (start_useful | bool) }}
+                 and (plan_start_at not in [none, '']) }}
         then:
           - action: input_number.set_value
             target:
@@ -1480,7 +1736,6 @@ automation:
                   value: >-
                     {{ plan_target
                        if (hp_power | float(0)) > (threshold | float(100))
-                          and (temp | float(0)) < (plan_target | float(0)) - (start_margin | float(0))
                        else normal }}
           - action: input_boolean.turn_on
             target:

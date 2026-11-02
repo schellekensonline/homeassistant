@@ -30,11 +30,10 @@ template:
       - name: "Therma V heating/cooling"
         unique_id: therma_v_heating_cooling
         target_temperature_step: 1
-        # Static range: it has to fit the auto-mode delta (-5..5) and the water temperatures
-        # (10..40). The platform clamps the *rendered* target into this range and rejects a service
-        # call outside it, so it may not be narrower than either regime.
+        # Static range: it has to fit the auto-mode delta (-5..5), the room target and the water
+        # regimes. The mode-specific clamp in `set_temperature` applies the shared helper bounds.
         min_temperature: -5
-        max_temperature: 40
+        max_temperature: 42
         availability: >-
           {{ has_value('switch.therma_v_heating_cooling_on_off')
              and has_value('sensor.therma_v_operation_mode')
@@ -95,7 +94,8 @@ template:
               # Who the slider belongs to. True while the temperature control select drives this
               # regime, so the service call sets the *room* setpoint instead of a water/delta value
               # (step 3b, 2026-10-11). The band comes from the helper itself, so the clamp cannot
-              # drift from it. `mode` is already defined above - variables render in order.
+              # drift from it. The heat-water floor is applied downstream when the curve turns this
+              # room target into a water request. `mode` is already defined above.
               room_control: >-
                 {% set tc = states('input_select.therma_v_temperature_control') %}
                 {{ tc == 'Room control (P)' or (tc == 'Heating-curve' and mode | int(-1) == 4) }}

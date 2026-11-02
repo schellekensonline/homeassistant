@@ -367,7 +367,7 @@ template:
           {% set a_gain = states('input_number.therma_v_room_anticipation_gain') | float(0.5) %}
           {% set a_max = states('input_number.therma_v_room_anticipation_max') | float(2) %}
           {% set trend = states('sensor.therma_v_outside_temperature_trend') | float(0) %}
-          {% set band_lo = states('input_number.therma_v_min_water_temperature_heat') | float(20) %}
+          {% set band_lo = states('input_number.therma_v_min_water_temperature_heat') | float(25) %}
           {% set band_hi = states('input_number.therma_v_max_water_temperature_heat') | float(42) %}
           {% set lo = min(band_lo, band_hi) %}
           {% set hi = max(band_lo, band_hi) %}
@@ -490,6 +490,7 @@ automation:
           - binary_sensor.therma_v_hvac_run_active
           - binary_sensor.therma_v_heat_plan_ready
           - binary_sensor.therma_v_space_plan_off
+          - binary_sensor.therma_v_space_minimum_run_hold
           - binary_sensor.therma_v_hvac_target_hold
           - binary_sensor.emhass_forecast_fresh
       - trigger: state
@@ -517,6 +518,15 @@ automation:
             state: "on"
         then:
           - stop: "HVAC handover active; retaining the current water target"
+      - if:
+          - condition: state
+            entity_id: binary_sensor.therma_v_space_minimum_run_hold
+            state: "on"
+          - condition: state
+            entity_id: binary_sensor.therma_v_heat_plan_ready
+            state: "off"
+        then:
+          - stop: "Space minimum run active without a fresh plan; retaining the current water target"
       - choose:
           # The processed plan is authoritative only after an MPC completed since the current
           # HVAC handover. Active plans map Pe to an inlet target; valid zero plans command a stop
@@ -543,15 +553,32 @@ automation:
                     {% set raw = off_water - off_hysteresis - 1
                                  if off_mode == 4
                                  else off_water + off_hysteresis + 1 %}
-                    {{ raw | round(0, off_round) | int }}
+                    {% set rounded = raw | round(0, off_round) | int %}
+                    {% if off_mode == 4 %}
+                      {% set band_floor =
+                           states('input_number.therma_v_min_water_temperature_heat') | float(25) %}
+                      {{ [rounded, (band_floor - 1) | int] | min }}
+                    {% else %}
+                      {% set band_ceiling =
+                           states('input_number.therma_v_max_water_temperature_cool') | float(22) %}
+                      {{ [rounded, (band_ceiling + 1) | int] | max }}
+                    {% endif %}
                   requested_target: >-
                     {{ (((emhass_target | float(
-                            states('input_number.therma_v_min_water_temperature_heat') | float(20)))
+                            states('input_number.therma_v_min_water_temperature_heat') | float(25)))
                           * 2) | round(0) / 2) | round(1) }}
               - if:
                   - condition: template
                     value_template: "{{ plan_off | bool }}"
                 then:
+                  # The minimum-run latch vetoes only the stop transition. Active targets continue
+                  # to follow the plan below.
+                  - if:
+                      - condition: state
+                        entity_id: binary_sensor.therma_v_space_minimum_run_hold
+                        state: "on"
+                    then:
+                      - stop: "Space minimum run active; retaining the current water target"
                   - if:
                       - condition: template
                         value_template: >-

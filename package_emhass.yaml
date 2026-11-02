@@ -179,6 +179,93 @@ template:
           dhw_min_temperature: !secret building_dhw_min_temperature
           dhw_max_temperature: !secret building_dhw_max_temperature
 
+  # Quarter-hour view of the three load schedules. Re-evaluating at every minute keeps the tile
+  # aligned with the wall clock even when the summed power stays 0 W across consecutive plans.
+  - trigger:
+      - trigger: time_pattern
+        minutes: "/1"
+        seconds: 1
+      - trigger: state
+        entity_id:
+          - sensor.p_deferrable0
+          - sensor.p_deferrable1
+          - sensor.p_deferrable2
+      - trigger: homeassistant
+        event: start
+    sensor:
+      - name: "EMHASS HP plan power now"
+        unique_id: emhass_hp_plan_power_now
+        unit_of_measurement: "W"
+        device_class: power
+        state_class: measurement
+        availability: >-
+          {{ state_attr('sensor.p_deferrable0', 'deferrables_schedule') is not none
+             and state_attr('sensor.p_deferrable1', 'deferrables_schedule') is not none
+             and state_attr('sensor.p_deferrable2', 'deferrables_schedule') is not none }}
+        state: >-
+          {% set quarter = now().replace(minute=(now().minute // 15) * 15,
+                                         second=0, microsecond=0) %}
+          {% set acc = namespace(found=false, dhw=0.0, space=0.0, booster=0.0) %}
+          {% for item in [
+               ('sensor.p_deferrable0', 'p_deferrable0', 'dhw'),
+               ('sensor.p_deferrable1', 'p_deferrable1', 'space'),
+               ('sensor.p_deferrable2', 'p_deferrable2', 'booster')] %}
+            {% set schedule = state_attr(item[0], 'deferrables_schedule') or [] %}
+            {% for entry in schedule %}
+              {% if entry.date is defined and as_datetime(entry.date) == quarter %}
+                {% set acc.found = true %}
+                {% set value = entry[item[1]] | float(0) %}
+                {% if item[2] == 'dhw' %}
+                  {% set acc.dhw = acc.dhw + value %}
+                {% elif item[2] == 'space' %}
+                  {% set acc.space = acc.space + value %}
+                {% else %}
+                  {% set acc.booster = acc.booster + value %}
+                {% endif %}
+              {% endif %}
+            {% endfor %}
+          {% endfor %}
+          {{ (acc.dhw + acc.space + acc.booster) | round(0) if acc.found else 'unknown' }}
+        attributes:
+          quarter: >-
+            {{ now().replace(minute=(now().minute // 15) * 15,
+                             second=0, microsecond=0).isoformat() }}
+          schedule_found: >-
+            {% set quarter = now().replace(minute=(now().minute // 15) * 15,
+                                           second=0, microsecond=0) %}
+            {% set found = namespace(value=false) %}
+            {% for entity_id in ['sensor.p_deferrable0',
+                                 'sensor.p_deferrable1',
+                                 'sensor.p_deferrable2'] %}
+              {% for entry in state_attr(entity_id, 'deferrables_schedule') or [] %}
+                {% if entry.date is defined and as_datetime(entry.date) == quarter %}
+                  {% set found.value = true %}
+                {% endif %}
+              {% endfor %}
+            {% endfor %}
+            {{ found.value }}
+          dhw_power: >-
+            {% set quarter = now().replace(minute=(now().minute // 15) * 15,
+                                           second=0, microsecond=0) %}
+            {% set values = (state_attr('sensor.p_deferrable0', 'deferrables_schedule') or [])
+                            | selectattr('date', 'defined')
+                            | selectattr('date', 'eq', quarter.isoformat()) | list %}
+            {{ values[0].p_deferrable0 | float(0) | round(0) if values else 0 }}
+          space_power: >-
+            {% set quarter = now().replace(minute=(now().minute // 15) * 15,
+                                           second=0, microsecond=0) %}
+            {% set values = (state_attr('sensor.p_deferrable1', 'deferrables_schedule') or [])
+                            | selectattr('date', 'defined')
+                            | selectattr('date', 'eq', quarter.isoformat()) | list %}
+            {{ values[0].p_deferrable1 | float(0) | round(0) if values else 0 }}
+          booster_power: >-
+            {% set quarter = now().replace(minute=(now().minute // 15) * 15,
+                                           second=0, microsecond=0) %}
+            {% set values = (state_attr('sensor.p_deferrable2', 'deferrables_schedule') or [])
+                            | selectattr('date', 'defined')
+                            | selectattr('date', 'eq', quarter.isoformat()) | list %}
+            {{ values[0].p_deferrable2 | float(0) | round(0) if values else 0 }}
+
 input_number:
   # Margin on the night reserve that the payload builder sends as soc_final: the forecasted night
   # use (22:00-07:00) is multiplied by the factor and a fixed allowance is added on top, because the
@@ -276,7 +363,9 @@ binary_sensor:
     resource: "http://localhost:5000/healthz"
     value_template: "{{ value_json.status == 'ok' }}"
     scan_interval: 60
-    timeout: 10
+    # A solve blocks EMHASS's single web worker for several seconds. Ten seconds produced false
+    # offline transitions during normal MPC runs; 30 covers the observed 7-10 s solve window.
+    timeout: 30
 
 rest_command:
   # Publish the latest optimisation results to Home Assistant sensors.

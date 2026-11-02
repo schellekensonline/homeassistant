@@ -220,7 +220,7 @@ template:
         {% set price    = states('sensor.nord_pool_nl_current_price') | float(0) %}
         {% set sell_fee = states('input_number.electric_energy_selling_fee_ex') | float(0) %}
         {% set VAT      = states('input_number.electric_energy_vat') | float(0.21) %}
-        {{ (price + sell_fee) * (1 + VAT) }}
+        {{ ((price + sell_fee) * (1 + VAT)) | round(2) }}
       attributes:
         # Build from a fresh fetch when available. On a failed or partial fetch, preserve known
         # future quarters, drop past entries and never replace a good list with an empty one.
@@ -242,7 +242,9 @@ template:
               {% set start = entry.get('start') if entry is mapping else none %}
               {% if start is not none %}
                 {% set time  = (start | as_datetime | as_local).isoformat() %}
-                {% set price = (((entry.get('price', 0) | float(0)) / 1000) + sell_fee) * (1 + VAT) %}
+                {% set price =
+                     ((((entry.get('price', 0) | float(0)) / 1000) + sell_fee) * (1 + VAT))
+                     | round(2) %}
                 {% set ns.list = ns.list + [{'time': time, 'price': price}] %}
                 {% set ns.times = ns.times + [time] %}
               {% endif %}
@@ -251,7 +253,8 @@ template:
               {% set time = entry.get('time') if entry is mapping else none %}
               {% if time is not none and time not in ns.times
                     and (time | as_datetime) > now() %}
-                {% set ns.list = ns.list + [{'time': time, 'price': entry.get('price')}] %}
+                {% set ns.list = ns.list
+                     + [{'time': time, 'price': entry.get('price') | float(0) | round(2)}] %}
                 {% set ns.times = ns.times + [time] %}
               {% endif %}
             {% endfor %}

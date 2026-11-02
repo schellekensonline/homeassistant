@@ -173,7 +173,7 @@ script:
             {# Heat/cool preview uses the actuator profile: two-hour blocks, directional edges,
                a single-quarter OFF bridge, then a 15 min first-order filter with immediate OFF
                outside the bridge and the modelled source minimum. #}
-            {% set min_power = space_source.min_power | float(550) %}
+            {% set min_power = space_source.min_power | float(580) %}
             {% set raw_points = namespace(list=[]) %}
             {% for entry in plan %}
               {% set hp_w = entry.P_deferrable1 | float(0) %}

@@ -31,6 +31,7 @@ automation:
       published on the sensor.dayahead_* entities; the quarter-hour MPCs correct it from 00:00 on.
       The 23:55 check reports when the day's plan is still missing.
     mode: single
+    max_exceeded: silent
     trigger:
       # The scheduled run: after the 23:45 MPC has published, so the plan starts at 23:45, covers
       # the coming day, and never runs at the same instant as an MPC run (the condition below keeps
@@ -74,6 +75,14 @@ automation:
             {{ marker < (now().date() - timedelta(days=1)).isoformat() }}
           {% endif %}
     action:
+      # Restart repairs must not beat HA's recorder or EMHASS's model/data loading.
+      - if:
+          - condition: template
+            value_template: "{{ trigger.id | default('') in ['ha_start', 'emhass_up'] }}"
+        then:
+          - action: script.emhass_wait_ready
+            data:
+              grace_seconds: "{{ 120 if trigger.id == 'ha_start' else 30 }}"
       # Same guard as the MPC, but with the question that fits the path: the scheduled evening run
       # needs tomorrow's prices (it plans the coming day), while a restart rebuild just needs
       # enough horizon left to be useful. The guard only skips when there is no price data at all.

@@ -236,7 +236,10 @@ script:
               {% set dhw_price_prices.list = dhw_price_prices.list
                    + [dhw_price_value.value | round(4)] %}
             {% endfor %}
-            {% set fc = state_attr('sensor.p_load_forecast', 'forecasts') or [] %}
+            {# These entities are created by EMHASS; build the id at runtime so Spook does not
+               report them as ghosts while EMHASS is stopped. #}
+            {% set load_forecast_entity = ['sensor', 'p_load_forecast'] | join('.') %}
+            {% set fc = state_attr(load_forecast_entity, 'forecasts') or [] %}
             {% set acc = namespace(wh=0.0, n=0, started=False) %}
             {% for x in fc %}
               {% set hh = x.date[11:13] | int %}
@@ -295,6 +298,28 @@ script:
             {% set hp_cool = preview_mode == 'cool' if previewing
                  else (hp_owned and hvac_master_on and cool_ready and cool_season) %}
             {% set hp_space = hp_heat or hp_cool %}
+            {# A run can start or stop between MPC ticks. Feed the live state and completed steps so
+               the min-on constraint carries across rolling horizons instead of restarting at t=0. #}
+            {% set space_min_minutes =
+                 states('input_number.therma_v_supervisor_space_minimum_run_minutes') | float(0) %}
+            {% set space_min_steps =
+                 max(0, (space_min_minutes / 15) | round(0, 'ceil') | int) if hp_space else 0 %}
+            {% set dhw_min_minutes =
+                 states('input_number.therma_v_supervisor_dhw_minimum_run_minutes') | float(0) %}
+            {% set dhw_min_steps =
+                 max(0, (dhw_min_minutes / 15) | round(0, 'ceil') | int) if hp_dhw else 0 %}
+            {% set dhw_hp_running = is_state('binary_sensor.therma_v_hp_dhw_run_active', 'on') %}
+            {% set space_running = is_state('binary_sensor.therma_v_hvac_run_active', 'on') %}
+            {% set booster_running = is_state('switch.dhw_booster_2_switch', 'on') %}
+            {% set dhw_current = hp_dhw and dhw_hp_running %}
+            {% set space_current = hp_space and space_running %}
+            {% set booster_current = hp_dhw and booster_running %}
+            {% set dhw_on_steps =
+                 (state_attr('binary_sensor.therma_v_hp_dhw_run_active', 'on_timesteps') | int(0))
+                 if dhw_current else 0 %}
+            {% set space_on_steps =
+                 (state_attr('binary_sensor.therma_v_hvac_run_active', 'on_timesteps') | int(0))
+                 if space_current else 0 %}
             {% set sp_heat = states('input_number.room_setpoint_heating') | float(20) %}
             {% set sp_cool = states('input_number.room_setpoint_cooling') | float(24) %}
             {% set margin = state_attr(ba,'room_comfort_margin_c') | float(1) %}
@@ -307,7 +332,7 @@ script:
             {% set curve_actual_offset = states('input_number.therma_v_heating_curve_offset') | float(0) %}
             {# Convert controller curve to EMHASS's offset form and opposite slope sign. #}
             {% set curve_offset = sp_heat * (1 + curve_slope) + curve_actual_offset %}
-            {% set curve_min_supply = states('input_number.therma_v_min_water_temperature_heat') | float(20) %}
+            {% set curve_min_supply = states('input_number.therma_v_min_water_temperature_heat') | float(25) %}
             {% set curve_max_supply = states('input_number.therma_v_max_water_temperature_heat') | float(42) %}
             {% set house_mass = 18.0 %}
             {# Convert envelope plus ventilation loss to kW/K for the house model. #}
@@ -373,19 +398,19 @@ script:
               "soc_final": {{ reserve_soc | round(3) }}{% if not day_ahead and send_thermal %},
               {# Only the MPC publish path needs these explicit thermal sensor IDs. #}
               "custom_predicted_temperature_id": [
-                {"entity_id": "sensor.temp_predicted0"},
-                {"entity_id": "sensor.temp_predicted1"},
-                {"entity_id": "sensor.temp_predicted2"}
+                {"entity_id": {{ (['sensor', 'temp_predicted0'] | join('.')) | tojson }}},
+                {"entity_id": {{ (['sensor', 'temp_predicted1'] | join('.')) | tojson }}},
+                {"entity_id": {{ (['sensor', 'temp_predicted2'] | join('.')) | tojson }}}
               ],
               "custom_heating_demand_id": [
-                {"entity_id": "sensor.heating_demand0"},
-                {"entity_id": "sensor.heating_demand1"},
-                {"entity_id": "sensor.heating_demand2"}
+                {"entity_id": {{ (['sensor', 'heating_demand0'] | join('.')) | tojson }}},
+                {"entity_id": {{ (['sensor', 'heating_demand1'] | join('.')) | tojson }}},
+                {"entity_id": {{ (['sensor', 'heating_demand2'] | join('.')) | tojson }}}
               ],
               "custom_deferrable_forecast_id": [
-                {"entity_id": "sensor.p_deferrable0"},
-                {"entity_id": "sensor.p_deferrable1"},
-                {"entity_id": "sensor.p_deferrable2"}
+                {"entity_id": {{ (['sensor', 'p_deferrable0'] | join('.')) | tojson }}},
+                {"entity_id": {{ (['sensor', 'p_deferrable1'] | join('.')) | tojson }}},
+                {"entity_id": {{ (['sensor', 'p_deferrable2'] | join('.')) | tojson }}}
               ]{% endif %}{% if day_ahead and not dry_run %},
               {# Save and publish day-ahead entities under a separate namespace from the MPC. #}
               "entity_save": true,
@@ -394,6 +419,14 @@ script:
                 "house": {{ state_attr('sensor.therma_v_house_prior_heat', 'prior_heat')
                             | default([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], true) | to_json }}
               },
+              {# Load indexes follow the flows below: 0 HP-DHW, 1 HP-space, 2 booster. #}
+              "def_minimum_on_time": [{{ dhw_min_steps }}, {{ space_min_steps }}, 0],
+              "def_current_state": [
+                {{ dhw_current | tojson }},
+                {{ space_current | tojson }},
+                {{ booster_current | tojson }}
+              ],
+              "def_current_on_timesteps": [{{ dhw_on_steps }}, {{ space_on_steps }}, 0],
               {# Three loads map sequentially to p_deferrable0 (DHW), p_deferrable1 (space) and
                  p_deferrable2 (booster); p_deferrable3 is retired. The HP flows share one
                  compressor. #}
@@ -407,9 +440,9 @@ script:
                    "carnot_efficiency": {{ state_attr(ba,'dhw_carnot_efficiency') | float(0.26) }},
                    "max_supply_temperature": 55, "max_thermal_power": 9000},
                   {"id": "hp_space", "type": "heatpump",
-                   "nominal_power": {{ hp_nom }}, "min_power": 550,
+                   "nominal_power": {{ hp_nom }}, "min_power": 580,
                    "treat_as_semi_cont": false,
-                   "startup_penalty": 0.75, "max_startups": 6,
+                   "startup_penalty": 0.70, "max_startups": 6,
                    {% if hp_heat or hp_cool %}"cost_track": "hp_space_price",{% endif %}
                    {% if hp_cool %}
                    "supply_temperature": {{ state_attr(ba,'cooling_supply_temperature') | float(16) }},
@@ -479,6 +512,45 @@ script:
             body: "{{ body }}"
       - stop: "payload built"
         response_variable: built
+
+  # Shared restart barrier for the MPC and the day-ahead automation. EMHASS's health endpoint can
+  # answer before a usable plan, while a restored load sensor can still carry a pre-restart value.
+  # Wait for a live integration update after this call and give HA's recorder a short startup grace.
+  emhass_wait_ready:
+    alias: "EMHASS wait until HA and EMHASS are usable"
+    description: "Waits for health plus a fresh load measurement after an HA/EMHASS restart"
+    mode: parallel
+    max: 4
+    fields:
+      grace_seconds:
+        name: "HA startup grace"
+        description: "Extra time for recorder and integrations to settle before checking health."
+        default: 0
+        selector:
+          number:
+            min: 0
+            max: 300
+            step: 15
+    sequence:
+      - variables:
+          wait_started_at: "{{ now().timestamp() }}"
+          grace: "{{ grace_seconds | default(0, true) | int(0) }}"
+      - if:
+          - condition: template
+            value_template: "{{ grace > 0 }}"
+        then:
+          - delay:
+              seconds: "{{ grace }}"
+      - wait_template: "{{ is_state('binary_sensor.emhass_online', 'on') }}"
+        timeout: "00:03:00"
+        continue_on_timeout: true
+      - wait_template: >-
+          {% set load = states['sensor.emhass_house_power_no_def_loads'] %}
+          {{ load is not none
+             and load.state not in ['unknown', 'unavailable', 'none', '']
+             and as_timestamp(load.last_updated, 0) >= wait_started_at }}
+        timeout: "00:05:00"
+        continue_on_timeout: true
 
   # Price-data guard, shared by the MPC and the day-ahead automation. Returns 'run' or 'skip'
   # so the caller can decide whether the optimisation makes sense; the caller keeps the
