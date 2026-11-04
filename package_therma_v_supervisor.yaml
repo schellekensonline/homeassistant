@@ -152,7 +152,7 @@ input_number:
     min: 0
     max: 180
     step: 1
-    initial: 60
+    initial: 30
     mode: box
     unit_of_measurement: "min"
     icon: mdi:timer-lock-outline
@@ -1519,7 +1519,6 @@ automation:
           active: "{{ is_state('input_boolean.dhw_disinfection_active', 'on') }}"
           stopping: "{{ is_state('input_boolean.dhw_disinfection_stopping', 'on') }}"
           stop_failed: "{{ is_state('input_boolean.dhw_disinfection_stop_failed', 'on') }}"
-          negative_price: "{{ states('sensor.electricity_buying_price') | float(0) < 0 }}"
           threshold: "{{ states('input_number.therma_v_supervisor_power_threshold') | float(100) }}"
           hp_power: "{{ states('sensor.p_deferrable0') | float(0) }}"
           temp: "{{ states('sensor.therma_v_dhw_temperature') | float(0) }}"
@@ -1557,19 +1556,14 @@ automation:
                and now().timestamp() >= (next_ts | float(0))
                and now().timestamp() < (next_ts | float(0)) + (hold_minutes | float(45)) * 60 }}
           disinfection: "{{ (active | bool) or (hold | bool) }}"
-          # During disinfection the HP may start its own booster. The Shelly is only the independent
-          # negative-price path and must stay out of both the heat phase and the stop settling phase.
-          booster_permitted: >-
-            {{ (negative_price | bool)
-               and not (active | bool)
-               and not (stopping | bool)
-               and not (stop_failed | bool) }}
-          booster_limit: "{{ booster_max if (booster_permitted | bool) else 55 }}"
+          # EMHASS owns booster selection, including the retry ladder that prefers HP-only plans.
+          # Keep only the completion/safety vetoes; price and active-cycle arbitration are gone.
           booster_wanted: >-
             {{ (fresh | bool)
                and (booster_power | float(0)) > (threshold | float(100))
-               and (booster_permitted | bool)
-               and (temp | float(0)) < (booster_limit | float(55)) }}
+               and not (stopping | bool)
+               and not (stop_failed | bool)
+               and (temp | float(0)) < (booster_max | float(63)) }}
       # Keep the DHW function enabled while the supervisor owns a live EMHASS run. The setpoint
       # offset determines whether heat is requested; the coil is only permission to operate DHW.
       - choose:
@@ -1729,14 +1723,22 @@ automation:
                 value_template: >-
                   {{ (run_active | bool) and not (recovery_active | bool) }}
             then:
-              - action: input_number.set_value
-                target:
-                  entity_id: input_number.therma_v_supervisor_dhw_run_target
-                data:
-                  value: >-
+              - variables:
+                  target_on_run: >-
                     {{ plan_target
                        if (hp_power | float(0)) > (threshold | float(100))
                        else normal }}
+              - if:
+                  - condition: template
+                    # Writing the same value would retrigger this automation on its own helper.
+                    value_template: >-
+                      {{ (target_on_run | float(0) - run_target | float(0)) | abs >= 0.1 }}
+                then:
+                  - action: input_number.set_value
+                    target:
+                      entity_id: input_number.therma_v_supervisor_dhw_run_target
+                    data:
+                      value: "{{ target_on_run }}"
           - action: input_boolean.turn_on
             target:
               entity_id: input_boolean.therma_v_supervisor_dhw_recovery
@@ -1746,14 +1748,24 @@ automation:
               {{ not (run_active | bool)
                  and (temp | float(0)) >= (run_target | float(50)) - 0.5 }}
         then:
-          - action: input_boolean.turn_off
-            target:
-              entity_id: input_boolean.therma_v_supervisor_dhw_recovery
-          - action: input_number.set_value
-            target:
-              entity_id: input_number.therma_v_supervisor_dhw_run_target
-            data:
-              value: "{{ normal }}"
+          - if:
+              - condition: template
+                value_template: "{{ recovery_active | bool }}"
+            then:
+              - action: input_boolean.turn_off
+                target:
+                  entity_id: input_boolean.therma_v_supervisor_dhw_recovery
+          - if:
+              - condition: template
+                # The normal target is the latch release value; do not echo it back forever.
+                value_template: >-
+                  {{ (run_target | float(0) - normal | float(0)) | abs >= 0.1 }}
+            then:
+              - action: input_number.set_value
+                target:
+                  entity_id: input_number.therma_v_supervisor_dhw_run_target
+                data:
+                  value: "{{ normal }}"
 
   # Mark the instant at which an HVAC mode enters EMHASS ownership. The first usable heat target
   # requires an MPC completed after this stamp, so a gate change cannot consume the parked plan.

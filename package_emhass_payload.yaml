@@ -45,6 +45,34 @@ script:
         default: true
         selector:
           boolean:
+      space_min_on_steps:
+        name: "EMHASS space minimum on-time"
+        description: >-
+          Optional planner-only override in quarters. Leave unset for the configured one-hour
+          minimum; the MPC retry path lowers this only when the full thermal plan is infeasible.
+        selector:
+          number:
+            min: 0
+            max: 16
+            step: 1
+      dhw_min_on_steps:
+        name: "EMHASS DHW minimum on-time"
+        description: >-
+          Optional planner-only override in quarters. Leave unset for the configured DHW minimum;
+          the MPC retry path lowers this before allowing the electric booster.
+        selector:
+          number:
+            min: 0
+            max: 16
+            step: 1
+      dhw_booster_enabled:
+        name: "Allow the DHW electric booster"
+        description: >-
+          The normal MPC keeps this off and enables it only after the no-booster plans have been
+          tried. Day-ahead and previews default to on.
+        default: true
+        selector:
+          boolean:
       preview_dhw:
         name: "Legacy DHW preview flag"
         description: >-
@@ -300,14 +328,28 @@ script:
             {% set hp_space = hp_heat or hp_cool %}
             {# A run can start or stop between MPC ticks. Feed the live state and completed steps so
                the min-on constraint carries across rolling horizons instead of restarting at t=0. #}
-            {% set space_min_minutes =
-                 states('input_number.therma_v_supervisor_space_minimum_run_minutes') | float(0) %}
+            {# The planner minimum is independent of the physical supervisor latch. An infeasible
+               MPC may lower only this plan-side value as it retries, without falsifying the
+               measured elapsed run time. #}
+            {% set configured_space_min_minutes =
+                 states('input_number.emhass_space_minimum_on_minutes') | float(60) %}
+            {% set configured_space_min_steps =
+                 max(0, (configured_space_min_minutes / 15) | round(0, 'ceil') | int) %}
+            {% set requested_space_min_steps = space_min_on_steps | default(none) %}
             {% set space_min_steps =
-                 max(0, (space_min_minutes / 15) | round(0, 'ceil') | int) if hp_space else 0 %}
+                 (max(0, requested_space_min_steps | int(0))
+                  if hp_space and requested_space_min_steps is not none
+                  else (configured_space_min_steps if hp_space else 0)) %}
             {% set dhw_min_minutes =
                  states('input_number.therma_v_supervisor_dhw_minimum_run_minutes') | float(0) %}
+            {% set configured_dhw_min_steps =
+                 max(0, (dhw_min_minutes / 15) | round(0, 'ceil') | int) %}
+            {% set requested_dhw_min_steps = dhw_min_on_steps | default(none) %}
             {% set dhw_min_steps =
-                 max(0, (dhw_min_minutes / 15) | round(0, 'ceil') | int) if hp_dhw else 0 %}
+                 (max(0, requested_dhw_min_steps | int(0))
+                  if hp_dhw and requested_dhw_min_steps is not none
+                  else (configured_dhw_min_steps if hp_dhw else 0)) %}
+            {% set booster_available = hp_dhw and (dhw_booster_enabled | default(true) | bool) %}
             {% set dhw_hp_running = is_state('binary_sensor.therma_v_hp_dhw_run_active', 'on') %}
             {% set space_running = is_state('binary_sensor.therma_v_hvac_run_active', 'on') %}
             {% set booster_running = is_state('switch.dhw_booster_2_switch', 'on') %}
@@ -366,12 +408,14 @@ script:
                    and step_ts < disinfection_start + hold_steps * 900 %}
               {% set mins.list = mins.list
                    + ([60.0] if in_disinfection_hold else [dhw_min if hp_dhw else dhw_now]) %}
-              {# The booster only gets a normal tariff for negative prices or the hygiene hold. #}
+              {# A disabled booster is inert. Once enabled, its real tariff is used because it is
+                 the final thermal fallback before abandoning the thermal model. #}
               {% set booster_allowed = hp_dhw and (in_disinfection_hold or incl_rounded[i] < 0) %}
               {% set maxes.list = maxes.list
-                   + ([dhw_boost_max if booster_allowed else 53.0] if hp_dhw else [dhw_now]) %}
+                   + ([dhw_boost_max if (booster_available and booster_allowed) else 53.0]
+                      if hp_dhw else [dhw_now]) %}
               {% set booster_costs.list = booster_costs.list
-                   + [incl_rounded[i] if booster_allowed else incl_rounded[i] + 10.0] %}
+                   + [incl_rounded[i] if booster_available else incl_rounded[i] + 10.0] %}
             {% endfor %}
             {% set dhw_minima = mins.list %}
             {% set dhw_maxima = maxes.list %}
@@ -459,7 +503,8 @@ script:
                    "max_thermal_power": 9000},
                   {"id": "booster", "type": "electric", "efficiency": 1.0,
                    "nominal_power": 1500, "treat_as_semi_cont": true,
-                   "cost_track": "booster_gate"}
+                   "cost_track": "booster_gate",
+                   "max_supply_temperature": {{ dhw_boost_max if booster_available else dhw_min - 1 }}}
                 ],
                 "storage": [
                   {"id": "dhw",

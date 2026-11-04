@@ -42,7 +42,8 @@ template:
         # No plan in the attribute (restart, or the mirror not published yet) -> unknown, so the
         # history graph shows a gap instead of a fake 0 W.
         availability: >-
-          {{ state_attr('sensor.dayahead_p_batt_forecast','battery_scheduled_power') | count > 0 }}
+          {{ (state_attr('sensor.dayahead_p_batt_forecast','battery_scheduled_power') or [])
+             | count > 0 }}
         state: >-
           {% set plan = state_attr('sensor.dayahead_p_batt_forecast','battery_scheduled_power') or [] %}
           {% set ns = namespace(value=none) %}
@@ -199,9 +200,19 @@ template:
         device_class: power
         state_class: measurement
         availability: >-
-          {{ state_attr('sensor.p_deferrable0', 'deferrables_schedule') is not none
-             and state_attr('sensor.p_deferrable1', 'deferrables_schedule') is not none
-             and state_attr('sensor.p_deferrable2', 'deferrables_schedule') is not none }}
+          {% set quarter = now().replace(minute=(now().minute // 15) * 15,
+                                         second=0, microsecond=0) %}
+          {% set found = namespace(value=false) %}
+          {% for entity_id in ['sensor.p_deferrable0',
+                               'sensor.p_deferrable1',
+                               'sensor.p_deferrable2'] %}
+            {% for entry in state_attr(entity_id, 'deferrables_schedule') or [] %}
+              {% if entry.date is defined and as_datetime(entry.date) == quarter %}
+                {% set found.value = true %}
+              {% endif %}
+            {% endfor %}
+          {% endfor %}
+          {{ found.value }}
         state: >-
           {% set quarter = now().replace(minute=(now().minute // 15) * 15,
                                          second=0, microsecond=0) %}
@@ -327,6 +338,19 @@ input_number:
     step: 1
     initial: 10
     mode: box
+
+  # Planner-only minimum space-heating/cooling run. This is deliberately separate from the
+  # physical supervisor latch: the planner keeps its full minimum on the first attempt, while an
+  # infeasible solve may reduce this value one quarter at a time without rewriting elapsed state.
+  emhass_space_minimum_on_minutes:
+    name: "EMHASS space minimum on-time"
+    icon: mdi:timer-lock-outline
+    min: 0
+    max: 240
+    step: 15
+    initial: 60
+    mode: box
+    unit_of_measurement: "min"
 
   # Integrating controller knob (2026-09-20): the offset of the heating curve is trimmed so
   # the room lands on input_number.room_setpoint_heating. This helper carries the correction; the

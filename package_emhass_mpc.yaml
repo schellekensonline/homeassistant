@@ -78,6 +78,7 @@ automation:
       - action: script.emhass_build_payload
         data:
           plan: mpc
+          dhw_booster_enabled: false
         response_variable: mpc_payload
       - action: rest_command.emhass_naive_mpc_optim
         data:
@@ -87,13 +88,8 @@ automation:
         # 200 (EMHASS rejecting the payload) is a failure too. Both get one retry.
         response_variable: mpc_response
         continue_on_error: true
-      - delay:
-          seconds: 60
-      # Failure path (added 2026-09-26 with the watchdog): log what came back, then retry once
-      # with a body *without* the thermal models (script.emhass_build_payload with thermal:
-      # false). Those blocks are the usual reason EMHASS rejects a run (2026-09-20: the DHW band
-      # made every run infeasible) and a degraded plan beats no plan at all. Either outcome is
-      # reported instead of failing silently.
+      # Failure path: keep the full thermal model and first reduce only its plan-side minimum
+      # on-time, one quarter at a time. The measured elapsed state is never rewritten.
       - if:
           - condition: template
             value_template: >-
@@ -106,43 +102,254 @@ automation:
                 {% set c = mpc_response.content | default('') %}EMHASS MPC failed:
                 status={{ mpc_response.status | default('no answer') }}
                 body={{ (c if c is string else c | tojson)[:200] }}
-          # Two kinds of failure, two different retries (2026-09-26):
-          #  - no answer at all: EMHASS was restarting or busy (a container update does that).
-          #    Wait for it to answer again and retry the normal payload - a planned restart
-          #    then costs a few minutes instead of a gap of an hour.
-          #  - an answer with a non-200 status: EMHASS rejected the payload, which is almost
-          #    always one of the thermal models. Retry without them.
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ mpc_response is not defined }}"
-                sequence:
-                  - wait_template: "{{ is_state('binary_sensor.emhass_online', 'on') }}"
-                    timeout: "00:05:00"
-                    continue_on_timeout: true
-                  - action: rest_command.emhass_naive_mpc_optim
-                    data:
-                      emhass_payload: "{{ mpc_payload.body }}"
-                    response_variable: mpc_retry
-                    continue_on_error: true
-              - conditions:
+          # No answer usually means EMHASS is restarting. Wait once and retry the unchanged
+          # full thermal payload before treating the failure as an infeasible plan.
+          - if:
+              - condition: template
+                value_template: "{{ mpc_response is not defined }}"
+            then:
+              - wait_template: "{{ is_state('binary_sensor.emhass_online', 'on') }}"
+                timeout: "00:05:00"
+                continue_on_timeout: true
+              - action: rest_command.emhass_naive_mpc_optim
+                data:
+                  emhass_payload: "{{ mpc_payload.body }}"
+                response_variable: mpc_retry
+                continue_on_error: true
+              - if:
                   - condition: template
                     value_template: >-
-                      {{ mpc_response is defined
-                         and mpc_response.status | default(0) | int(0) != 200 }}
-                sequence:
-                  - action: script.emhass_build_payload
-                    data:
-                      plan: mpc
-                      thermal: false
-                    response_variable: mpc_payload_fallback
-                  - action: rest_command.emhass_naive_mpc_optim
-                    data:
-                      emhass_payload: "{{ mpc_payload_fallback.body }}"
-                    response_variable: mpc_retry
+                      {{ mpc_retry is defined
+                         and mpc_retry.status | default(0) | int(0) == 200 }}
+                then:
+                  - action: rest_command.emhass_publish
+                    data: {}
                     continue_on_error: true
-          - delay:
-              seconds: 20
+                  - action: logbook.log
+                    data:
+                      name: EMHASS
+                      message: "MPC recovered after EMHASS became reachable"
+                  - action: input_datetime.set_datetime
+                    target:
+                      entity_id: input_datetime.emhass_last_mpc
+                    data:
+                      timestamp: "{{ now().timestamp() | int }}"
+                  - stop: "MPC recovered after EMHASS became reachable"
+          # Any first failure gets one identical retry. Input, HA-data and configuration errors can
+          # also be transient, and this bounded retry is cheap compared with an immediate degraded
+          # fallback. Only the subsequent countdown is restricted to solver failures.
+          - if:
+              - condition: state
+                entity_id: binary_sensor.emhass_online
+                state: "on"
+              - condition: template
+                value_template: "{{ mpc_retry is not defined }}"
+              - condition: template
+                value_template: >-
+                  {{ mpc_response is defined
+                     and mpc_response.status | default(0) | int(0) != 200 }}
+            then:
+              - action: rest_command.emhass_naive_mpc_optim
+                data:
+                  emhass_payload: "{{ mpc_payload.body }}"
+                response_variable: mpc_retry
+                continue_on_error: true
+              - if:
+                  - condition: template
+                    value_template: >-
+                      {{ mpc_retry is defined
+                         and mpc_retry.status | default(0) | int(0) == 200 }}
+                then:
+                  - action: rest_command.emhass_publish
+                    data: {}
+                    continue_on_error: true
+                  - action: logbook.log
+                    data:
+                      name: EMHASS
+                      message: "MPC recovered on an identical full-payload retry"
+                  - action: input_datetime.set_datetime
+                    target:
+                      entity_id: input_datetime.emhass_last_mpc
+                    data:
+                      timestamp: "{{ now().timestamp() | int }}"
+                  - stop: "MPC recovered on an identical full-payload retry"
+          # Prefer the heat pump over the electric booster. Reduce only the DHW planner minimum
+          # first, then enable the booster as the final thermal recovery before dropping models.
+          - if:
+              - condition: state
+                entity_id: binary_sensor.emhass_online
+                state: "on"
+              - condition: template
+                value_template: >-
+                  {% set response = mpc_retry if mpc_retry is defined else mpc_response %}
+                  {% set content = response.content | default('') if response is defined else '' %}
+                  {% set text = content if content is string else content | tojson %}
+                  {{ response is defined
+                     and response.status | default(0) | int(0) != 200
+                     and (('infeasible' in text | lower)
+                          or ('user_limit' in text | lower)
+                          or ('time limit' in text | lower)
+                          or ('solver failed' in text | lower)
+                          or ('solver error' in text | lower)
+                          or ('unbounded' in text | lower)
+                          or ('optimization failed with status' in text | lower)
+                          or ('cost function cannot be evaluated' in text | lower)) }}
+            then:
+              - variables:
+                  configured_dhw_steps: >-
+                    {{ max(0, ((states('input_number.therma_v_supervisor_dhw_minimum_run_minutes')
+                                | float(20) / 15) | round(0, 'ceil') | int)) }}
+                  dhw_retry_steps: >-
+                    {{ range((configured_dhw_steps | int) - 1, -1, -1) | list }}
+              - repeat:
+                  for_each: "{{ dhw_retry_steps }}"
+                  sequence:
+                    - action: script.emhass_build_payload
+                      data:
+                        plan: mpc
+                        dhw_min_on_steps: "{{ repeat.item }}"
+                        dhw_booster_enabled: false
+                      response_variable: mpc_payload_dhw_reduced
+                    - action: rest_command.emhass_naive_mpc_optim
+                      data:
+                        emhass_payload: "{{ mpc_payload_dhw_reduced.body }}"
+                      response_variable: mpc_retry
+                      continue_on_error: true
+                    - if:
+                        - condition: template
+                          value_template: >-
+                            {{ mpc_retry is defined
+                               and mpc_retry.status | default(0) | int(0) == 200 }}
+                      then:
+                        - action: rest_command.emhass_publish
+                          data: {}
+                          continue_on_error: true
+                        - action: logbook.log
+                          data:
+                            name: EMHASS
+                            message: >-
+                              MPC recovered with DHW minimum on-time reduced to
+                              {{ repeat.item }} quarter(s), booster disabled
+                        - action: input_datetime.set_datetime
+                          target:
+                            entity_id: input_datetime.emhass_last_mpc
+                          data:
+                            timestamp: "{{ now().timestamp() | int }}"
+                        - stop: "MPC recovered without the DHW booster"
+              # The booster remains the last thermal option, with no forced DHW HP quarter.
+              - action: script.emhass_build_payload
+                data:
+                  plan: mpc
+                  dhw_min_on_steps: 0
+                  dhw_booster_enabled: true
+                response_variable: mpc_payload_dhw_booster
+              - action: rest_command.emhass_naive_mpc_optim
+                data:
+                  emhass_payload: "{{ mpc_payload_dhw_booster.body }}"
+                response_variable: mpc_retry
+                continue_on_error: true
+              - if:
+                  - condition: template
+                    value_template: >-
+                      {{ mpc_retry is defined
+                         and mpc_retry.status | default(0) | int(0) == 200 }}
+                then:
+                  - action: rest_command.emhass_publish
+                    data: {}
+                    continue_on_error: true
+                  - action: logbook.log
+                    data:
+                      name: EMHASS
+                      message: "MPC recovered with the DHW booster enabled as final thermal fallback"
+                  - action: input_datetime.set_datetime
+                    target:
+                      entity_id: input_datetime.emhass_last_mpc
+                    data:
+                      timestamp: "{{ now().timestamp() | int }}"
+                  - stop: "MPC recovered with the DHW booster"
+          # Count down the planner minimum only to unique constraint values. Once the remaining
+          # minimum is already zero, lowering it further cannot change the optimization.
+          - if:
+              - condition: state
+                entity_id: binary_sensor.emhass_online
+                state: "on"
+              - condition: template
+                value_template: >-
+                  {% set response = mpc_retry if mpc_retry is defined else mpc_response %}
+                  {% set content = response.content | default('') if response is defined else '' %}
+                  {% set text = content if content is string else content | tojson %}
+                  {{ response is defined
+                     and response.status | default(0) | int(0) != 200
+                     and (('infeasible' in text | lower)
+                          or ('user_limit' in text | lower)
+                          or ('time limit' in text | lower)
+                          or ('solver failed' in text | lower)
+                          or ('solver error' in text | lower)
+                          or ('unbounded' in text | lower)
+                          or ('optimization failed with status' in text | lower)
+                          or ('cost function cannot be evaluated' in text | lower)) }}
+            then:
+              - variables:
+                  configured_steps: >-
+                    {{ max(0, ((states('input_number.emhass_space_minimum_on_minutes')
+                                | float(60) / 15) | round(0, 'ceil') | int)) }}
+                  elapsed_steps: >-
+                    {{ (state_attr('binary_sensor.therma_v_hvac_run_active', 'on_timesteps')
+                        | int(0))
+                       if is_state('binary_sensor.therma_v_hvac_run_active', 'on') else 0 }}
+                  retry_steps: >-
+                    {{ range((configured_steps | int) - 1,
+                             (min((configured_steps | int) - 1, elapsed_steps | int) - 1),
+                             -1) | list
+                       if (configured_steps | int) > (elapsed_steps | int) else [] }}
+              - repeat:
+                  for_each: "{{ retry_steps }}"
+                  sequence:
+                    - action: script.emhass_build_payload
+                      data:
+                        plan: mpc
+                        space_min_on_steps: "{{ repeat.item }}"
+                        dhw_min_on_steps: 0
+                        dhw_booster_enabled: true
+                      response_variable: mpc_payload_reduced
+                    - action: rest_command.emhass_naive_mpc_optim
+                      data:
+                        emhass_payload: "{{ mpc_payload_reduced.body }}"
+                      response_variable: mpc_retry
+                      continue_on_error: true
+                    - if:
+                        - condition: template
+                          value_template: >-
+                            {{ mpc_retry is defined
+                               and mpc_retry.status | default(0) | int(0) == 200 }}
+                      then:
+                        - action: rest_command.emhass_publish
+                          data: {}
+                          continue_on_error: true
+                        - action: logbook.log
+                          data:
+                            name: EMHASS
+                            message: >-
+                              MPC recovered with planner minimum on-time reduced to
+                              {{ repeat.item }} quarter(s)
+                        - action: input_datetime.set_datetime
+                          target:
+                            entity_id: input_datetime.emhass_last_mpc
+                          data:
+                            timestamp: "{{ now().timestamp() | int }}"
+                        - stop: "MPC recovered with a reduced planner minimum on-time"
+          # Only after every plan-side minimum has failed, use the degraded plan without thermal
+          # models. This keeps the DHW and heat constraints out of the final recovery only.
+          - action: script.emhass_build_payload
+            data:
+              plan: mpc
+              thermal: false
+            response_variable: mpc_payload_fallback
+          - action: rest_command.emhass_naive_mpc_optim
+            data:
+              emhass_payload: "{{ mpc_payload_fallback.body }}"
+            response_variable: mpc_retry
+            continue_on_error: true
           - choose:
               - conditions:
                   - condition: template
@@ -191,18 +398,20 @@ automation:
                       message: >-
                         {% set c1 = mpc_response.content | default('') %}
                         {% set c2 = mpc_retry.content | default('') %}
-                        De kwartierrun is twee keer mislukt.
+                        De kwartierrun is mislukt met de volledige warmtemodellen, ook na
+                        het verlagen van de plan-side minimum-run tot 0 kwartieren.
                         Eerste poging: {{ mpc_response.status | default('geen antwoord') }}
                         ({{ (c1 if c1 is string else c1 | tojson)[:200] }}).
-                        Tweede poging zonder warmtemodellen:
+                        Terugval zonder warmtemodellen:
                         {{ mpc_retry.status | default('geen antwoord') }}
                         ({{ (c2 if c2 is string else c2 | tojson)[:200] }}).
                   - action: logbook.log
                     data:
                       name: EMHASS
                       message: >-
-                        MPC failed twice (first {{ mpc_response.status | default('no answer') }},
-                        retry {{ mpc_retry.status | default('no answer') }})
+                        MPC failed after reducing planner minimum on-time
+                        (first {{ mpc_response.status | default('no answer') }},
+                        thermal-free fallback {{ mpc_retry.status | default('no answer') }})
                   - if:
                       - condition: template
                         # EMHASS offline means it is (re)starting: the weekly backup does
@@ -215,7 +424,8 @@ automation:
                         data:
                           title: "EMHASS MPC mislukt"
                           message: >-
-                            Twee mislukte runs ({{ mpc_response.status | default('-') }} en
+                            Volledige en verlaagde warmtemodellen plus de terugval faalden
+                            ({{ mpc_response.status | default('-') }} en
                             {{ mpc_retry.status | default('-') }}). Details in de melding in HA.
             default:
               - action: persistent_notification.create
@@ -223,16 +433,16 @@ automation:
                   title: "EMHASS MPC: terugval gebruikt"
                   notification_id: emhass_mpc_failed
                   message: >-
-                    De normale run mislukte (status
-                    {{ mpc_response.status | default('geen antwoord') }}), maar de run zonder
-                    warmtemodellen slaagde. Er is dus een plan, alleen zonder het DHW- en
-                    warmtemodel - de aanleiding staat in het logboek.
+                    De volledige thermal run bleef mislukken, ook nadat de plan-side
+                    minimum-run stapsgewijs was verlaagd. De terugval zonder warmtemodellen
+                    slaagde. Er is dus een plan, maar zonder het DHW- en warmtemodel.
               - action: notify.mobile_app_iphone_jan
                 data:
                   title: "EMHASS: terugval gebruikt"
                   message: >-
-                    Normale run mislukt ({{ mpc_response.status | default('-') }}), terugval
-                    zonder warmtemodellen werkte. Plan is er, wel gedegradeerd.
+                    Warmtemodellen en verlaagde minimum-run faalden
+                    ({{ mpc_response.status | default('-') }}); terugval zonder
+                    warmtemodellen werkte. Plan is er, wel gedegradeerd.
       # Heartbeat for the watchdog (2026-10-07): stamp the last *successful* run, so the age
       # measures what we want to know instead of an indirect publication (see the header of
       # package_emhass_watchdog.yaml). The recovered-on-a-later-attempt branch above stamps and
