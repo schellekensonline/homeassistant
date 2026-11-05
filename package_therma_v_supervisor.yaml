@@ -31,7 +31,7 @@ input_boolean:
   therma_v_supervisor_space_heat_enabled:
     name: "Therma V supervisor space heating enabled"
     icon: mdi:radiator
-    initial: false
+    # initial: false # Restore the gate across HA restarts.
   therma_v_supervisor_cooling_enabled:
     name: "Therma V supervisor cooling enabled"
     icon: mdi:snowflake
@@ -1104,7 +1104,7 @@ template:
         {% set return_band_max = (
              states('input_number.therma_v_max_water_temperature_heat') | float(42)
              if heat_mode else
-             states('input_number.therma_v_max_water_temperature_cool') | float(22)) %}
+             states('input_number.therma_v_max_water_temperature_cool') | float(20)) %}
         {% set tinlet_target =
              min(max(tinlet_unclamped, return_band_min), return_band_max) | round(1)
              if plan_state == 'active' and control_power > threshold else none %}

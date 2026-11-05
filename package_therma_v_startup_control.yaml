@@ -155,9 +155,11 @@ input_number:
     icon: mdi:chart-bell-curve-cumulative
 
   # The four min/max helpers are also the climate template's mode-dependent write band, so there
-  # is one source of truth (2026-10-10). Heat 25 C is also the physical controller floor; heat below
-  # the minimum and cool above the maximum are explicit OFF requests. Auto (heating only) reads the
-  # heat pair the same way, so the band hugs the water temperature in all three modes (2026-10-11).
+  # is one source of truth (2026-10-10). Heat below the minimum and cool above the maximum are
+  # explicit OFF requests. Keep the physical controller outside that normal band with enough
+  # headroom for the OFF sentinel: the heat-water floor below it and the cool-water ceiling above it.
+  # Auto (heating only) reads the heat pair the same way, so the band hugs the water temperature in
+  # all three modes (2026-10-11).
   therma_v_min_water_temperature_heat:
     name: "Therma V min water temperature heat"
     min: 25
@@ -206,7 +208,7 @@ input_number:
     min: 5
     max: 25
     step: 1
-    initial: 22
+    initial: 20
     mode: box
     unit_of_measurement: "°C"
     icon: mdi:thermometer-high
@@ -310,7 +312,7 @@ template:
           {% set band_min = (states('input_number.therma_v_min_water_temperature_heat') | float(25)
                              if heat else states('input_number.therma_v_min_water_temperature_cool') | float(12)) %}
           {% set band_max = (states('input_number.therma_v_max_water_temperature_heat') | float(42)
-                             if heat else states('input_number.therma_v_max_water_temperature_cool') | float(22)) %}
+                             if heat else states('input_number.therma_v_max_water_temperature_cool') | float(20)) %}
           {% set water_floor = max(band_min, water - hys_pos) %}
           {% set water_ceil = min(band_max, water - hys_neg) %}
           {% set desired = min(max(req, water_floor), water_ceil) %}
@@ -414,7 +416,7 @@ template:
           {% set band_min = (states('input_number.therma_v_min_water_temperature_heat') if heat
                              else states('input_number.therma_v_min_water_temperature_cool')) | float(10) %}
           {% set band_max = (states('input_number.therma_v_max_water_temperature_heat') if heat
-                             else states('input_number.therma_v_max_water_temperature_cool')) | float(35) %}
+                             else states('input_number.therma_v_max_water_temperature_cool')) | float(20) %}
           {% set water_floor = max(band_min, water - hys_pos) %}
           {% set water_ceil = min(band_max, water - hys_neg) %}
           {% set desired = min(max(req, water_floor), water_ceil) %}

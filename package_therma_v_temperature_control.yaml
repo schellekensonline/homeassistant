@@ -543,11 +543,9 @@ automation:
                   off_mode: "{{ states('sensor.therma_v_operation_mode') | int(-1) }}"
                   off_water: >-
                     {{ states('sensor.therma_v_controlled_water_temperature') | float(20) }}
-                  off_hysteresis: >-
-                    {{ (states('input_number.therma_v_startup_hysteresis_pos') | float(2.5)
-                        if off_mode == 4
-                        else states('input_number.therma_v_startup_hysteresis_neg') | float(-2.5))
-                       | abs }}
+                  # Clear the pump's maximum selectable 4 K hysteresis plus 1 K margin in both
+                  # directions. Keep this independent of the live anti-trip hysteresis setting.
+                  off_hysteresis: 4.0
                   off_round: "{{ 'floor' if off_mode == 4 else 'ceil' }}"
                   off_target: >-
                     {% set raw = off_water - off_hysteresis - 1
@@ -560,7 +558,7 @@ automation:
                       {{ [rounded, (band_floor - 1) | int] | min }}
                     {% else %}
                       {% set band_ceiling =
-                           states('input_number.therma_v_max_water_temperature_cool') | float(22) %}
+                           states('input_number.therma_v_max_water_temperature_cool') | float(20) %}
                       {{ [rounded, (band_ceiling + 1) | int] | max }}
                     {% endif %}
                   requested_target: >-
