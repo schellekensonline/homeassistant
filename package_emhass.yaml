@@ -278,31 +278,6 @@ template:
             {{ values[0].p_deferrable2 | float(0) | round(0) if values else 0 }}
 
 input_number:
-  # Margin on the night reserve that the payload builder sends as soc_final: the forecasted night
-  # use (22:00-07:00) is multiplied by the factor and a fixed allowance is added on top, because the
-  # load forecast cannot see the heat pump at all (the load sensor subtracts it) and a cold morning
-  # draws more than a mild one. Measured 2026-09-26 over seven complete nights: the house itself
-  # 3.11-3.71 kWh (mean 3.54), the heat pump 0.22-2.01 kWh on top (5.13 kWh on a DHW night). With
-  # 1.15 and 2000 Wh the reserve lands around 30 % of the pack; see the notes for the reasoning.
-  emhass_reserve_margin:
-    name: "EMHASS night reserve factor"
-    icon: mdi:shield-check
-    min: 0.5
-    max: 2
-    step: 0.05
-    initial: 1.15
-    mode: box
-
-  emhass_reserve_fixed_wh:
-    name: "EMHASS night reserve fixed extra"
-    icon: mdi:battery-plus
-    min: 0
-    max: 8000
-    step: 100
-    initial: 2000
-    mode: box
-    unit_of_measurement: "Wh"
-
   # Room temperature setpoints for the thermal house model. These are the comfort values the
   # model steers to; they are not the heat pump's water temperature (that is the actuator, and
   # it lives on climate.therma_v_heating_cooling). The payload clamps the target into the
@@ -334,9 +309,9 @@ input_number:
     name: "EMHASS thermal comfort penalty"
     icon: mdi:thermometer-alert
     min: 0
-    max: 100
-    step: 1
-    initial: 10
+    max: 10
+    step: 0.01
+    initial: 0.05
     mode: box
 
   # Planner-only minimum space-heating/cooling run. This is deliberately separate from the
@@ -349,6 +324,18 @@ input_number:
     max: 240
     step: 15
     initial: 60
+    mode: box
+    unit_of_measurement: "min"
+
+  # Planner-only minimum DHW run. Keep this separate from the physical supervisor latch so a
+  # forced planner run cannot exceed the tank ceiling.
+  emhass_dhw_minimum_on_minutes:
+    name: "EMHASS DHW minimum on-time"
+    icon: mdi:water-boiler
+    min: 0
+    max: 120
+    step: 15
+    initial: 15
     mode: box
     unit_of_measurement: "min"
 

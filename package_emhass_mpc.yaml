@@ -197,8 +197,8 @@ automation:
             then:
               - variables:
                   configured_dhw_steps: >-
-                    {{ max(0, ((states('input_number.therma_v_supervisor_dhw_minimum_run_minutes')
-                                | float(20) / 15) | round(0, 'ceil') | int)) }}
+                    {{ max(0, ((states('input_number.emhass_dhw_minimum_on_minutes')
+                                | float(15) / 15) | round(0, 'ceil') | int)) }}
                   dhw_retry_steps: >-
                     {{ range((configured_dhw_steps | int) - 1, -1, -1) | list }}
               - repeat:
