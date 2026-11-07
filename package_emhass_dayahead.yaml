@@ -114,6 +114,9 @@ automation:
         data:
           plan: dayahead
         response_variable: dayahead_payload
+      - action: script.emhass_log_payload_warnings
+        data:
+          label: "Day plan"
       # The MPC action, not the day-ahead action: its `prediction_horizon` is honoured, so the run
       # works at any moment (it shortens the window when tomorrow's prices are not in yet) - that
       # is what keeps this automation safe to trigger by hand. The day-ahead action would insist on

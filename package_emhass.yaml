@@ -147,7 +147,10 @@ template:
           u_value: !secret building_u_value
           envelope_area_m2: !secret building_envelope_area_m2
           ventilation_rate: !secret building_ventilation_rate
+          ventilation_loss_w_per_k: !secret building_ventilation_loss_w_per_k
           heated_volume_m3: !secret building_heated_volume_m3
+          house_thermal_mass_heating_kwh_k: !secret building_house_thermal_mass_heating_kwh_k
+          house_thermal_mass_cooling_kwh_k: !secret building_house_thermal_mass_cooling_kwh_k
           window_area_m2: !secret building_window_area_total_m2
           shgc: !secret building_glazing_shgc
           internal_gains_factor: !secret building_internal_gains_factor
@@ -277,6 +280,39 @@ template:
                             | selectattr('date', 'eq', quarter.isoformat()) | list %}
             {{ values[0].p_deferrable2 | float(0) | round(0) if values else 0 }}
 
+      # Critical inputs for the payload. A missing/stale numeric state is reported here and the
+      # payload falls back to the last valid value cached by the helper automation below.
+      - name: "EMHASS payload input health"
+        unique_id: emhass_payload_input_health
+        state: >-
+          {% set cutoff = now().timestamp() - 3600 %}
+          {% set warnings = namespace(items=[]) %}
+          {% set room = states['sensor.therma_v_room_temperature'] %}
+          {% set dhw = states['sensor.therma_v_dhw_temperature'] %}
+          {% set soc = states['sensor.sessy_battery_state_of_charge'] %}
+          {% if room is none
+                or room.state | is_number == false
+                or not (5 <= room.state | float(0) <= 35)
+                or as_timestamp(room.last_reported,
+                                as_timestamp(room.last_updated, 0)) < cutoff %}
+            {% set warnings.items = warnings.items + ['room_temperature'] %}
+          {% endif %}
+          {% if dhw is none
+                or dhw.state | is_number == false
+                or not (0 <= dhw.state | float(0) <= 100)
+                or as_timestamp(dhw.last_reported,
+                                as_timestamp(dhw.last_updated, 0)) < cutoff %}
+            {% set warnings.items = warnings.items + ['dhw_temperature'] %}
+          {% endif %}
+          {% if soc is none
+                or soc.state | is_number == false
+                or not (0 <= soc.state | float(0) <= 100)
+                or as_timestamp(soc.last_reported,
+                                as_timestamp(soc.last_updated, 0)) < cutoff %}
+            {% set warnings.items = warnings.items + ['battery_soc'] %}
+          {% endif %}
+          {{ warnings.items | join(', ') if warnings.items else 'ok' }}
+
 input_number:
   # Room temperature setpoints for the thermal house model. These are the comfort values the
   # model steers to; they are not the heat pump's water temperature (that is the actuator, and
@@ -313,6 +349,38 @@ input_number:
     step: 0.01
     initial: 0.05
     mode: box
+
+  # Last valid payload inputs. These survive HA restarts and are used only when the live sensor
+  # is unavailable, non-numeric, outside its physical range or older than one hour.
+  emhass_last_valid_room_temperature:
+    name: "EMHASS last valid room temperature"
+    icon: mdi:home-thermometer
+    min: 5
+    max: 35
+    step: 0.1
+    initial: 20.5
+    mode: box
+    unit_of_measurement: "C"
+
+  emhass_last_valid_dhw_temperature:
+    name: "EMHASS last valid DHW temperature"
+    icon: mdi:water-thermometer
+    min: 0
+    max: 100
+    step: 0.1
+    initial: 50
+    mode: box
+    unit_of_measurement: "C"
+
+  emhass_last_valid_battery_soc:
+    name: "EMHASS last valid battery SoC"
+    icon: mdi:battery-sync
+    min: 0
+    max: 100
+    step: 0.1
+    initial: 60
+    mode: box
+    unit_of_measurement: "%"
 
   # Planner-only minimum space-heating/cooling run. This is deliberately separate from the
   # physical supervisor latch: the planner keeps its full minimum on the first attempt, while an
@@ -473,3 +541,57 @@ automation:
           - action: input_boolean.turn_on
             target:
               entity_id: input_boolean.sessy_zom_exclude_heat_pump
+
+  - id: emhass_cache_last_valid_inputs
+    alias: "EMHASS cache last valid payload inputs"
+    description: "Stores the latest physically valid room, DHW and battery SoC values."
+    mode: queued
+    max: 10
+    triggers:
+      - trigger: state
+        entity_id: sensor.therma_v_room_temperature
+        id: room
+      - trigger: state
+        entity_id: sensor.therma_v_dhw_temperature
+        id: dhw
+      - trigger: state
+        entity_id: sensor.sessy_battery_state_of_charge
+        id: soc
+    actions:
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: >-
+                  {{ trigger.id == 'room'
+                     and trigger.to_state.state | is_number
+                     and 5 <= trigger.to_state.state | float(0) <= 35 }}
+            sequence:
+              - action: input_number.set_value
+                target:
+                  entity_id: input_number.emhass_last_valid_room_temperature
+                data:
+                  value: "{{ trigger.to_state.state | float }}"
+          - conditions:
+              - condition: template
+                value_template: >-
+                  {{ trigger.id == 'dhw'
+                     and trigger.to_state.state | is_number
+                     and 0 <= trigger.to_state.state | float(0) <= 100 }}
+            sequence:
+              - action: input_number.set_value
+                target:
+                  entity_id: input_number.emhass_last_valid_dhw_temperature
+                data:
+                  value: "{{ trigger.to_state.state | float }}"
+          - conditions:
+              - condition: template
+                value_template: >-
+                  {{ trigger.id == 'soc'
+                     and trigger.to_state.state | is_number
+                     and 0 <= trigger.to_state.state | float(0) <= 100 }}
+            sequence:
+              - action: input_number.set_value
+                target:
+                  entity_id: input_number.emhass_last_valid_battery_soc
+                data:
+                  value: "{{ trigger.to_state.state | float }}"

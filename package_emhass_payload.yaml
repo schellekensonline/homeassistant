@@ -157,6 +157,18 @@ script:
             {# Cap to the available price quarters; EMHASS rejects a horizon/length mismatch. #}
             {% set n = min(96, incl_rounded | length) %}
             {% set quarter_start_ts = as_timestamp(quarter_start) %}
+            {% set soc_source = states['sensor.sessy_battery_state_of_charge'] %}
+            {% set soc_fallback =
+                 states('input_number.emhass_last_valid_battery_soc') | float(60) %}
+            {% set soc_valid =
+                 soc_source is not none
+                 and soc_source.state | is_number
+                 and 0 <= soc_source.state | float(0) <= 100
+                 and as_timestamp(soc_source.last_reported,
+                                  as_timestamp(soc_source.last_updated, 0))
+                     >= now().timestamp() - 3600 %}
+            {% set soc_now =
+                 (soc_source.state | float(soc_fallback)) if soc_valid else soc_fallback %}
             {% if send_thermal %}
             {# Pass the same 15-minute outdoor forecast to EMHASS and the HA Q calculation. #}
             {% set weather_content = weather_response.content
@@ -210,16 +222,40 @@ script:
               {% set outdoor_forecast.list = outdoor_blocked.list %}
             {% endif %}
             {% set ba = 'sensor.building_parameters' %}
-            {% set room_now = states('sensor.therma_v_room_temperature') | float(20.5) %}
+            {% set room_source = states['sensor.therma_v_room_temperature'] %}
+            {% set room_fallback =
+                 states('input_number.emhass_last_valid_room_temperature') | float(20.5) %}
+            {% set room_valid =
+                 room_source is not none
+                 and room_source.state | is_number
+                 and 5 <= room_source.state | float(0) <= 35
+                 and as_timestamp(room_source.last_reported,
+                                  as_timestamp(room_source.last_updated, 0))
+                     >= now().timestamp() - 3600 %}
+            {% set room_now =
+                 (room_source.state | float(room_fallback)) if room_valid else room_fallback %}
             {% set uval = state_attr(ba,'u_value') | float(0.55) %}
             {% set env = state_attr(ba,'envelope_area_m2') | float(380) %}
             {% set vent = state_attr(ba,'ventilation_rate') | float(0.5) %}
             {% set vol = state_attr(ba,'heated_volume_m3') | float(300) %}
+            {% set ventilation_loss_w_k =
+                 state_attr(ba,'ventilation_loss_w_per_k') | float(vent * vol * 0.33) %}
             {% set warea = state_attr(ba,'window_area_m2') | float(32.7) %}
             {% set shgc = state_attr(ba,'shgc') | float(0.55) %}
             {% set tau = state_attr(ba,'slab_inertia_time_constant_h') | float(2) %}
             {% set hp_nom = state_attr(ba,'heatpump_electric_max_w') | float(3000) %}
-            {% set dhw_now = states('sensor.therma_v_dhw_temperature') | float(50) %}
+            {% set dhw_source = states['sensor.therma_v_dhw_temperature'] %}
+            {% set dhw_fallback =
+                 states('input_number.emhass_last_valid_dhw_temperature') | float(50) %}
+            {% set dhw_valid =
+                 dhw_source is not none
+                 and dhw_source.state | is_number
+                 and 0 <= dhw_source.state | float(0) <= 100
+                 and as_timestamp(dhw_source.last_reported,
+                                  as_timestamp(dhw_source.last_updated, 0))
+                     >= now().timestamp() - 3600 %}
+            {% set dhw_now =
+                 (dhw_source.state | float(dhw_fallback)) if dhw_valid else dhw_fallback %}
             {% set dhw_target = states('input_number.therma_v_dhw_target_request') | float(50) %}
             {% set dhw_min = state_attr(ba,'dhw_min_temperature') | float(42) %}
             {% set dhw_max = min(state_attr(ba,'dhw_max_temperature') | float(65), 65) %}
@@ -299,9 +335,15 @@ script:
             {% set curve_offset = sp_heat * (1 + curve_slope) + curve_actual_offset %}
             {% set curve_min_supply = states('input_number.therma_v_min_water_temperature_heat') | float(25) %}
             {% set curve_max_supply = states('input_number.therma_v_max_water_temperature_heat') | float(42) %}
-            {% set house_mass = 18.0 %}
-            {# Convert envelope plus ventilation loss to kW/K for the house model. #}
-            {% set loss_coefficient = ((uval * env) + (vent * vol * 0.33)) / 1000 %}
+            {# Heating and cooling may use different effective room masses after calibration. #}
+            {% set house_mass_heat =
+                 state_attr(ba,'house_thermal_mass_heating_kwh_k') | float(18) %}
+            {% set house_mass_cool =
+                 state_attr(ba,'house_thermal_mass_cooling_kwh_k') | float(18) %}
+            {% set house_mass = house_mass_cool if hp_cool else house_mass_heat %}
+            {# EMHASS has one UA term; keep ventilation explicit here and combine it only here. #}
+            {% set envelope_loss_w_k = uval * env %}
+            {% set loss_coefficient = (envelope_loss_w_k + ventilation_loss_w_k) / 1000 %}
             {# Apply the learned weekday/weekend draw profile on the absolute local clock. #}
             {% set weekday_draw = state_attr('sensor.emhass_dhw_draw_profile', 'weekday') | default([]) %}
             {% set weekend_draw = state_attr('sensor.emhass_dhw_draw_profile', 'weekend') | default([]) %}
@@ -364,7 +406,7 @@ script:
               {# Match actuator limits so EMHASS cannot plan power the Sessy will clip. #}
               "battery_charge_power_max": {{ states('input_number.sessy_api_strategy_max_charge_power') | int(6000) }},
               "battery_discharge_power_max": {{ states('input_number.sessy_api_strategy_max_discharge_power') | int(3000) }},
-              "soc_init": {{ (states('sensor.sessy_battery_state_of_charge') | float(60) / 100) | round(3) }},
+              "soc_init": {{ (soc_now / 100) | round(3) }},
               "soc_final": 0.02{% if not day_ahead and send_thermal %},
               {# Only the MPC publish path needs these explicit thermal sensor IDs. #}
               "custom_predicted_temperature_id": [
@@ -483,6 +525,32 @@ script:
   # Shared restart barrier for the MPC and the day-ahead automation. EMHASS's health endpoint can
   # answer before a usable plan, while a restored load sensor can still carry a pre-restart value.
   # Wait for a live integration update after this call and give HA's recorder a short startup grace.
+  emhass_log_payload_warnings:
+    alias: "EMHASS log payload input fallbacks"
+    description: "Writes one warning when the payload had to use a cached critical input."
+    mode: parallel
+    max: 4
+    fields:
+      label:
+        name: "Plan label"
+        default: "EMHASS"
+        selector:
+          text:
+    sequence:
+      - variables:
+          warnings: "{{ states('sensor.emhass_payload_input_health') }}"
+      - if:
+          - condition: template
+            value_template: "{{ warnings != 'ok' }}"
+        then:
+          - action: system_log.write
+            data:
+              message: >-
+                EMHASS: {{ label }} payload input health is
+                {{ warnings if warnings not in ['unknown', 'unavailable', 'none', ''] else 'unknown' }};
+                cached or bootstrap fallbacks may be in use.
+              level: warning
+              logger: emhass.inputs
   emhass_wait_ready:
     alias: "EMHASS wait until HA and EMHASS are usable"
     description: "Waits for health plus a fresh load measurement after an HA/EMHASS restart"

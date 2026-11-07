@@ -80,6 +80,9 @@ automation:
           plan: mpc
           dhw_booster_enabled: false
         response_variable: mpc_payload
+      - action: script.emhass_log_payload_warnings
+        data:
+          label: "MPC"
       - action: rest_command.emhass_naive_mpc_optim
         data:
           emhass_payload: "{{ mpc_payload.body }}"
