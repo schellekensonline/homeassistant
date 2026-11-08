@@ -69,7 +69,8 @@ script:
         name: "Allow the DHW electric booster"
         description: >-
           The normal MPC keeps this off and enables it only after the no-booster plans have been
-          tried. Day-ahead and previews default to on.
+          tried. A due or active disinfection enables it for the first solve. Day-ahead and
+          previews default to on.
         default: true
         selector:
           boolean:
@@ -127,7 +128,7 @@ script:
           # heating and cooling stores. The two HP flows share one mutually exclusive actuator
           # group; the booster is independent. Disabled flows are parked without losses.
           #
-          # A due disinfection forces the planned hold block to 60 C, while EMHASS may preheat
+          # A due disinfection forces the planned hold block to 62 C, while EMHASS may preheat
           # earlier. Readiness, not current relay state, keeps a flow enabled in the plan.
           # Convert the controller's heating curve to EMHASS's outdoor-temperature convention.
           # House thermal mass is explicit; losses combine envelope UA and ventilation.
@@ -366,13 +367,13 @@ script:
             {% set booster_costs = namespace(list=[]) %}
             {% for i in range(n) %}
               {% set step_ts = quarter_start_ts + i * 900 %}
-              {# DHW planner owns the start time; force 60 C only across its hold steps. #}
+              {# DHW planner owns the start time; force 62 C only across its hold steps. #}
               {% set in_disinfection_hold =
                    hp_dhw and disinfection_due and disinfection_start is not none
                    and step_ts >= disinfection_start
                    and step_ts < disinfection_start + hold_steps * 900 %}
               {% set mins.list = mins.list
-                   + ([60.0] if in_disinfection_hold else [dhw_min if hp_dhw else dhw_now]) %}
+                   + ([62.0] if in_disinfection_hold else [dhw_min if hp_dhw else dhw_now]) %}
               {# A disabled booster is discouraged by its tariff. Once enabled, its real tariff is
                  used because it is the final thermal fallback before abandoning the thermal model.
                  The source stays physically available at its real ceiling; the +10 tariff gate is

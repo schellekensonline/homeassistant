@@ -42,6 +42,13 @@ automation:
         id: emhass_up
     condition: []
     action:
+      - variables:
+          # The no-booster-first ladder belongs to ordinary DHW maintenance. When a
+          # disinfection is due or active, the booster is part of the hygiene requirement
+          # and must be available to the first solve instead of a later fallback.
+          disinfection_booster_available: >-
+            {{ is_state('input_boolean.dhw_disinfection_due', 'on')
+               or is_state('input_boolean.dhw_disinfection_active', 'on') }}
       # After a restart: wait until EMHASS answers and the load sensor has real data.
       # EMHASS's published sensors (p_load_forecast and friends) do not survive a
       # Home Assistant restart, so this run recreates them immediately.
@@ -78,7 +85,7 @@ automation:
       - action: script.emhass_build_payload
         data:
           plan: mpc
-          dhw_booster_enabled: false
+          dhw_booster_enabled: "{{ disinfection_booster_available }}"
         response_variable: mpc_payload
       - action: script.emhass_log_payload_warnings
         data:
@@ -176,8 +183,9 @@ automation:
                     data:
                       timestamp: "{{ now().timestamp() | int }}"
                   - stop: "MPC recovered on an identical full-payload retry"
-          # Prefer the heat pump over the electric booster. Reduce only the DHW planner minimum
-          # first, then enable the booster as the final thermal recovery before dropping models.
+          # For ordinary DHW, prefer the heat pump and reduce the planner minimum first. A due or
+          # active disinfection keeps the booster enabled throughout these retries because it is
+          # required for the hygiene hold, not a final ordinary-DHW fallback.
           - if:
               - condition: state
                 entity_id: binary_sensor.emhass_online
@@ -211,7 +219,7 @@ automation:
                       data:
                         plan: mpc
                         dhw_min_on_steps: "{{ repeat.item }}"
-                        dhw_booster_enabled: false
+                        dhw_booster_enabled: "{{ disinfection_booster_available }}"
                       response_variable: mpc_payload_dhw_reduced
                     - action: rest_command.emhass_naive_mpc_optim
                       data:

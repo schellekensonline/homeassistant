@@ -10,10 +10,9 @@
 # There is deliberately no post-run mixing: once the tank is mixed, more circulation only loses
 # heat through the vessel and pipes. The timer is a debounce, not extra mixing time.
 #
-# Defrost blocks only the heat-pump source. The two electric boosters use the same temperature
-# hysteresis but start from the *normal* DHW setpoint, not a raised disinfection target: during a
-# 60 C legionella cycle the booster may run from around 50 C, where the target-2 K rule would
-# otherwise suppress useful mixing until 58 C.
+# Defrost blocks only the heat-pump source. Every active electric booster requests circulation
+# immediately, regardless of tank temperature, so its local 1.5 kW heat does not create a hot
+# spot that trips the heater's high-temperature protection.
 
 input_number:
   dhw_circulation_start_delta:
@@ -45,6 +44,7 @@ input_number:
     initial: 1
     mode: box
     unit_of_measurement: "K"
+    # Retained for entity/dashboard compatibility; booster circulation no longer uses hysteresis.
 
 timer:
   dhw_circulation_stop_delay:
@@ -74,32 +74,24 @@ template:
              and has_value('sensor.therma_v_dhw_target_temperature')
              and has_value('input_number.dhw_circulation_start_delta')
              and has_value('input_number.dhw_circulation_stop_delta')
-             and has_value('input_number.dhw_circulation_booster_stop_delta')
-             and has_value('sensor.dhw_normal_setpoint')
              and has_value('binary_sensor.therma_v_dhw_heating_state')
              and has_value('binary_sensor.therma_v_defrost_state') }}
-        # Boosters use the normal service setpoint so a 60 C disinfection target does not defer
-        # mixing until the expensive final band; the HP stays target-relative.
+        # The HP uses target-relative hysteresis. A booster requests mixing unconditionally to
+        # prevent local overheating around the immersion element.
         state: >-
           {% set tank = states('sensor.therma_v_dhw_temperature') | float(0) %}
           {% set target = states('sensor.therma_v_dhw_target_temperature') | float(50) %}
-          {% set normal = states('sensor.dhw_normal_setpoint') | float(50) %}
           {% set start_delta = states('input_number.dhw_circulation_start_delta') | float(2) %}
           {% set stop_delta = max(states('input_number.dhw_circulation_stop_delta') | float(5),
                                   start_delta) %}
-          {% set booster_stop_delta =
-               states('input_number.dhw_circulation_booster_stop_delta') | float(1) %}
           {% set circulating = is_state('binary_sensor.therma_v_dhw_circulation_state_s3', 'on')
                                or is_state('switch.dhw_circulation_switch', 'on') %}
           {% set hp_active = is_state('binary_sensor.therma_v_dhw_heating_state', 'on')
                              and is_state('binary_sensor.therma_v_defrost_state', 'off') %}
           {% set booster_active = is_state('binary_sensor.therma_v_dhw_booster_state', 'on')
                                   or is_state('binary_sensor.therma_v_dhw_booster_2_state_s1', 'on') %}
-          {# Boosters compare against the normal target; the HP follows the live target. #}
-          {% set threshold =
-               (normal - (booster_stop_delta if circulating else 0)) if booster_active
-               else (target - (stop_delta if circulating else start_delta)) %}
-          {{ (hp_active or booster_active) and tank >= threshold }}
+          {% set hp_threshold = target - (stop_delta if circulating else start_delta) %}
+          {{ booster_active or (hp_active and tank >= hp_threshold) }}
 
   - sensor:
       # The normal service request, independent of the effective disinfection override.
@@ -163,9 +155,10 @@ automation:
                     target:
                       entity_id: timer.dhw_circulation_stop_delay
               - if:
-                  - condition: state
-                    entity_id: switch.dhw_circulation_switch
-                    state: "off"
+                  - condition: template
+                    # A restored template switch can be unknown/unavailable after a reload;
+                    # anything except an explicit on still needs the relay command.
+                    value_template: "{{ not is_state('switch.dhw_circulation_switch', 'on') }}"
                 then:
                   - action: switch.turn_on
                     target:

@@ -89,8 +89,8 @@ input_number:
     step: 1
     mode: box
     unit_of_measurement: "min"
-  # Minimum time the tank must stay at or above 60 C in the EMHASS heat topology. The detection
-  # path needs 30 minutes; 45 gives the planner one extra quarter for the final booster lift.
+  # Minimum time the planner holds the 62 C disinfection block and the physical >60 C completion
+  # check must remain satisfied.
   dhw_disinfection_hold_minutes:
     name: "DHW disinfection hold time"
     initial: 45
@@ -167,7 +167,7 @@ template:
       - name: "DHW temperature above 55"
         unique_id: dhw_temperature_above_55
         availability: "{{ has_value('sensor.therma_v_dhw_temperature') }}"
-        state: "{{ states('sensor.therma_v_dhw_temperature') | float(0) > 55 }}"
+        state: "{{ states('sensor.therma_v_dhw_temperature') | float(0) >= 55 }}"
 
       - name: "DHW temperature above 60"
         unique_id: dhw_temperature_above_60
@@ -177,12 +177,13 @@ template:
       - name: "DHW temperature above 65"
         unique_id: dhw_temperature_above_65
         availability: "{{ has_value('sensor.therma_v_dhw_temperature') }}"
-        state: "{{ states('sensor.therma_v_dhw_temperature') | float(0) > 65 }}"
+        state: "{{ states('sensor.therma_v_dhw_temperature') | float(0) >= 65 }}"
 
       - name: "DHW disinfection temperature met"
         unique_id: dhw_disinfection_temperature_met
         icon: mdi:shield-thermometer-outline
         availability: "{{ has_value('sensor.therma_v_dhw_temperature') }}"
+        # Counts planned and unplanned equivalents; the detection automation clears due on success.
         state: >-
           {% set now_ts = now().timestamp() %}
           {% set s55 = states.binary_sensor.dhw_temperature_above_55 %}
@@ -191,10 +192,12 @@ template:
           {% set ts55 = as_timestamp(s55.last_changed) if s55 is not none else none %}
           {% set ts60 = as_timestamp(s60.last_changed) if s60 is not none else none %}
           {% set ts65 = as_timestamp(s65.last_changed) if s65 is not none else none %}
+          {% set hold_seconds =
+               (states('input_number.dhw_disinfection_hold_minutes') | float(45)) * 60 %}
           {{ (is_state('binary_sensor.dhw_temperature_above_55', 'on')
                and ts55 is not none and now_ts - ts55 >= 6 * 3600)
              or (is_state('binary_sensor.dhw_temperature_above_60', 'on')
-                 and ts60 is not none and now_ts - ts60 >= 30 * 60)
+                 and ts60 is not none and now_ts - ts60 >= hold_seconds)
              or (is_state('binary_sensor.dhw_temperature_above_65', 'on')
                  and ts65 is not none and now_ts - ts65 >= 2 * 60) }}
         attributes:
@@ -202,6 +205,7 @@ template:
           above_55_since: "{{ states.binary_sensor.dhw_temperature_above_55.last_changed }}"
           above_60_since: "{{ states.binary_sensor.dhw_temperature_above_60.last_changed }}"
           above_65_since: "{{ states.binary_sensor.dhw_temperature_above_65.last_changed }}"
+          required_hold_minutes: "{{ states('input_number.dhw_disinfection_hold_minutes') }}"
 
   - sensor:
       - name: "DHW disinfection state"
@@ -252,7 +256,7 @@ template:
 
 automation:
   # Decide whether a cycle is required and select a future cheap block. In Manual/Heuristic the
-  # local run automation consumes that block; in EMHASS the payload uses its start for the 60 C
+  # local run automation consumes that block; in EMHASS the payload uses its start for the 62 C
   # minimum in the heat topology and the supervisor consumes the same timestamp. The
   # hourly retry repairs the old one-shot-at-00:15 weakness when price data or the macro is
   # temporarily unavailable. A missed cycle leaves due=true and is retried; it is not an error.
@@ -398,7 +402,7 @@ automation:
         data:
           name: DHW disinfection
           message: >-
-            HA disinfection started; override 60 C while normal request remains
+            HA disinfection started; override 62 C while normal request remains
             {{ states('input_number.therma_v_dhw_target_request') | float(50) }} C
 
   # Detect both planned and unplanned successful cycles. The complete latch makes this a rising-edge
@@ -406,7 +410,7 @@ automation:
   # records last_disinfection, ends the heat request and starts the actuator stop/settling phase.
   - id: dhw_disinfection_detection_auto
     alias: "DHW disinfection detection auto"
-    description: "Records one successful 55/60/65 C cycle and starts its stop phase"
+    description: "Records one successful equivalent temperature hold and starts its stop phase"
     mode: single
     max_exceeded: silent
     triggers:
@@ -678,7 +682,7 @@ automation:
           title: "DHW desinfectie niet afgerond"
           notification_id: dhw_disinfection_retry
           message: >-
-            De geplande cyclus is gestopt zonder de detectiegrens te halen. De 60 C-override is
+            De geplande cyclus is gestopt zonder de detectiegrens te halen. De 62 C-override is
             vrijgegeven en de normale gebruikersrequest blijft actief; de desinfectie blijft `due`
             en de planner probeert het later opnieuw.
       - action: logbook.log

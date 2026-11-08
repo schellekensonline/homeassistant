@@ -10,7 +10,7 @@
 # While deferring, the effective setpoint follows the tank just below its current temperature so the
 # thermostat sees no demand. A planned start first jumps to the HP ceiling (55 C, the same as
 # hp_dhw.max_supply_temperature); once the DHW circuit and compressor both report active, the
-# effective setpoint returns to the normal thermostat target. Disinfection uses 53/60 C to force the
+# effective setpoint returns to the normal thermostat target. Disinfection uses 53/62 C to force the
 # required run.
 # The DHW coil is Modbus coil 1 (DHW operation enable), not a physical valve.
 
@@ -590,7 +590,7 @@ template:
           {% if stopping %}
           {{ max(40, min(normal, temp - stop_offset)) | round(1) }}
           {% elif disinfection_override %}
-          60.0
+          62.0
           {% elif strategy != 'EMHASS' or not gate %}
           {{ normal | round(1) }}
           {% elif temp <= safety_floor %}
@@ -1556,11 +1556,21 @@ automation:
                and now().timestamp() >= (next_ts | float(0))
                and now().timestamp() < (next_ts | float(0)) + (hold_minutes | float(45)) * 60 }}
           disinfection: "{{ (active | bool) or (hold | bool) }}"
-          # EMHASS owns booster selection, including the retry ladder that prefers HP-only plans.
-          # Keep only the completion/safety vetoes; price and active-cycle arbitration are gone.
+          # EMHASS normally selects the booster. During the hygiene hold, enforce the 62 C target
+          # locally if EMHASS softened the near-term floor and published no booster power.
+          disinfection_booster_needed: >-
+            {{ (disinfection | bool)
+               and not (stopping | bool)
+               and not (stop_failed | bool)
+               and (((is_state('switch.dhw_booster_2_switch', 'off'))
+                     and (temp | float(0)) < 61.5)
+                    or ((is_state('switch.dhw_booster_2_switch', 'on'))
+                        and (temp | float(0)) < 62.0)) }}
+          # Keep the completion and safety vetoes on both planner and fallback requests.
           booster_wanted: >-
-            {{ (fresh | bool)
-               and (booster_power | float(0)) > (threshold | float(100))
+            {{ (((fresh | bool)
+                 and (booster_power | float(0)) > (threshold | float(100)))
+                or (disinfection_booster_needed | bool))
                and not (stopping | bool)
                and not (stop_failed | bool)
                and (temp | float(0)) < (booster_max | float(63)) }}
@@ -1610,8 +1620,7 @@ automation:
                 target:
                   entity_id: switch.dhw_booster_2_switch
   # Start the existing disinfection FSM in EMHASS mode at the same timestamp the planner uses.
-  # The 45-minute topology hold consists of this 15-minute local preheat plus the following 30
-  # minutes at 60 C, which is exactly the detection threshold.
+  # The topology hold uses a 62 C target so the physical >60 C completion threshold retains margin.
   - id: therma_v_supervisor_capture_normal_setpoint
     alias: "Therma V supervisor initialize DHW control"
     description: "Initializes the EMHASS DHW owner without changing the user request"
