@@ -260,6 +260,8 @@ script:
             {% set dhw_target = states('input_number.therma_v_dhw_target_request') | float(50) %}
             {% set dhw_min = state_attr(ba,'dhw_min_temperature') | float(42) %}
             {% set dhw_max = min(state_attr(ba,'dhw_max_temperature') | float(65), 65) %}
+            {# Normal DHW tops out at the compressor-side ceiling; the booster owns the band above it. #}
+            {% set dhw_hp_max = 55.0 %}
             {% set dhw_boost_max = min(dhw_max,
                                        states('input_number.therma_v_supervisor_booster_max_temperature') | float(dhw_max)) %}
             {% set disinfection_due = is_state('input_boolean.dhw_disinfection_due', 'on') %}
@@ -380,7 +382,7 @@ script:
                  the sole preference against a normal positive-price booster run. #}
               {% set booster_allowed = hp_dhw and (in_disinfection_hold or incl_rounded[i] < 0) %}
               {% set maxes.list = maxes.list
-                   + ([dhw_boost_max if (booster_available and booster_allowed) else 53.0]
+                   + ([dhw_boost_max if (booster_available and booster_allowed) else dhw_hp_max]
                       if hp_dhw else [dhw_now]) %}
               {% set booster_costs.list = booster_costs.list
                    + [incl_rounded[i] if booster_available else incl_rounded[i] + 10.0] %}
@@ -448,9 +450,9 @@ script:
                   {"id": "hp_dhw", "type": "heatpump",
                    "nominal_power": {{ hp_nom }}, "min_power": 3100,
                    "treat_as_semi_cont": false,
-                   "supply_temperature": {{ min(dhw_target, 53) }},
+                   "supply_temperature": {{ min(dhw_target, dhw_hp_max) }},
                    "carnot_efficiency": {{ state_attr(ba,'dhw_carnot_efficiency') | float(0.26) }},
-                   "max_supply_temperature": 55, "max_thermal_power": 9000},
+                   "max_supply_temperature": {{ dhw_hp_max }}, "max_thermal_power": 9000},
                   {"id": "hp_space", "type": "heatpump",
                    "nominal_power": {{ hp_nom }}, "min_power": 580,
                    "treat_as_semi_cont": false,
