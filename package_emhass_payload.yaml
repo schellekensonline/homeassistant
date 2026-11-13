@@ -328,6 +328,8 @@ script:
             {% set sp_cool = states('input_number.room_setpoint_cooling') | float(24) %}
             {% set margin = state_attr(ba,'room_comfort_margin_c') | float(1) %}
             {% set comfort_penalty = states('input_number.emhass_thermal_comfort_penalty') | float(10) %}
+            {% set source_overshoot_margin =
+                 states('input_number.emhass_room_overshoot_margin') | float(0.5) %}
             {% set heat_floor = min(sp_heat - margin, room_now) %}
             {% set heat_ceil = max(sp_heat + margin, room_now) %}
             {% set cool_floor = min(sp_cool - margin, room_now) %}
@@ -397,7 +399,11 @@ script:
             {% set space_minima = cool_minima if hp_cool else heat_minima %}
             {% set space_maxima = cool_maxima if hp_cool else heat_maxima %}
             {% set space_target = sp_cool if hp_cool else (sp_heat if hp_heat else room_now) %}
-            {% set space_overshoot = cool_floor if hp_cool else heat_ceil %}
+            {# Keep the source cutoff outside the hard band so a softened maximum cannot collide
+               with the planner minimum. Cooling mirrors this below its lower band edge. #}
+            {% set space_overshoot =
+                 (cool_floor - source_overshoot_margin) if hp_cool
+                 else (heat_ceil + source_overshoot_margin) %}
             {% endif %}
 
             {

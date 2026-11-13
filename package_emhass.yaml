@@ -350,6 +350,19 @@ input_number:
     initial: 0.05
     mode: box
 
+  # Keep the source cutoff outside the hard comfort band. EMHASS can soften the hard maximum when
+  # free gains alone would exceed it; without this margin the remaining overshoot gate can then
+  # conflict with the planner's minimum-on constraint.
+  emhass_room_overshoot_margin:
+    name: "EMHASS room overshoot margin"
+    icon: mdi:thermometer-chevron-up
+    min: 0
+    max: 3
+    step: 0.1
+    initial: 0.5
+    mode: box
+    unit_of_measurement: "K"
+
   # Last valid payload inputs. These survive HA restarts and are used only when the live sensor
   # is unavailable, non-numeric, outside its physical range or older than one hour.
   emhass_last_valid_room_temperature:

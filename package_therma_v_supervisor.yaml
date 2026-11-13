@@ -20,8 +20,16 @@ input_text:
   therma_v_house_prior_heat_json:
     name: "Therma V house prior heat buffer"
     max: 255
-    initial: "[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]"
+    # No initial: input_text only restores when its constructor value is empty. The templates and
+    # update automation provide a first-use all-zero fallback.
     icon: mdi:timeline-clock-outline
+  # Persisted complete-block cache for the heat actuator profile. JSON keeps the block start,
+  # quarter count and raw p_deferrable1 slots together in one restored helper.
+  therma_v_heat_plan_block_json:
+    name: "Therma V heat plan block buffer"
+    max: 255
+    # No initial: an initial value prevents Home Assistant from restoring the saved block.
+    icon: mdi:view-dashboard-outline
 
 input_boolean:
   therma_v_supervisor_dhw_enabled:
@@ -388,13 +396,19 @@ template:
         unit_of_measurement: "kWh"
         state_class: measurement
         availability: >-
-          {{ states('input_text.therma_v_house_prior_heat_json') | from_json is iterable }}
+          {{ states('input_text.therma_v_house_prior_heat_json')
+             | default('[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]', true)
+             | from_json is iterable }}
         state: >-
-          {% set values = states('input_text.therma_v_house_prior_heat_json') | from_json %}
+          {% set values = states('input_text.therma_v_house_prior_heat_json')
+                          | default('[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]', true)
+                          | from_json %}
           {{ values[-1] if values | length else 0 }}
         attributes:
           prior_heat: >-
-            {{ states('input_text.therma_v_house_prior_heat_json') | from_json }}
+            {{ states('input_text.therma_v_house_prior_heat_json')
+               | default('[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]', true)
+               | from_json }}
           updated_at: >-
             {{ state_attr('input_datetime.therma_v_house_prior_heat_step_at', 'timestamp') }}
 
@@ -904,14 +918,18 @@ template:
                and now().timestamp() < next_ts + hold_minutes * 60 }}
           next_disinfection: "{{ states('input_datetime.dhw_next_disinfection') }}"
 
-  # Proposed heat actuator profile: 2 h energy-preserving blocks, directional edge correction,
-  # bridge an isolated single-quarter OFF between active neighbours, then a 15 min first-order
-  # filter with immediate OFF and the physical 580 W minimum.
+  # Heat actuator profile. The block length follows the configured planner minimum run, so an
+  # hourly minimum uses four quarter-hours. Keep a complete-block cache because each rolling MPC
+  # schedule starts at the current quarter and no longer contains its elapsed values.
+  # A block is averaged only when all of its quarters are known; otherwise that block follows the
+  # raw plan rather than renormalising a partial mean. The six-time-constant IIR settling time is
+  # the same configured minimum run.
   # This sensor is computed even while the heat gate is off, but does not write any actuator.
   - trigger:
       - trigger: state
         entity_id:
           - sensor.p_deferrable1
+          - input_text.therma_v_heat_plan_block_json
           - input_select.therma_v_control_strategy
           - input_boolean.therma_v_supervisor_space_heat_enabled
           - input_boolean.therma_v_supervisor_cooling_enabled
@@ -927,58 +945,128 @@ template:
         {% set previous_power =
              states('input_number.therma_v_heat_plan_previous_power') | float(0) %}
         {% set seeded_iir = states('input_number.therma_v_heat_plan_iir_power') | float(0) %}
-        {% set quarter = as_timestamp(now().replace(minute=(now().minute // 15) * 15,
-                                                    second=0, microsecond=0)) %}
-        {% set points = namespace(list=[]) %}
+        {% set block_count = [1, (states('input_number.emhass_space_minimum_on_minutes')
+                                  | float(60) / 15) | round(0, 'ceil') | int] | max %}
+        {% set block_seconds = block_count * 900 %}
+        {% set tau_minutes = block_count * 15 / 6 %}
+        {% set alpha = 1.0 - 2.718281828459045 ** (-15.0 / tau_minutes) %}
+        {% set quarter_dt = now().replace(minute=(now().minute // 15) * 15,
+                                          second=0, microsecond=0) %}
+        {% set quarter = as_timestamp(quarter_dt) | int %}
+        {% set block_start_ts = ((quarter // block_seconds) * block_seconds) | int %}
+        {% set block_start_dt =
+             quarter_dt - timedelta(seconds=(quarter - block_start_ts)) %}
+        {% set block_buffer =
+             states('input_text.therma_v_heat_plan_block_json') | default('{}', true) | from_json %}
+        {% set cached_start = block_buffer.get('start') %}
+        {% set cached_start_ts =
+             cached_start | int if cached_start is not none else none %}
+        {% set cached_values = block_buffer.get('raw', []) %}
+        {% set cached_count = block_buffer.get('quarters', 0) | int(0) %}
+
+        {# Preserve elapsed quarters from this block and refresh every known future slot from the
+           latest rolling plan. A missing slot makes the block incomplete; it is never renormalised. #}
+        {% set block_slots = namespace(values=[]) %}
+        {% for offset in range(block_count) %}
+          {% set slot_ts = block_start_ts + offset * 900 %}
+          {% set slot_value = namespace(value=none) %}
+          {% if cached_start_ts == block_start_ts
+                and cached_count == block_count
+                and offset < (cached_values | length) %}
+            {% set slot_value.value = cached_values[offset] %}
+          {% endif %}
+          {% for entry in schedule %}
+            {% if as_timestamp(entry.date) | int == slot_ts %}
+              {% set slot_value.value = entry.p_deferrable1 | float(0) %}
+            {% endif %}
+          {% endfor %}
+          {% set block_slots.values = block_slots.values + [{
+            'ts': slot_ts,
+            'raw': slot_value.value
+          }] %}
+        {% endfor %}
+        {% set block_known = namespace(count=0) %}
+        {% for slot in block_slots.values %}
+          {% if slot.raw is not none %}
+            {% set block_known.count = block_known.count + 1 %}
+          {% endif %}
+        {% endfor %}
+        {% set block_complete = block_known.count == block_count %}
+
+        {# Build every touched block from full slots. Later blocks normally have all future values;
+           the current block combines those with its persisted elapsed slots. #}
+        {% set group_starts = namespace(values=[]) %}
         {% for entry in schedule %}
-          {% set ts = as_timestamp(entry.date) %}
+          {% set ts = as_timestamp(entry.date) | int %}
           {% if ts >= quarter %}
-            {% set point_dt = entry.date | as_datetime %}
-            {% set block_start = point_dt.replace(hour=(point_dt.hour // 2) * 2,
-                                                  minute=0, second=0, microsecond=0).isoformat() %}
-            {% set points.list = points.list + [{
-              'timestamp': entry.date,
-              'ts': ts,
-              'block': block_start,
-              'raw': entry.p_deferrable1 | float(0)
+            {% set group_start = ((ts // block_seconds) * block_seconds) | int %}
+            {% if group_start not in group_starts.values %}
+              {% set group_starts.values = group_starts.values + [group_start] %}
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+        {% set groups = namespace(items=[]) %}
+        {% for group_start in group_starts.values %}
+          {% set group_slots = namespace(values=[]) %}
+          {% for offset in range(block_count) %}
+            {% set slot_ts = group_start + offset * 900 %}
+            {% set slot_value = namespace(value=none) %}
+            {% if group_start == block_start_ts %}
+              {% set slot_value.value = block_slots.values[offset].raw %}
+            {% else %}
+              {% for entry in schedule %}
+                {% if as_timestamp(entry.date) | int == slot_ts %}
+                  {% set slot_value.value = entry.p_deferrable1 | float(0) %}
+                {% endif %}
+              {% endfor %}
+            {% endif %}
+            {% set group_slots.values = group_slots.values + [{
+              'ts': slot_ts,
+              'raw': slot_value.value
             }] %}
-          {% endif %}
+          {% endfor %}
+          {% set known = namespace(count=0, total=0.0) %}
+          {% for slot in group_slots.values %}
+            {% if slot.raw is not none %}
+              {% set known.count = known.count + 1 %}
+              {% set known.total = known.total + slot.raw | float(0) %}
+            {% endif %}
+          {% endfor %}
+          {% set complete = known.count == block_count %}
+          {% set groups.items = groups.items + [{
+            'start': group_start,
+            'slots': group_slots.values,
+            'complete': complete,
+            'total': known.total if complete else none,
+            'mean': (known.total / block_count) if complete else none
+          }] %}
         {% endfor %}
-        {% set groups = namespace(keys=[], values=[]) %}
-        {% for point in points.list %}
-          {% if point.block not in groups.keys %}
-            {% set groups.keys = groups.keys + [point.block] %}
-            {% set groups.values = groups.values + [[]] %}
-          {% endif %}
-          {% set group_idx = groups.keys.index(point.block) %}
-          {% set group_values = groups.values %}
-          {% set groups.values =
-               group_values[:group_idx] + [group_values[group_idx] + [point]]
-               + group_values[group_idx + 1:] %}
-        {% endfor %}
-        {% set stats = namespace(sums=[], means=[]) %}
-        {% for group_values in groups.values %}
-          {% set total = namespace(value=0.0) %}
-          {% for point in group_values %}{% set total.value = total.value + point.raw %}{% endfor %}
-          {% set stats.sums = stats.sums + [total.value] %}
-          {% set stats.means = stats.means + [total.value / (group_values | length)] %}
-        {% endfor %}
-        {% set blocked_groups = namespace(values=[]) %}
-        {% set edge_groups = namespace(values=[]) %}
-        {% for group_values in groups.values %}
-          {% set mean = stats.means[loop.index0] %}
-          {% set total = stats.sums[loop.index0] %}
-          {% set blocked_groups.values = blocked_groups.values + [[mean] * (group_values | length)] %}
-          {% if total <= 0 %}
-            {% set corrected = [0.0] * (group_values | length) %}
-          {% elif mean >= min_power %}
-            {% set corrected = [mean] * (group_values | length) %}
+
+        {# A complete block goes through the directional edge correction. An incomplete block
+           follows its raw quarters and leaves the next block's previous-mean reference unknown. #}
+        {% set corrected = namespace(keys=[], blocked=[], edge=[]) %}
+        {% for group in groups.items %}
+          {% set group_values = namespace(values=[]) %}
+          {% set blocked_values = namespace(values=[]) %}
+          {% if not group.complete %}
+            {% for slot in group.slots %}
+              {% set group_values.values =
+                   group_values.values + [slot.raw | float(0) if slot.raw is not none else 0.0] %}
+              {% set blocked_values.values =
+                   blocked_values.values + [slot.raw | float(0) if slot.raw is not none else 0.0] %}
+            {% endfor %}
+          {% elif group.total <= 0 %}
+            {% set group_values.values = [0.0] * block_count %}
+            {% set blocked_values.values = [0.0] * block_count %}
+          {% elif group.mean >= min_power %}
+            {% set group_values.values = [group.mean] * block_count %}
+            {% set blocked_values.values = [group.mean] * block_count %}
           {% else %}
-            {% set prev_mean = stats.means[loop.index0 - 1]
+            {% set prev_mean = groups.items[loop.index0 - 1].mean
                                if loop.index0 > 0
                                else (previous_power if previous_power > 0 else none) %}
-            {% set next_mean = stats.means[loop.index0 + 1]
-                               if loop.index0 + 1 < (stats.means | length) else none %}
+            {% set next_mean = groups.items[loop.index0 + 1].mean
+                               if loop.index0 + 1 < (groups.items | length) else none %}
             {% set prev_active = prev_mean is not none and prev_mean >= min_power %}
             {% set next_active = next_mean is not none and next_mean >= min_power %}
             {% if next_active and (not prev_active or next_mean >= prev_mean) %}
@@ -995,25 +1083,45 @@ template:
               {% set align_right = false %}
             {% endif %}
             {% set active_quarters =
-                 [1, (total / base_power) | round(0, 'ceil') | int] | max %}
-            {% set active_quarters = [active_quarters, group_values | length] | min %}
+                 [1, (group.total / base_power) | round(0, 'ceil') | int] | max %}
+            {% set active_quarters = [active_quarters, block_count] | min %}
             {% if align_right %}
-              {% set corrected =
-                   [0.0] * ((group_values | length) - active_quarters)
+              {% set group_values.values =
+                   [0.0] * (block_count - active_quarters)
                    + [base_power] * active_quarters %}
             {% else %}
-              {% set corrected =
+              {% set group_values.values =
                    [base_power] * active_quarters
-                   + [0.0] * ((group_values | length) - active_quarters) %}
+                   + [0.0] * (block_count - active_quarters) %}
             {% endif %}
+            {% set blocked_values.values = [group.mean] * block_count %}
           {% endif %}
-          {% set edge_groups.values = edge_groups.values + [corrected] %}
+          {% for slot in group.slots %}
+            {% set corrected.keys = corrected.keys + [slot.ts] %}
+            {% set corrected.blocked =
+                 corrected.blocked + [blocked_values.values[loop.index0]] %}
+            {% set corrected.edge =
+                 corrected.edge + [group_values.values[loop.index0]] %}
+          {% endfor %}
+        {% endfor %}
+
+        {% set points = namespace(list=[]) %}
+        {% for entry in schedule %}
+          {% set ts = as_timestamp(entry.date) | int %}
+          {% if ts >= quarter %}
+            {% set idx = corrected.keys.index(ts) if ts in corrected.keys else none %}
+            {% set points.list = points.list + [{
+              'timestamp': entry.date,
+              'ts': ts,
+              'raw': entry.p_deferrable1 | float(0),
+              'blocked': corrected.blocked[idx] | float(0) if idx is not none else 0.0,
+              'edge': corrected.edge[idx] | float(0) if idx is not none else 0.0
+            }] %}
+          {% endif %}
         {% endfor %}
         {% set raw_edges = namespace(values=[]) %}
-        {% for group_values in edge_groups.values %}
-          {% for value in group_values %}
-            {% set raw_edges.values = raw_edges.values + [value] %}
-          {% endfor %}
+        {% for point in points.list %}
+          {% set raw_edges.values = raw_edges.values + [point.edge] %}
         {% endfor %}
         {% set bridged_edges = namespace(values=raw_edges.values, count=0) %}
         {% for value in raw_edges.values %}
@@ -1030,29 +1138,24 @@ template:
         {% endfor %}
         {% set profile_points = namespace(list=[]) %}
         {% set filtered = namespace(value=seeded_iir) %}
-        {% set point_number = namespace(value=0) %}
-        {% for group_values in groups.values %}
-          {% set group_idx = loop.index0 %}
-          {% for point in group_values %}
-            {% set point_idx = loop.index0 %}
-            {% set target = bridged_edges.values[point_number.value] %}
-            {% if target <= 0 %}
-              {% set filtered.value = 0.0 %}
-            {% else %}
-              {% set filtered.value =
-                   [min_power, filtered.value + 0.6321205588 * (target - filtered.value)] | max %}
-            {% endif %}
-            {% set profile_points.list = profile_points.list + [{
-              'timestamp': point.timestamp,
-              'ts': point.ts,
-              'raw': point.raw | round(0),
-              'blocked': blocked_groups.values[group_idx][point_idx] | round(1),
-              'edge': target | round(1),
-              'edge_unbridged': raw_edges.values[point_number.value] | float(0) | round(1),
-              'iir': filtered.value | round(1)
-            }] %}
-            {% set point_number.value = point_number.value + 1 %}
-          {% endfor %}
+        {% for point in points.list %}
+          {% set point_idx = loop.index0 %}
+          {% set target = bridged_edges.values[point_idx] %}
+          {% if target <= 0 %}
+            {% set filtered.value = 0.0 %}
+          {% else %}
+            {% set filtered.value =
+                 [min_power, filtered.value + alpha * (target - filtered.value)] | max %}
+          {% endif %}
+          {% set profile_points.list = profile_points.list + [{
+            'timestamp': point.timestamp,
+            'ts': point.ts,
+            'raw': point.raw | round(0),
+            'blocked': point.blocked | round(1),
+            'edge': target | round(1),
+            'edge_unbridged': raw_edges.values[point_idx] | float(0) | round(1),
+            'iir': filtered.value | round(1)
+          }] %}
         {% endfor %}
         {% set current = namespace(found=false, value=0.0, raw=0.0, edge=0.0, iir=0.0) %}
         {% for point in profile_points.list %}
@@ -1122,7 +1225,12 @@ template:
           'model_cop': space_cop,
           'thermal_power': q_thermal,
           'quarter': quarter | int,
-          'alpha': 0.6321205588,
+          'alpha': alpha,
+          'block_minutes': block_count * 15,
+          'block_quarters': block_count,
+          'block_start': block_start_dt.isoformat(),
+          'block_raw': block_slots.values | map(attribute='raw') | list,
+          'block_complete': block_complete,
           'min_power': min_power,
           'single_quarter_bridges': bridged_edges.count
         } }}
@@ -1152,11 +1260,65 @@ template:
           thermal_power: "{{ heat_profile.thermal_power }}"
           quarter: "{{ heat_profile.quarter }}"
           filter_alpha: "{{ heat_profile.alpha }}"
+          block_minutes: "{{ heat_profile.block_minutes }}"
+          block_quarters: "{{ heat_profile.block_quarters }}"
+          block_start: "{{ heat_profile.block_start }}"
+          block_raw: "{{ heat_profile.block_raw }}"
+          block_complete: "{{ heat_profile.block_complete }}"
           min_power: "{{ heat_profile.min_power }}"
           single_quarter_bridges: "{{ heat_profile.single_quarter_bridges }}"
           points: "{{ heat_profile.points }}"
 
 automation:
+  # Persist the processed profile's complete-block cache in a restored input_text. The trigger
+  # template itself is not a reliable place to carry custom attributes across every render, and a
+  # normal HA restart must not rebuild the block from its remaining future quarters.
+  - id: therma_v_heat_plan_block_buffer_update
+    alias: "Therma V heat plan block buffer update"
+    description: "Persists the raw slots of the current processed heat-plan block"
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id: sensor.therma_v_heat_plan_processed_power
+        attribute: block_raw
+      - trigger: time_pattern
+        minutes: "/1"
+        seconds: 15
+      - trigger: homeassistant
+        event: start
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ has_value('sensor.therma_v_heat_plan_processed_power')
+             and state_attr('sensor.therma_v_heat_plan_processed_power', 'block_start') is not none
+             and state_attr('sensor.therma_v_heat_plan_processed_power', 'block_quarters') | is_number
+             and state_attr('sensor.therma_v_heat_plan_processed_power', 'block_complete')
+                 | default(false) | bool }}
+    actions:
+      - variables:
+          wanted: >-
+            {% set start = as_timestamp(
+                 state_attr('sensor.therma_v_heat_plan_processed_power', 'block_start')) | int %}
+            {{ {
+              'start': start,
+              'quarters': state_attr(
+                 'sensor.therma_v_heat_plan_processed_power', 'block_quarters') | int,
+              'raw': state_attr(
+                 'sensor.therma_v_heat_plan_processed_power', 'block_raw') | default([])
+            } | to_json }}
+          current: >-
+            {{ states('input_text.therma_v_heat_plan_block_json') | default('{}', true) }}
+      - if:
+          - condition: template
+            value_template: "{{ wanted != current }}"
+        then:
+          - action: input_text.set_value
+            target:
+              entity_id: input_text.therma_v_heat_plan_block_json
+            data:
+              value: "{{ wanted }}"
+
   # Persist the physical start independently of template reloads and HA restarts. The temperature
   # control/MPC can then carry the remaining min-on steps over a rolling horizon.
   - id: therma_v_supervisor_space_run_started_update
@@ -1228,7 +1390,9 @@ automation:
           counter: "{{ states('sensor.therma_v_space_heating_delivered_heat') }}"
           previous: "{{ states('input_number.therma_v_house_prior_heat_previous_counter') }}"
           last_step: "{{ state_attr('input_datetime.therma_v_house_prior_heat_step_at', 'timestamp') }}"
-          raw_buffer: "{{ states('input_text.therma_v_house_prior_heat_json') }}"
+          raw_buffer: >-
+            {{ states('input_text.therma_v_house_prior_heat_json')
+               | default('[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]', true) }}
       - choose:
           - conditions:
               - condition: template
@@ -1270,8 +1434,10 @@ automation:
                 data:
                   timestamp: "{{ now().timestamp() }}"
 
-  # Advance the persisted 15 min heat-plan IIR exactly once per quarter. The plan may change every
-  # quarter, but the filter state and previous edge must survive MPC updates and HA restarts.
+  # Advance the persisted 15 min heat-plan IIR exactly once per quarter. Its alpha comes from the
+  # processed sensor, whose time constant is one sixth of the configured minimum-run block. The
+  # plan may change every quarter, but the filter state and previous edge must survive MPC updates
+  # and HA restarts.
   - id: therma_v_heat_plan_iir_update
     alias: "Therma V heat plan IIR update"
     description: "Advances the persistent heat-plan IIR once per quarter"
@@ -1316,6 +1482,9 @@ automation:
           target: >-
             {{ state_attr('sensor.therma_v_heat_plan_processed_power', 'current_edge')
                | float(0) }}
+          alpha: >-
+            {{ state_attr('sensor.therma_v_heat_plan_processed_power', 'filter_alpha')
+               | float(0.77686983985) }}
       - if:
           - condition: template
             value_template: >-
@@ -1326,7 +1495,7 @@ automation:
               next_power: >-
                 {{ 0.0 if target <= 0 else
                    max(580.0, previous | float(0)
-                       + 0.6321205588 * ((target | float(0)) - (previous | float(0)))) }}
+                       + alpha * ((target | float(0)) - (previous | float(0)))) }}
           - action: input_number.set_value
             target:
               entity_id: input_number.therma_v_heat_plan_iir_power
@@ -1536,6 +1705,13 @@ automation:
           dhw_started: >-
             {{ is_state('binary_sensor.therma_v_dhw_heating_state', 'on')
                and is_state('binary_sensor.therma_v_compressor_state', 'on') }}
+          run_active: >-
+            {{ is_state('binary_sensor.therma_v_dhw_run_active', 'on') }}
+          minimum_hold: >-
+            {{ is_state('binary_sensor.therma_v_dhw_minimum_run_hold', 'on') }}
+          run_target: >-
+            {{ states('input_number.therma_v_supervisor_dhw_run_target')
+               | float(normal_target) }}
           start_useful: >-
             {{ plan_start_at not in [none, '']
                and temp <= (plan_start | float(0)) + (start_margin | float(0))
@@ -1586,20 +1762,26 @@ automation:
               - action: switch.turn_on
                 target:
                   entity_id: switch.therma_v_dhw_on_off
-      # Follow every fresh positive plan target, including changes while a minimum-run hold is
-      # active. A later OFF plan leaves this as the last valid target.
+      # Follow a fresh positive plan target only while the physical DHW run or its minimum-run hold
+      # is active. A completed run must not be re-armed by a stale current-quarter plan value.
       - if:
           - condition: template
             value_template: >-
               {{ (fresh | bool)
                  and (hp_power | float(0)) > (threshold | float(100))
-                 and (plan_start_at not in [none, '']) }}
+                 and (plan_start_at not in [none, ''])
+                 and ((run_active | bool) or (minimum_hold | bool)) }}
         then:
-          - action: input_number.set_value
-            target:
-              entity_id: input_number.therma_v_supervisor_dhw_run_target
-            data:
-              value: "{{ plan_target }}"
+          - if:
+              - condition: template
+                value_template: >-
+                  {{ (plan_target | float(0) - run_target | float(0)) | abs >= 0.1 }}
+            then:
+              - action: input_number.set_value
+                target:
+                  entity_id: input_number.therma_v_supervisor_dhw_run_target
+                data:
+                  value: "{{ plan_target }}"
       - choose:
           - conditions:
               - condition: template
@@ -1755,7 +1937,8 @@ automation:
           - condition: template
             value_template: >-
               {{ not (run_active | bool)
-                 and (temp | float(0)) >= (run_target | float(50)) - 0.5 }}
+                 and (temp | float(0)) >= (run_target | float(50)) - 0.5
+                 and (hp_power | float(0)) <= (threshold | float(100)) }}
         then:
           - if:
               - condition: template

@@ -205,9 +205,10 @@ template:
         availability: >-
           {{ has_value('switch.therma_v_dhw_on_off')
              and has_value('sensor.therma_v_dhw_temperature')
-             and has_value('sensor.therma_v_dhw_target_temperature') }}
+             and has_value('input_number.therma_v_dhw_target_request') }}
         current_temperature: "{{ states('sensor.therma_v_dhw_temperature') }}"
-        target_temperature: "{{ states('sensor.therma_v_dhw_target_temperature') }}"
+        # Show the user's service request; the chase and register readback stay separate.
+        target_temperature: "{{ states('input_number.therma_v_dhw_target_request') }}"
         hvac_modes: "{{ ['off', 'auto'] }}"
         hvac_mode: "{{ 'off' if is_state('switch.therma_v_dhw_on_off', 'off') else 'auto' }}"
         set_temperature:
