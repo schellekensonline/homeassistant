@@ -52,6 +52,10 @@ input_boolean:
     name: "Therma V supervisor DHW finish/recovery"
     icon: mdi:shield-refresh
     initial: false
+  therma_v_supervisor_space_start_pending:
+    name: "Therma V supervisor space start pending"
+    icon: mdi:timer-sand
+    # No initial: keep a scheduled start committed across a Home Assistant restart.
 
 input_datetime:
   therma_v_supervisor_mode_since:
@@ -80,6 +84,14 @@ input_datetime:
     has_time: true
   therma_v_supervisor_space_minimum_run_until:
     name: "Therma V space minimum run until"
+    has_date: true
+    has_time: true
+  therma_v_supervisor_space_start_pending_since:
+    name: "Therma V space start pending since"
+    has_date: true
+    has_time: true
+  therma_v_supervisor_space_start_deadline:
+    name: "Therma V space start deadline"
     has_date: true
     has_time: true
   therma_v_supervisor_dhw_minimum_run_until:
@@ -164,6 +176,15 @@ input_number:
     mode: box
     unit_of_measurement: "min"
     icon: mdi:timer-lock-outline
+  therma_v_supervisor_space_start_wait_minutes:
+    name: "Therma V space start wait minutes"
+    min: 5
+    max: 60
+    step: 5
+    initial: 25
+    mode: box
+    unit_of_measurement: "min"
+    icon: mdi:timer-sand
   therma_v_supervisor_dhw_minimum_run_minutes:
     name: "Therma V DHW minimum run minutes"
     min: 0
@@ -889,6 +910,12 @@ template:
           dhw_enabled: "{{ is_state('input_boolean.therma_v_supervisor_dhw_enabled', 'on') }}"
           space_heat_enabled: "{{ is_state('input_boolean.therma_v_supervisor_space_heat_enabled', 'on') }}"
           cooling_enabled: "{{ is_state('input_boolean.therma_v_supervisor_cooling_enabled', 'on') }}"
+          space_start_pending: >-
+            {{ is_state('input_boolean.therma_v_supervisor_space_start_pending', 'on') }}
+          space_start_pending_since: >-
+            {{ state_attr('input_datetime.therma_v_supervisor_space_start_pending_since', 'timestamp') }}
+          space_start_deadline: >-
+            {{ state_attr('input_datetime.therma_v_supervisor_space_start_deadline', 'timestamp') }}
           dhw_plan_power: "{{ states('sensor.p_deferrable0') | float(0) }}"
           booster_plan_power: "{{ states('sensor.p_deferrable2') | float(0) }}"
           dhw_temperature: "{{ states('sensor.therma_v_dhw_temperature') | float(0) }}"
@@ -930,6 +957,7 @@ template:
         entity_id:
           - sensor.p_deferrable1
           - input_text.therma_v_heat_plan_block_json
+          - input_boolean.therma_v_supervisor_space_start_pending
           - input_select.therma_v_control_strategy
           - input_boolean.therma_v_supervisor_space_heat_enabled
           - input_boolean.therma_v_supervisor_cooling_enabled
@@ -958,6 +986,8 @@ template:
              quarter_dt - timedelta(seconds=(quarter - block_start_ts)) %}
         {% set block_buffer =
              states('input_text.therma_v_heat_plan_block_json') | default('{}', true) | from_json %}
+        {% set pending_start =
+             is_state('input_boolean.therma_v_supervisor_space_start_pending', 'on') %}
         {% set cached_start = block_buffer.get('start') %}
         {% set cached_start_ts =
              cached_start | int if cached_start is not none else none %}
@@ -976,7 +1006,9 @@ template:
             {% set slot_value.value = cached_values[offset] %}
           {% endif %}
           {% for entry in schedule %}
-            {% if as_timestamp(entry.date) | int == slot_ts %}
+            {% if as_timestamp(entry.date) | int == slot_ts
+                  and not (pending_start and cached_start_ts == block_start_ts
+                           and cached_count == block_count) %}
               {% set slot_value.value = entry.p_deferrable1 | float(0) %}
             {% endif %}
           {% endfor %}
@@ -1231,6 +1263,7 @@ template:
           'block_start': block_start_dt.isoformat(),
           'block_raw': block_slots.values | map(attribute='raw') | list,
           'block_complete': block_complete,
+          'start_pending': pending_start,
           'min_power': min_power,
           'single_quarter_bridges': bridged_edges.count
         } }}
@@ -1265,6 +1298,7 @@ template:
           block_start: "{{ heat_profile.block_start }}"
           block_raw: "{{ heat_profile.block_raw }}"
           block_complete: "{{ heat_profile.block_complete }}"
+          start_pending: "{{ heat_profile.start_pending }}"
           min_power: "{{ heat_profile.min_power }}"
           single_quarter_bridges: "{{ heat_profile.single_quarter_bridges }}"
           points: "{{ heat_profile.points }}"
@@ -1511,6 +1545,112 @@ automation:
               entity_id: input_datetime.therma_v_heat_plan_iir_step_at
             data:
               timestamp: "{{ quarter }}"
+
+  # The compressor has a physical restart delay. A fresh positive space plan arms a persistent
+  # pending-start commitment so the rolling MPC cannot cancel that block before the unit starts.
+  # It clears when the compressor starts, when EMHASS ownership ends, or at the configured deadline.
+  - id: therma_v_supervisor_space_start_pending_update
+    alias: "Therma V supervisor space start pending update"
+    description: "Keeps an accepted space-heating start pending until the compressor starts or times out"
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id:
+          - sensor.p_deferrable1
+          - input_select.therma_v_control_strategy
+          - input_boolean.therma_v_supervisor_space_heat_enabled
+          - input_boolean.therma_v_supervisor_cooling_enabled
+          - switch.therma_v_heating_cooling_on_off
+          - binary_sensor.therma_v_hvac_run_active
+          - binary_sensor.therma_v_heat_plan_ready
+          - sensor.therma_v_operation_mode
+      - trigger: homeassistant
+        event: start
+      - trigger: time_pattern
+        minutes: "/1"
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ has_value('sensor.p_deferrable1')
+             and has_value('binary_sensor.therma_v_hvac_run_active')
+             and has_value('binary_sensor.therma_v_heat_plan_ready')
+             and has_value('sensor.therma_v_operation_mode')
+             and has_value('input_boolean.therma_v_supervisor_space_start_pending')
+             and has_value('input_datetime.therma_v_supervisor_space_start_deadline')
+             and has_value('input_number.therma_v_supervisor_space_start_wait_minutes') }}
+    actions:
+      - variables:
+          hp_power: "{{ states('sensor.p_deferrable1') | float(0) }}"
+          threshold: "{{ states('input_number.therma_v_supervisor_power_threshold') | float(100) }}"
+          running: "{{ is_state('binary_sensor.therma_v_hvac_run_active', 'on') }}"
+          pending: "{{ is_state('input_boolean.therma_v_supervisor_space_start_pending', 'on') }}"
+          mode: "{{ states('sensor.therma_v_operation_mode') | int(-1) }}"
+          gate: >-
+            {{ is_state('input_boolean.therma_v_supervisor_space_heat_enabled', 'on')
+               if (mode | int(-1)) == 4
+               else (is_state('input_boolean.therma_v_supervisor_cooling_enabled', 'on')
+                     if (mode | int(-1)) == 0 else false) }}
+          allowed: >-
+            {{ is_state('input_select.therma_v_control_strategy', 'EMHASS')
+               and is_state('binary_sensor.therma_v_heat_plan_ready', 'on')
+               and is_state('switch.therma_v_heating_cooling_on_off', 'on')
+               and (gate | bool) }}
+          deadline: >-
+            {{ state_attr('input_datetime.therma_v_supervisor_space_start_deadline', 'timestamp') }}
+          pending_since: >-
+            {{ state_attr('input_datetime.therma_v_supervisor_space_start_pending_since', 'timestamp') }}
+          wait_minutes: >-
+            {{ states('input_number.therma_v_supervisor_space_start_wait_minutes') | float(25) }}
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ not (allowed | bool) or (running | bool) }}"
+            sequence:
+              - action: input_boolean.turn_off
+                target:
+                  entity_id: input_boolean.therma_v_supervisor_space_start_pending
+              - action: input_datetime.set_datetime
+                target:
+                  entity_id: input_datetime.therma_v_supervisor_space_start_deadline
+                data:
+                  timestamp: "{{ now().timestamp() }}"
+          - conditions:
+              - condition: template
+                value_template: >-
+                  {{ (hp_power | float(0)) > (threshold | float(100))
+                     and not (pending | bool)
+                     and (pending_since is none
+                          or now().timestamp() >= (pending_since | float(0))
+                             + (wait_minutes | float(25)) * 60) }}
+            sequence:
+              - action: input_datetime.set_datetime
+                target:
+                  entity_id: input_datetime.therma_v_supervisor_space_start_pending_since
+                data:
+                  timestamp: "{{ now().timestamp() }}"
+              - action: input_datetime.set_datetime
+                target:
+                  entity_id: input_datetime.therma_v_supervisor_space_start_deadline
+                data:
+                  timestamp: "{{ now().timestamp() + (wait_minutes | float(25)) * 60 }}"
+              - action: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.therma_v_supervisor_space_start_pending
+          - conditions:
+              - condition: template
+                value_template: >-
+                  {{ (pending | bool) and deadline is not none
+                     and now().timestamp() >= (deadline | float(0)) }}
+            sequence:
+              - action: input_boolean.turn_off
+                target:
+                  entity_id: input_boolean.therma_v_supervisor_space_start_pending
+              - action: input_datetime.set_datetime
+                target:
+                  entity_id: input_datetime.therma_v_supervisor_space_start_pending_since
+                data:
+                  timestamp: "{{ now().timestamp() }}"
 
   # A physical compressor start arms a service-specific minimum run. Zero minutes disables it.
   # The timestamp is persisted, so a Home Assistant restart does not erase an in-flight hold.
