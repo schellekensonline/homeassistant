@@ -3,6 +3,8 @@
 # runs it every 15 minutes and publishes the result.
 rest_command:
   # Short-horizon MPC optimisation, run every 15 minutes.
+  # Call this through script.emhass_live_optimization: EMHASS 0.18.9 rejects overlapping live
+  # optimizations with HTTP 429, and the shared queued script also owns the busy retry.
   emhass_naive_mpc_optim:
     url: "http://localhost:5000/action/naive-mpc-optim"
     method: POST
@@ -90,14 +92,32 @@ automation:
       - action: script.emhass_log_payload_warnings
         data:
           label: "MPC"
-      - action: rest_command.emhass_naive_mpc_optim
+      - action: script.emhass_live_optimization
         data:
-          emhass_payload: "{{ mpc_payload.body }}"
+          plan: mpc
+          payload: "{{ mpc_payload.body }}"
         # The response variable is only set when the call succeeded, so an undefined
         # variable means the call never got an answer; an answer with a status other than
         # 200 (EMHASS rejecting the payload) is a failure too. Both get one retry.
         response_variable: mpc_response
         continue_on_error: true
+      # The shared script queues HA calls, so a persistent 429 means another live optimization
+      # still owns EMHASS. Skip this quarter instead of treating it as an infeasible heat plan.
+      - if:
+          - condition: template
+            value_template: "{{ mpc_response.status | default(0) | int(0) == 429 }}"
+        then:
+          - action: system_log.write
+            data:
+              level: warning
+              message: >-
+                EMHASS still busy after the shared live-run queue; this MPC tick was skipped.
+                The previous plan remains authoritative.
+          - action: logbook.log
+            data:
+              name: EMHASS
+              message: "MPC skipped: EMHASS remained busy after queued retries"
+          - stop: "EMHASS busy; MPC tick skipped without changing the plan"
       # Failure path: keep the full thermal model and first reduce only its plan-side minimum
       # on-time, one quarter at a time. The measured elapsed state is never rewritten.
       - if:
@@ -121,9 +141,10 @@ automation:
               - wait_template: "{{ is_state('binary_sensor.emhass_online', 'on') }}"
                 timeout: "00:05:00"
                 continue_on_timeout: true
-              - action: rest_command.emhass_naive_mpc_optim
+              - action: script.emhass_live_optimization
                 data:
-                  emhass_payload: "{{ mpc_payload.body }}"
+                  plan: mpc
+                  payload: "{{ mpc_payload.body }}"
                 response_variable: mpc_retry
                 continue_on_error: true
               - if:
@@ -159,9 +180,10 @@ automation:
                   {{ mpc_response is defined
                      and mpc_response.status | default(0) | int(0) != 200 }}
             then:
-              - action: rest_command.emhass_naive_mpc_optim
+              - action: script.emhass_live_optimization
                 data:
-                  emhass_payload: "{{ mpc_payload.body }}"
+                  plan: mpc
+                  payload: "{{ mpc_payload.body }}"
                 response_variable: mpc_retry
                 continue_on_error: true
               - if:
@@ -221,9 +243,10 @@ automation:
                         dhw_min_on_steps: "{{ repeat.item }}"
                         dhw_booster_enabled: "{{ disinfection_booster_available }}"
                       response_variable: mpc_payload_dhw_reduced
-                    - action: rest_command.emhass_naive_mpc_optim
+                    - action: script.emhass_live_optimization
                       data:
-                        emhass_payload: "{{ mpc_payload_dhw_reduced.body }}"
+                        plan: mpc
+                        payload: "{{ mpc_payload_dhw_reduced.body }}"
                       response_variable: mpc_retry
                       continue_on_error: true
                     - if:
@@ -254,9 +277,10 @@ automation:
                   dhw_min_on_steps: 0
                   dhw_booster_enabled: true
                 response_variable: mpc_payload_dhw_booster
-              - action: rest_command.emhass_naive_mpc_optim
+              - action: script.emhass_live_optimization
                 data:
-                  emhass_payload: "{{ mpc_payload_dhw_booster.body }}"
+                  plan: mpc
+                  payload: "{{ mpc_payload_dhw_booster.body }}"
                 response_variable: mpc_retry
                 continue_on_error: true
               - if:
@@ -323,9 +347,10 @@ automation:
                         dhw_min_on_steps: 0
                         dhw_booster_enabled: true
                       response_variable: mpc_payload_reduced
-                    - action: rest_command.emhass_naive_mpc_optim
+                    - action: script.emhass_live_optimization
                       data:
-                        emhass_payload: "{{ mpc_payload_reduced.body }}"
+                        plan: mpc
+                        payload: "{{ mpc_payload_reduced.body }}"
                       response_variable: mpc_retry
                       continue_on_error: true
                     - if:
@@ -356,9 +381,10 @@ automation:
               plan: mpc
               thermal: false
             response_variable: mpc_payload_fallback
-          - action: rest_command.emhass_naive_mpc_optim
+          - action: script.emhass_live_optimization
             data:
-              emhass_payload: "{{ mpc_payload_fallback.body }}"
+              plan: mpc
+              payload: "{{ mpc_payload_fallback.body }}"
             response_variable: mpc_retry
             continue_on_error: true
           - choose:
@@ -376,9 +402,10 @@ automation:
                       sequence:
                         - delay:
                             seconds: 120
-                        - action: rest_command.emhass_naive_mpc_optim
+                        - action: script.emhass_live_optimization
                           data:
-                            emhass_payload: "{{ mpc_payload.body }}"
+                            plan: mpc
+                            payload: "{{ mpc_payload.body }}"
                           response_variable: mpc_retry
                           continue_on_error: true
                         - if:

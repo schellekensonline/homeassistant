@@ -5,6 +5,7 @@
 rest_command:
   # Day plan over the coming day. It deliberately uses the naive-MPC endpoint because that action
   # honours prediction_horizon; only its timeout differs from the quarter-hour MPC.
+  # Call this through script.emhass_live_optimization so it cannot overlap a live MPC.
   emhass_dayahead_optim:
     url: "http://localhost:5000/action/naive-mpc-optim"
     method: POST
@@ -121,12 +122,27 @@ automation:
       # works at any moment (it shortens the window when tomorrow's prices are not in yet) - that
       # is what keeps this automation safe to trigger by hand. The day-ahead action would insist on
       # a full 24 h of prices and reject the run outside the ~13:00-23:45 window.
-      - action: rest_command.emhass_dayahead_optim
+      - action: script.emhass_live_optimization
         data:
-          emhass_payload: "{{ dayahead_payload.body }}"
+          plan: dayahead
+          payload: "{{ dayahead_payload.body }}"
         # Same as the MPC: no answer, or an answer without status 200, means the run failed.
         response_variable: dayahead_response
         continue_on_error: true
+      # A busy external/manual live run is not a reason to rebuild without thermal models.
+      # The scheduled day-plan automation retries at its next five-minute slot.
+      - if:
+          - condition: template
+            value_template: "{{ dayahead_response.status | default(0) | int(0) == 429 }}"
+        then:
+          - action: system_log.write
+            data:
+              message: >-
+                EMHASS still busy after the shared live-run queue; the day plan was not rebuilt.
+                The existing day plan remains unchanged.
+              level: warning
+              logger: emhass.prices
+          - stop: "EMHASS busy; day-plan run skipped without thermal fallback"
       - if:
           - condition: template
             value_template: >-
@@ -150,9 +166,10 @@ automation:
               plan: dayahead
               thermal: false
             response_variable: dayahead_payload_fallback
-          - action: rest_command.emhass_dayahead_optim
+          - action: script.emhass_live_optimization
             data:
-              emhass_payload: "{{ dayahead_payload_fallback.body }}"
+              plan: dayahead
+              payload: "{{ dayahead_payload_fallback.body }}"
             response_variable: dayahead_retry
             continue_on_error: true
           - if:
