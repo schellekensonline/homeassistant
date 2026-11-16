@@ -596,6 +596,89 @@ script:
         timeout: "00:05:00"
         continue_on_timeout: true
 
+  # EMHASS 0.18.9 accepts one live optimization at a time and rejects overlap with HTTP 429.
+  # The MPC and day plan can otherwise start together after a restart. Queue every HA-originated
+  # live call here so the second waits for the first instead of consuming the solver retry ladder.
+  emhass_live_optimization:
+    alias: "EMHASS live optimization"
+    description: "Serializes MPC/day-plan calls and returns the underlying HTTP response."
+    mode: queued
+    max: 3
+    fields:
+      plan:
+        name: "Which live action"
+        description: "'mpc' or 'dayahead'."
+        default: "mpc"
+        selector:
+          select:
+            options: ["mpc", "dayahead"]
+      payload:
+        name: "Rendered EMHASS payload"
+        description: "The body returned by script.emhass_build_payload."
+        required: true
+    sequence:
+      - variables:
+          live_plan: "{{ plan | default('mpc', true) }}"
+          live_payload: "{{ payload }}"
+          live_response:
+            status: 0
+            content: "no response"
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ live_plan == 'mpc' }}"
+            sequence:
+              - action: rest_command.emhass_naive_mpc_optim
+                data:
+                  emhass_payload: "{{ live_payload }}"
+                response_variable: live_response
+                continue_on_error: true
+          - conditions:
+              - condition: template
+                value_template: "{{ live_plan == 'dayahead' }}"
+            sequence:
+              - action: rest_command.emhass_dayahead_optim
+                data:
+                  emhass_payload: "{{ live_payload }}"
+                response_variable: live_response
+                continue_on_error: true
+      # A normal solve takes about 7-15 s. These retries only cover a live request from outside
+      # this queue, for example a manual run while the scheduled call is active.
+      - if:
+          - condition: template
+            value_template: "{{ live_response.status | default(0) | int(0) == 429 }}"
+        then:
+          - repeat:
+              until:
+                - condition: template
+                  value_template: >-
+                    {{ live_response.status | default(0) | int(0) != 429
+                       or repeat.index >= 3 }}
+              sequence:
+                - delay:
+                    seconds: 5
+                - choose:
+                    - conditions:
+                        - condition: template
+                          value_template: "{{ live_plan == 'mpc' }}"
+                      sequence:
+                        - action: rest_command.emhass_naive_mpc_optim
+                          data:
+                            emhass_payload: "{{ live_payload }}"
+                          response_variable: live_response
+                          continue_on_error: true
+                    - conditions:
+                        - condition: template
+                          value_template: "{{ live_plan == 'dayahead' }}"
+                      sequence:
+                        - action: rest_command.emhass_dayahead_optim
+                          data:
+                            emhass_payload: "{{ live_payload }}"
+                          response_variable: live_response
+                          continue_on_error: true
+      - stop: ""
+        response_variable: live_response
+
   # Price-data guard, shared by the MPC and the day-ahead automation. Returns 'run' or 'skip'
   # so the caller can decide whether the optimisation makes sense; the caller keeps the
   # optimisation itself.
