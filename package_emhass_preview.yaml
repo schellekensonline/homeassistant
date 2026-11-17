@@ -7,6 +7,8 @@ rest_command:
     url: "http://localhost:5000/api/v1/dry-run/naive-mpc-optim"
     method: POST
     timeout: 150
+    headers:
+      Authorization: !env_var EMHASS_BEARER
     content_type: "application/json"
     payload: >-
       {%- set body = emhass_payload | default({'error': 'emhass_payload was not passed by the caller'}) -%}

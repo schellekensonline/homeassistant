@@ -16,6 +16,8 @@ rest_command:
     # The day-plan payload overrides EMHASS's 45 s solver limit to 90 s. Keep this HTTP timeout
     # above that so Home Assistant does not abandon a solve that is still making progress.
     timeout: 150
+    headers:
+      Authorization: !env_var EMHASS_BEARER
     content_type: "application/json"
     # The shared payload script builds the body. The fallback is deliberately invalid so a caller
     # that forgets `emhass_payload` fails loudly instead of sending an empty optimisation request.

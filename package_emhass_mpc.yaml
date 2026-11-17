@@ -11,6 +11,8 @@ rest_command:
     # Same reason as the day-ahead command (package_emhass_dayahead.yaml): give EMHASS room to
     # answer, and enough room for the run that retrains the adjusted-PV model (see there).
     timeout: 90
+    headers:
+      Authorization: !env_var EMHASS_BEARER
     content_type: "application/json"
     # The shared payload script builds the body; `emhass_payload` arrives as service data and the
     # fallback intentionally fails inside EMHASS if the caller omits it.

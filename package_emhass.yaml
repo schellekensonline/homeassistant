@@ -525,6 +525,8 @@ rest_command:
   emhass_publish:
     url: "http://localhost:5000/action/publish-data"
     method: POST
+    headers:
+      Authorization: !env_var EMHASS_BEARER
     content_type: "application/json"
     # The MPC publishes the live result onto the shared sensors. The day-ahead automation passes
     # `publish_prefix: "dayahead_"`, which makes EMHASS post the entity files that run saved
@@ -554,11 +556,15 @@ rest_command:
     url: "http://localhost:5000/get-config"
     method: GET
     timeout: 60
+    headers:
+      Authorization: !env_var EMHASS_BEARER
     content_type: "application/json"
   emhass_set_config:
     url: "http://localhost:5000/set-config"
     method: POST
     timeout: 60
+    headers:
+      Authorization: !env_var EMHASS_BEARER
     content_type: "application/json"
     payload: "{{ config_json }}"
 

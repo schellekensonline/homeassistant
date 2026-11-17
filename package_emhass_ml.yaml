@@ -27,6 +27,8 @@ rest_command:
     url: "http://localhost:5000/action/forecast-model-fit"
     method: POST
     timeout: 120
+    headers:
+      Authorization: !env_var EMHASS_BEARER
     content_type: "application/json"
     payload: >-
       {"model_type": "load_forecast",
@@ -41,6 +43,8 @@ rest_command:
     url: "http://localhost:5000/action/forecast-model-predict"
     method: POST
     timeout: 120
+    headers:
+      Authorization: !env_var EMHASS_BEARER
     content_type: "application/json"
     payload: >-
       {"model_type": "load_forecast", "model_predict_publish": true}
