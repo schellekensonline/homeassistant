@@ -14,19 +14,60 @@ template:
         unit_of_measurement: "W"
         device_class: power
         state_class: measurement
-        availability: >
+        # A few-second Sessy/GoodWe dropout must not poison the rolling ML window. Hold the last
+        # complete four-source snapshot for at most five minutes; a longer outage stays
+        # unavailable so EMHASS still fails closed instead of accepting stale invented load.
+        availability: >-
           {% set tot_p1  = states('sensor.p1_meter_3c39e72e6af0_active_power') | float("unknown") %}
           {% set tot_pv  = states('sensor.goodwe_total_pv_input_power') | float("unknown") %}
           {% set tot_bat = states('sensor.sessy_grid_total_power') | float("unknown") %}
           {% set tot_hp  = states('sensor.therma_v_electric_power') | float("unknown") %}
-          {{ tot_p1|is_number and tot_pv|is_number and tot_bat|is_number and tot_hp|is_number }}
+          {% set live_ready =
+               tot_p1 | is_number and tot_pv | is_number
+               and tot_bat | is_number and tot_hp | is_number %}
+          {% set snapshot_at =
+               state_attr('input_datetime.emhass_power_input_snapshot_at', 'timestamp') %}
+          {% set snapshot_text = states('input_text.emhass_power_input_snapshot') %}
+          {% set snapshot =
+               snapshot_text | from_json
+               if snapshot_text not in ['unknown', 'unavailable', 'none', ''] else {} %}
+          {% set snapshot_ready =
+               snapshot_at is not none
+               and now().timestamp() - (snapshot_at | float(0)) <= 300
+               and snapshot.get('p1') | is_number
+               and snapshot.get('pv') | is_number
+               and snapshot.get('bat') | is_number
+               and snapshot.get('hp') | is_number %}
+          {{ live_ready or snapshot_ready }}
         state: >-
           {# All terms use "positive = delivering" so they add up to the house consumption #}
-          {% set tot_p1   = states('sensor.p1_meter_3c39e72e6af0_active_power') | float(0) %}  {# positive = import from grid #}
-          {% set tot_pv   = states('sensor.goodwe_total_pv_input_power') | float(0) %}         {# positive = PV production #}
-          {% set tot_bat  = states('sensor.sessy_grid_total_power') | float(0) %}              {# positive = battery discharge #}
-          {% set tot_hp   = states('sensor.therma_v_electric_power') | float(0) %}             {# positive = heatpump consumption #}
-
+          {% set live_p1  = states('sensor.p1_meter_3c39e72e6af0_active_power') | float("unknown") %}
+          {% set live_pv  = states('sensor.goodwe_total_pv_input_power') | float("unknown") %}
+          {% set live_bat = states('sensor.sessy_grid_total_power') | float("unknown") %}
+          {% set live_hp  = states('sensor.therma_v_electric_power') | float("unknown") %}
+          {% set live_ready =
+               live_p1 | is_number and live_pv | is_number
+               and live_bat | is_number and live_hp | is_number %}
+          {% if live_ready %}
+            {% set tot_p1 = live_p1 %}
+            {% set tot_pv = live_pv %}
+            {% set tot_bat = live_bat %}
+            {% set tot_hp = live_hp %}
+          {% else %}
+            {% set snapshot_at =
+                 state_attr('input_datetime.emhass_power_input_snapshot_at', 'timestamp') %}
+            {% set snapshot_text = states('input_text.emhass_power_input_snapshot') %}
+            {% set snapshot =
+                 snapshot_text | from_json
+                 if snapshot_text not in ['unknown', 'unavailable', 'none', ''] else {} %}
+            {% set snapshot_fresh =
+                 snapshot_at is not none
+                 and now().timestamp() - (snapshot_at | float(0)) <= 300 %}
+            {% set tot_p1 = snapshot.get('p1', 0) | float(0) if snapshot_fresh else 0 %}
+            {% set tot_pv = snapshot.get('pv', 0) | float(0) if snapshot_fresh else 0 %}
+            {% set tot_bat = snapshot.get('bat', 0) | float(0) if snapshot_fresh else 0 %}
+            {% set tot_hp = snapshot.get('hp', 0) | float(0) if snapshot_fresh else 0 %}
+          {% endif %}
           {# P1 transients can briefly make the balance negative. #}
           {{ max(tot_p1 + tot_pv + tot_bat - tot_hp, 0) | round(2) }}
 
@@ -434,6 +475,14 @@ input_number:
     mode: box
     unit_of_measurement: "K"
 
+input_text:
+  # Last complete four-source power snapshot used to bridge only short Sessy/GoodWe dropouts.
+  # No initial: Home Assistant must restore the last snapshot across restarts.
+  emhass_power_input_snapshot:
+    name: "EMHASS power input snapshot"
+    max: 255
+    icon: mdi:clock-outline
+
 input_datetime:
   # Date the day plan was last built, set by the scheduled 23:50 run (not by a restart rebuild).
   # The evening retries use it to stop after one run a day, and the 23:55 check reads it to see
@@ -445,6 +494,11 @@ input_datetime:
     has_time: false
     # Never planned: any real date is "older than yesterday", so a restart rebuilds at once.
     initial: "1970-01-01"
+  emhass_power_input_snapshot_at:
+    name: "EMHASS power input snapshot at"
+    icon: mdi:clock-outline
+    has_date: true
+    has_time: true
 
 binary_sensor:
   # EMHASS runs as a separate container. This sensor lets an automation wait until
@@ -458,6 +512,13 @@ binary_sensor:
     # A solve blocks EMHASS's single web worker for several seconds. Ten seconds produced false
     # offline transitions during normal MPC runs; 30 covers the observed 7-10 s solve window.
     timeout: 30
+
+shell_command:
+  # Emergency rollback for the one-off load-history interpolation. The utility runs inside HA,
+  # the only process with direct access to the recorder's MariaDB network. Repair/apply commands
+  # are deliberately not exposed after the migration completed.
+  emhass_load_history_restore: >-
+    python3 /config/scripts/emhass/load-history-repair/emhass_load_history_repair.py restore
 
 rest_command:
   # Publish the latest optimisation results to Home Assistant sensors.
@@ -502,6 +563,52 @@ rest_command:
     payload: "{{ config_json }}"
 
 automation:
+  # Refresh the fallback snapshot only while all four live sources are numeric. The load sensor
+  # reads it only during a short dropout; the timestamp prevents indefinite stale hold.
+  - id: emhass_cache_power_input_snapshot
+    alias: "EMHASS cache power input snapshot"
+    description: "Caches the last complete four-source power input for short dropout recovery"
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: homeassistant
+        event: start
+      - trigger: time_pattern
+        minutes: "/1"
+        seconds: 20
+    conditions:
+      - condition: template
+        value_template: >-
+          {% set p1 = states('sensor.p1_meter_3c39e72e6af0_active_power') | float("unknown") %}
+          {% set pv = states('sensor.goodwe_total_pv_input_power') | float("unknown") %}
+          {% set bat = states('sensor.sessy_grid_total_power') | float("unknown") %}
+          {% set hp = states('sensor.therma_v_electric_power') | float("unknown") %}
+          {{ p1 | is_number and pv | is_number and bat | is_number and hp | is_number }}
+    actions:
+      - variables:
+          snapshot: >-
+            {{ {
+              'p1': states('sensor.p1_meter_3c39e72e6af0_active_power') | float(0),
+              'pv': states('sensor.goodwe_total_pv_input_power') | float(0),
+              'bat': states('sensor.sessy_grid_total_power') | float(0),
+              'hp': states('sensor.therma_v_electric_power') | float(0)
+            } | to_json }}
+      - if:
+          - condition: template
+            value_template: >-
+              {{ snapshot != states('input_text.emhass_power_input_snapshot') }}
+        then:
+          - action: input_text.set_value
+            target:
+              entity_id: input_text.emhass_power_input_snapshot
+            data:
+              value: "{{ snapshot }}"
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.emhass_power_input_snapshot_at
+        data:
+          timestamp: "{{ now().timestamp() | int }}"
+
   # One-shot ownership handover shared by the heat pump and Sessy. The ESS mode is reset because
   # EMHASS assumes nominal heat-pump power; the HP is excluded from ZoM because its actual and
   # planned power are already represented by EMHASS.

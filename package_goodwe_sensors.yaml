@@ -149,11 +149,12 @@ template:
 
 automation:
   # Manual Modbus polling, so nothing is polled overnight while the inverter is off.
-  # Every GoodWe Modbus entity below has scan_interval: 0, which makes this automation
-  # the only reader; it runs every 20 s and only while the sun is above the horizon.
+  # Every GoodWe Modbus entity below has scan_interval: 0. Split the reads so EMHASS-critical
+  # PV/AC voltage, current and frequency values stay on a 20 s cadence without also polling
+  # diagnostics, counters and DC-link values at that rate.
   - id: goodwe_scan_modbus_auto
-    alias: "GoodWe scan Modbus auto"
-    description: "Polls all GoodWe sensor entities while the sun is above the horizon"
+    alias: "GoodWe scan Modbus fast auto"
+    description: "Polls GoodWe PV and AC voltage/current/frequency while the sun is up"
     mode: single
     max_exceeded: silent
     triggers:
@@ -168,19 +169,51 @@ automation:
       # condition: template  # 'day' condition: from dawn to dusk, in typical locations
       # value_template: "{{ state_attr('sun.sun', 'elevation') > -6 }}"
     actions:
-      - variables:
-          # Find entities with sensor.goodwe_
-          goodwe_list: "{{ states.sensor | selectattr('entity_id', 'search', 'sensor.goodwe_') | list | map(attribute='entity_id') | list }}"
-          # Energy counters that don't follow the sensor.goodwe_ naming. The lifetime PV
-          # counter is matched by that search as well since the 2026-10-16 rename; listing it
-          # here keeps the poll explicit (update_entity tolerates the duplicate).
-          other_list:
-            - sensor.today_s_pv_generation
-            - sensor.goodwe_total_pv_generation_raw
       - action: homeassistant.update_entity
         target:
-          # Poll the goodwe entities and the two counters in one call
-          entity_id: "{{goodwe_list+other_list}}"
+          entity_id:
+            - sensor.goodwe_pv1_input_voltage
+            - sensor.goodwe_pv2_input_voltage
+            - sensor.goodwe_pv1_input_current
+            - sensor.goodwe_pv2_input_current
+            - sensor.goodwe_l1_phase_voltage
+            - sensor.goodwe_l2_phase_voltage
+            - sensor.goodwe_l3_phase_voltage
+            - sensor.goodwe_l1_phase_current
+            - sensor.goodwe_l2_phase_current
+            - sensor.goodwe_l3_phase_current
+            - sensor.goodwe_l1_phase_frequency
+            - sensor.goodwe_l2_phase_frequency
+            - sensor.goodwe_l3_phase_frequency
+
+  - id: goodwe_scan_modbus_slow_auto
+    alias: "GoodWe scan Modbus slow auto"
+    description: "Polls GoodWe diagnostics, temperatures, counters and DC links every five minutes"
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: time_pattern
+        minutes: "/5"
+        seconds: "10"
+      - trigger: homeassistant
+        event: start
+    conditions:
+      - condition: state
+        entity_id: sun.sun
+        state: "above_horizon"
+    actions:
+      - action: homeassistant.update_entity
+        target:
+          entity_id:
+            - sensor.goodwe_export_power_limit
+            - sensor.goodwe_error_code
+            - sensor.goodwe_internal_temperature
+            - sensor.today_s_pv_generation
+            - sensor.goodwe_total_pv_generation_raw
+            - sensor.goodwe_work_mode_code
+            - sensor.goodwe_warning_code
+            - sensor.goodwe_dc_link_voltage
+            - sensor.goodwe_dc_link_center_tap_voltage
 
 
 
@@ -195,8 +228,11 @@ modbus:
     host: 10.43.110.10
     port: 502
     delay: 0
-    timeout: 5
-    # message_wait_milliseconds: 100
+    # Keep a short timeout and a small gap between requests so one silent gateway response does
+    # not monopolise the single serial request queue for long. Retries remain HA/Pymodbus's
+    # hard-coded three; Home Assistant does not expose that as a YAML setting.
+    timeout: 3
+    message_wait_milliseconds: 30
 
     sensors:
       # HOLDING REGISTERS
