@@ -22,7 +22,9 @@ sensor:
     resource: !secret sessy_url_eol_ns
     headers:
       Authorization: !secret sessy_auth_basic
-    value_template: "{{ value_json.driver_state }}"
+    # A Sessy 500 body is a {"status": "error", "error": ...} JSON without driver_state; the
+    # default keeps that render from logging a value_json warning on every failed poll.
+    value_template: "{{ value_json.driver_state | default('unknown') }}"
     json_attributes:
       - network_switch
       - inverters
