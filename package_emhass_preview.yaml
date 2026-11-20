@@ -184,7 +184,9 @@ script:
             {% set alpha = 1.0 - 2.718281828459045 ** (-15.0 / tau_minutes) %}
             {% set raw_points = namespace(list=[]) %}
             {% for entry in plan %}
-              {% set hp_w = entry.P_deferrable1 | float(0) %}
+              {# Dry-run answers are shape-guaranteed only in the happy path; default guards keep a
+                 missing key (seen 2026-11-17..19 in the cool dry-run) from aborting the summary. #}
+              {% set hp_w = entry.P_deferrable1 | default(0) | float(0) %}
               {% set point_dt = entry.timestamp | as_datetime | as_local %}
               {% set ts = as_timestamp(point_dt) | int %}
               {% set block_start_ts = ((ts // block_seconds) * block_seconds) | int %}
@@ -324,12 +326,12 @@ script:
             {% for entry in plan %}
               {% set current_idx = loop.index0 %}
               {% set hp_w = (entry.P_deferrable0 if preview_mode == 'dhw'
-                             else entry.P_deferrable1) | float(0) %}
-              {% set booster_w = entry.P_deferrable2 | float(0) if preview_mode == 'dhw' else 0 %}
+                             else entry.P_deferrable1) | default(0) | float(0) %}
+              {% set booster_w = entry.P_deferrable2 | default(0) | float(0) if preview_mode == 'dhw' else 0 %}
               {% set total_w = hp_w + booster_w %}
-              {% set temperature = entry['predicted_temp_heater' ~ heater] | float(0) %}
+              {% set temperature = entry['predicted_temp_heater' ~ heater] | default(0) | float(0) %}
               {% set target = entry['target_temp_heater' ~ heater] | default(none) %}
-              {% set heat_demand_kwh = entry['heating_demand_heater' ~ heater] | float(0) %}
+              {% set heat_demand_kwh = entry['heating_demand_heater' ~ heater] | default(0) | float(0) %}
               {% set t_out = outdoor_plan[current_idx] | default(
                               states('sensor.therma_v_outside_temperature_filtered')) | float(0) %}
               {% if preview_mode == 'cool' %}
