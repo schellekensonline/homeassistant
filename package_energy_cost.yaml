@@ -33,12 +33,19 @@ input_number:
     initial: 0.0165
     mode: box
     unit_of_measurement: "€"
-  electric_energy_vat:
-    name: "Electric energy VAT"
+  electric_energy_buying_vat:
+    name: "Electric energy buying VAT"
     min: 0
     max: 1
     step: 0.01
     initial: 0.21
+    mode: box
+  electric_energy_selling_vat:
+    name: "Electric energy selling VAT"
+    min: 0
+    max: 1
+    step: 0.01
+    initial: 0.00
     mode: box
 
 template:
@@ -58,14 +65,14 @@ template:
           {% set buy_fee    = states('input_number.electric_energy_purchasing_fee_ex') | float(0) %}
           {% set energy_tax = states('input_number.electric_energy_tax_ex') | float(0) %}
           {% set sell_fee   = states('input_number.electric_energy_selling_fee_ex') | float(0) %}
-          {% set VAT        = states('input_number.electric_energy_vat') | float(0.21) %}
+          {% set VAT        = states('input_number.electric_energy_buying_vat') | float(0.21) %}
           {{ ( sell + (buy_fee + energy_tax - sell_fee) * (1 + VAT) ) | round(2, default=0) }}
         attributes:
           prices: >
             {% set buy_fee    = states('input_number.electric_energy_purchasing_fee_ex') | float(0) %}
             {% set energy_tax = states('input_number.electric_energy_tax_ex') | float(0) %}
             {% set sell_fee   = states('input_number.electric_energy_selling_fee_ex') | float(0) %}
-            {% set VAT        = states('input_number.electric_energy_vat') | float(0.21) %}
+            {% set VAT        = states('input_number.electric_energy_buying_vat') | float(0.21) %}
             {% set sell_prices = state_attr('sensor.electricity_selling_price', 'prices') | default([], true) %}
             {% set delta       = (buy_fee + energy_tax - sell_fee) * (1 + VAT) %}
             {% set ns = namespace(list=[]) %}
@@ -219,14 +226,14 @@ template:
       state: >
         {% set price    = states('sensor.nord_pool_nl_current_price') | float(0) %}
         {% set sell_fee = states('input_number.electric_energy_selling_fee_ex') | float(0) %}
-        {% set VAT      = states('input_number.electric_energy_vat') | float(0.21) %}
+        {% set VAT      = states('input_number.electric_energy_selling_vat') | float(0.00) %}
         {{ ((price + sell_fee) * (1 + VAT)) | round(2) }}
       attributes:
         # Build from a fresh fetch when available. On a failed or partial fetch, preserve known
         # future quarters, drop past entries and never replace a good list with an empty one.
         prices: >-
           {% set sell_fee = states('input_number.electric_energy_selling_fee_ex') | float(0) %}
-          {% set VAT      = states('input_number.electric_energy_vat') | float(0.21) %}
+          {% set VAT      = states('input_number.electric_energy_selling_vat') | float(0.00) %}
           {% set today    = today_prices['NL'] | default([], true)
              if today_prices is defined and today_prices is mapping else [] %}
           {% set tomorrow = tomorrow_prices['NL'] | default([], true)
