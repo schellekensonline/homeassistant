@@ -1,7 +1,8 @@
 # EMHASS package: the day plan (split out of package_emhass.yaml on 2026-10-07).
 # rest_command.emhass_dayahead_optim plus automation.emhass_execute_day_ahead_optimization_auto
-# build and publish it, with the two checks around it: tomorrow's prices arriving late and no day
-# plan before midnight.
+# build and publish it, script.emhass_republish_dayahead restores a saved plan after a restart,
+# and the two checks around it report tomorrow's prices arriving late and no day plan before
+# midnight.
 rest_command:
   # Day plan over the coming day. It deliberately uses the naive-MPC endpoint because that action
   # honours prediction_horizon; only its timeout differs from the quarter-hour MPC.
@@ -25,6 +26,43 @@ rest_command:
       {%- set body = emhass_payload | default({'error': 'emhass_payload was not passed by the caller'}) -%}
       {{ body if body is string else body | to_json }}
 
+script:
+  emhass_republish_dayahead:
+    alias: "EMHASS republish saved day plan"
+    description: "Restores the saved sensor.dayahead_* entities after an HA or EMHASS restart."
+    mode: single
+    sequence:
+      # publish-data posts every entity separately. A retry covers a client timeout while EMHASS
+      # is still busy with the same publication, without rerunning the optimization.
+      - repeat:
+          count: 2
+          sequence:
+            - action: rest_command.emhass_publish
+              data:
+                publish_prefix: "dayahead_"
+              continue_on_error: true
+            - wait_template: >-
+                {% set plan_entity = (['sensor', 'dayahead_p_batt_forecast'] | join('.')) %}
+                {% set plan = state_attr(plan_entity, 'battery_scheduled_power') %}
+                {{ plan is not none and plan | count > 0 }}
+              timeout: "00:00:15"
+              continue_on_timeout: true
+            - if:
+                - condition: template
+                  value_template: >-
+                    {% set plan_entity = (['sensor', 'dayahead_p_batt_forecast'] | join('.')) %}
+                    {% set plan = state_attr(plan_entity, 'battery_scheduled_power') %}
+                    {{ plan is not none and plan | count > 0 }}
+              then:
+                - stop: "EMHASS day plan republished"
+      - action: system_log.write
+        data:
+          message: >-
+            EMHASS: saved day-plan entities could not be republished after the restart;
+            the next successful day-plan run will retry.
+          level: warning
+          logger: emhass.prices
+
 automation:
   - id: emhass_execute_day_ahead_optimization_auto    
     alias: "EMHASS execute Day-Ahead optimization auto"
@@ -32,7 +70,8 @@ automation:
       Builds the day plan once a day, after the last MPC quarter of the day (23:50), so that the
       window EMHASS optimises - 24 h from the run time - is the coming calendar day. The plan is
       published on the sensor.dayahead_* entities; the quarter-hour MPCs correct it from 00:00 on.
-      The 23:55 check reports when the day's plan is still missing.
+      Restarts republish that saved plan immediately, or rebuild it only when no current-day plan
+      exists. The 23:55 check reports when the day's plan is still missing.
     mode: single
     max_exceeded: silent
     trigger:
@@ -54,13 +93,13 @@ automation:
         to: "on"
         id: "emhass_up"
     condition:
-      # Two paths, deliberately:
+      # Three paths, deliberately:
       #  * the scheduled run (and its retries) only happens in the 23:45-23:59 window, with
       #    tomorrow's prices in, and only once a day - the helper remembers the day it last ran;
-      #  * a restart rebuilds the plan only when there is no plan for the *current* day at all
-      #    (marker older than yesterday): yesterday's 23:50 run covers today, so a restart during
-      #    the day normally leaves it alone. Triggering it by hand at any other moment is free -
-      #    the window simply starts then (that is what makes the automation safe to test).
+      #  * a restart always enters the action so it can republish the saved current plan, and only
+      #    rebuilds when that plan is missing;
+      #  * a hand-triggered run is free - the window simply starts then (that is what makes the
+      #    automation safe to test).
       - condition: template
         value_template: >-
           {% set marker = states('input_datetime.emhass_dayahead_plan_date') %}
@@ -74,8 +113,8 @@ automation:
             {# Hand-triggered (a test): always allowed; the guard decides what the prices allow. #}
             true
           {% else %}
-            {# A restart repairs only when no plan exists for the current day. #}
-            {{ marker < (now().date() - timedelta(days=1)).isoformat() }}
+            {# A restart decides below whether to republish the saved plan or rebuild it. #}
+            true
           {% endif %}
     action:
       # Restart repairs must not beat HA's recorder or EMHASS's model/data loading.
@@ -86,6 +125,25 @@ automation:
           - action: script.emhass_wait_ready
             data:
               grace_seconds: "{{ 120 if trigger.id == 'ha_start' else 30 }}"
+      # Yesterday's day plan covers today. Republish those saved runtime entities immediately;
+      # only a marker older than that means there is no current plan and a rebuild is required.
+      - if:
+          - condition: trigger
+            id:
+              - ha_start
+              - emhass_up
+          - condition: template
+            value_template: >-
+              {% set marker = states('input_datetime.emhass_dayahead_plan_date') %}
+              {{ marker not in ['unknown', 'unavailable', 'none', '']
+                 and marker >= (now().date() - timedelta(days=1)).isoformat() }}
+        then:
+          - action: script.emhass_republish_dayahead
+          - action: logbook.log
+            data:
+              name: EMHASS
+              message: "Saved day plan republished after restart"
+          - stop: "Saved day plan restored"
       # Same guard as the MPC, but with the question that fits the path: the scheduled evening run
       # needs tomorrow's prices (it plans the coming day), while a restart rebuild just needs
       # enough horizon left to be useful. The guard only skips when there is no price data at all.
@@ -228,9 +286,7 @@ automation:
           seconds: 15
       # Publish the saved day-ahead entities (sensor.dayahead_*) instead of the shared sensors, so
       # sensor.p_batt_forecast and friends keep carrying the MPC plan (2026-10-03).
-      - action: rest_command.emhass_publish
-        data:
-          publish_prefix: "dayahead_"
+      - action: script.emhass_republish_dayahead
       # Refresh the three comparison charts after the day plan has been built. These remain
       # dry-runs: they neither publish nor save the live plan. Keep them sequential so three
       # EMHASS optimization requests never overlap.

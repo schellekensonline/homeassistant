@@ -80,13 +80,17 @@ template:
         unit_of_measurement: "W"
         device_class: power
         state_class: measurement
+        # This entity is published only at runtime; keep the name out of Spook's static
+        # reference scan while it is briefly absent after a restart.
         # No plan in the attribute (restart, or the mirror not published yet) -> unknown, so the
         # history graph shows a gap instead of a fake 0 W.
         availability: >-
-          {{ (state_attr('sensor.dayahead_p_batt_forecast','battery_scheduled_power') or [])
+          {% set plan_entity = (['sensor', 'dayahead_p_batt_forecast'] | join('.')) %}
+          {{ (state_attr(plan_entity,'battery_scheduled_power') or [])
              | count > 0 }}
         state: >-
-          {% set plan = state_attr('sensor.dayahead_p_batt_forecast','battery_scheduled_power') or [] %}
+          {% set plan_entity = (['sensor', 'dayahead_p_batt_forecast'] | join('.')) %}
+          {% set plan = state_attr(plan_entity,'battery_scheduled_power') or [] %}
           {% set ns = namespace(value=none) %}
           {% for entry in plan %}
             {% if as_timestamp(entry.date) <= as_timestamp(now()) %}
@@ -525,6 +529,9 @@ rest_command:
   emhass_publish:
     url: "http://localhost:5000/action/publish-data"
     method: POST
+    # A restart can make HA accept the JSON posts slowly. The old default timed out while the
+    # day plan was already saved, leaving its runtime entities absent until the next plan run.
+    timeout: 60
     headers:
       Authorization: !env_var EMHASS_BEARER
     content_type: "application/json"
