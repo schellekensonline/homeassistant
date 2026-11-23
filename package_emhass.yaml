@@ -517,13 +517,6 @@ binary_sensor:
     # offline transitions during normal MPC runs; 30 covers the observed 7-10 s solve window.
     timeout: 30
 
-shell_command:
-  # Emergency rollback for the one-off load-history interpolation. The utility runs inside HA,
-  # the only process with direct access to the recorder's MariaDB network. Repair/apply commands
-  # are deliberately not exposed after the migration completed.
-  emhass_load_history_restore: >-
-    python3 /config/scripts/emhass/load-history-repair/emhass_load_history_repair.py restore
-
 rest_command:
   # Publish the latest optimisation results to Home Assistant sensors.
   emhass_publish:
